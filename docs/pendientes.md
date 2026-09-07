@@ -1,58 +1,89 @@
 # Pendientes
 
-Estado al 2026-09-07, confirmado con Esteban: **por ahora solo recibido**.
-Emitido y retención quedan pausados hasta resolver lo de abajo.
+Estado al 2026-09-07 (actualizado el mismo día): el ingest de Claude Code
+avanzó y **desbloqueó parcialmente emitido y retención** — ver el detalle
+de cada uno abajo. Sigue habiendo trabajo real por delante en ambos antes
+de llegar al mismo nivel de profundidad que recibido (nivel 3, por origen).
 
-## Bloqueado — necesita trabajo fuera de este repo
+## Emitidos: ingest parcial — nivel 1 corrido y validado, nivel 3 bloqueado por infraestructura
 
-### Emitidos: falta ingest en `raw_sat.cfdi_emitidos`
+`raw_sat.cfdi_emitidos` ya no está congelado en sep/nov 2025: un nuevo
+batch (2026-09-07) agregó **2026-01 completo** (6,500 CFDI). 2026-02 solo
+trae 2 filas (carga a medias, en curso) y no hay nada de octubre/diciembre
+2025 ni de marzo–agosto 2026 todavía — el ingest sigue sin ponerse al día
+por completo (recibidos ya llega a septiembre 2026).
 
-`raw_sat.cfdi_emitidos` solo tiene cargados septiembre y noviembre 2025
-(13,208 CFDI, un solo batch del 2026-09-02). No hay nada de octubre/diciembre
-2025 ni de 2026 — ningún periodo reciente se puede reconciliar. Esto es un
-hueco del ingest/ELT que corre en `ctunlinux` (dominio de Claude Code, no
-de este repo). Texto ya entregado a Esteban para pedírselo a Claude Code:
+Con lo que ya hay, nivel 1 (`main.py --tipo emitido --periodo 2026-01`) da
+**6,489/6,500 = 99.8% OK** — prácticamente el mismo nivel de conciliación
+que recibidos. Censo de origen (`Comprobante_Digital.Cd_Tabla` para esos
+UUIDs):
 
-> Necesito que completes la carga de `raw_sat.cfdi_emitidos` (Postgres,
-> esquema `raw_sat`, mismas columnas que `cfdi_recibidos`: uuid,
-> fecha_emision, rfc_emisor, nombre_emisor, rfc_receptor, direccion,
-> tipo_comprobante, subtotal, iva, total, uso_cfdi, metodo_pago,
-> forma_pago, periodo, archivo_origen, fecha_carga). Ahora mismo solo
-> tiene sep y nov 2025 (13,208 XML, batch del 2026-09-02) — falta todo lo
-> demás: el resto de 2025 y todo 2026 hasta la fecha (recibidos ya llega
-> a septiembre 2026, emitidos debería llegar al mismo punto). Necesito
-> que: 1) revises qué carpeta/fuente usa el job de ingest de emitidos y
-> confirmes si ya tiene disponibles los XML de los meses faltantes, 2)
-> corras la carga para esos periodos con el mismo criterio/schema que ya
-> usa recibidos, y 3) lo dejes corriendo de forma recurrente (igual que
-> recibidos), para que no se vuelva a quedar atrás.
+| origen | n_cfdi | monto_total |
+|---|---:|---:|
+| FACTURA | 2,191 | $62,346,811.72 |
+| NOTA_CREDITO | 189 | $4,566,869.25 |
+| COMPROBANTE_PAGO | 544 | $0.00 |
+| TRASLADO | 3,565 | $0.00 |
 
-Una vez cargado, el trabajo de este lado es directo: `raw_sat.cfdi_emitidos`
-tiene el mismo esquema que `cfdi_recibidos`, así que `extract_sat.py` se
-puede generalizar con un parámetro de tabla en vez de escribir un
-extractor nuevo. El lado mpro (orígenes esperables: VENTA, VENTAS_TRIV,
-NOTA_CREDITO, CUENTA_X_COBRAR, PAGO_CXC, RECIBO_PAGO, ANTICIPO_CXC,
-DEPURACION_CXC — vistos en el censo de `Poliza_Control.Pc_Tabla`, nunca
-explorados a fondo) sí es trabajo nuevo de este repo.
+`COMPROBANTE_PAGO` y `TRASLADO` en $0 son el mismo patrón ya documentado
+para Cheque/recibidos (REP tipo P y Carta Porte respectivamente — ver
+`hallazgos.md` puntos 6 y el nuevo punto 12).
 
-### Retención: mapeo a mpro no resuelto
+**Bloqueado ahora mismo**: pasar a nivel 3 (trazar FACTURA/NOTA_CREDITO
+hasta su póliza, cargo/abono real) requiere `Poliza_Control`, y esa tabla
+específica está devolviendo `HTTP 502` en la bridge para **ambos**
+targets (205 y 207) desde el 2026-09-07 — confirmado con `SELECT TOP 3`
+sin ningún filtro, mientras que `Comprobante_Digital`, `Poliza`,
+`Poliza_Detalle`, `Poliza_Configuracion` y `Cheque` sí responden con
+normalidad. Parece un problema puntual de esa tabla (lock, reindexado, o
+algo relacionado con la carga que acaba de correr) — no algo resoluble
+desde este repo. Vale la pena que Esteban le pida a Claude Code que
+revise el estado de `Poliza_Control` en `ctunlinux`/el bridge.
 
-A diferencia de emitidos, `raw_sat.cfdi_retencion` SÍ está completo
-(2016-12 a 2026-07, sin huecos). El problema es del lado mpro: los 15 CFDI
-de retención de febrero 2026 (ISR por arrendamiento, clave 16, emitidos
-por Trivasa a personas físicas) no aparecen en `Comprobante_Digital` de
-207, ni en la tabla dedicada `Constancia_Retencion` (que sí existe pero no
-tiene datos de febrero 2026 — su patrón histórico, ene/may/sep, no
-coincide con estos CFDI mensuales). En 205, `Comprobante_Digital.Cd_Tabla`
-sí trae un valor `CONSTANCIA_RETENCION`, pero tampoco ahí aparecieron los
-UUIDs probados.
+Pendiente, una vez que Poliza_Control vuelva a responder: escribir el
+extractor de nivel 3 para FACTURA/NOTA_CREDITO (mismo patrón que
+`extract_poliza_por_origen.py`: folio truncado a 10 caracteres,
+`Pd_Referencia` para aislar el documento dentro de la póliza, exclusión de
+cuentas de orden). Completar también el resto de 2025/2026 en el ingest
+para tener el mismo rango de fechas que recibidos.
 
-Este dominio no tiene ninguna investigación previa reutilizable (a
-diferencia de recibidos, que se apoyó mucho en `layout-gastos` y
-`poliza-explor`). Antes de seguir explorando a ciegas, vale la pena
-preguntarle directamente a alguien de Trivasa que conozca el proceso de
-retención de arrendamiento: ¿se registra en mpro en absoluto, o es un
-proceso externo (PAC/timbrado directo) que nunca toca `Comprobante_Digital`?
+## Retención: mapeo a mpro ENCONTRADO — falta profundidad de póliza
+
+Resuelto (2026-09-07): los CFDI de retención SÍ están en
+`Comprobante_Digital`, bajo `Cd_Tabla = 'CONSTANCIA_RETENCION'` — lo que
+antes fallaba era que las pruebas se hicieron sobre febrero 2026 (mes sin
+datos, ver abajo) y sin considerar que `Comprobante_Digital` se indexa por
+`Cd_Timbre_Fecha`, no por una columna `Cd_Fecha` que no existe.
+
+Validado con los 45 CFDI de retención de enero 2026:
+`Comprobante_Digital` trae 47 filas (dos UUID quedaron duplicados, ver
+`hallazgos.md` punto 12) con `Cd_Tabla='CONSTANCIA_RETENCION'`,
+`Cd_Documento` = folio de 10 caracteres (ej. `01-0000787`) y
+`Cd_Monto` = `monto_total_operacion`/`monto_total_gravado` del CFDI
+exacto (no el monto retenido). Ese mismo folio SÍ existe ahora en la
+tabla dedicada `Constancia_Retencion.Cr_Folio`, con `Cr_Importe` igual al
+CFDI — confirma el mapeo end-to-end SAT → Comprobante_Digital →
+Constancia_Retencion.
+
+Nota sobre el patrón mensual: `Constancia_Retencion` en sí (no
+`Comprobante_Digital`) solo tiene 16 folios en enero 2026 y 17 en mayo
+2026 — sigue sin explicarse por qué la tabla dedicada trae menos folios
+que CFDI hay en el mes (45 en enero según SAT), aunque el mapeo vía
+`Comprobante_Digital` sí cubre el 100%. Podría ser que algunos folios de
+retención no generan una fila propia en `Constancia_Retencion` (columna
+`Cr_Genera_Cxp='NO'` vista en el ejemplo, sugiere que no todos generan una
+cuenta por pagar) — no investigado a fondo.
+
+Cada UUID de retención también aparece **por segunda vez** en
+`Comprobante_Digital` con `Cd_Tabla='GASTO_REGISTRO'` y `Cd_Monto=0` — el
+mismo patrón de "stub" en $0 que Cheque (ver `hallazgos.md` punto 6):
+la retención queda referenciada en el gasto (renta) al que corresponde,
+sin duplicar el importe.
+
+**Pendiente**: trazar `Cd_Documento` (de `CONSTANCIA_RETENCION` o del
+folio real de `Constancia_Retencion`) hasta `Poliza_Control` para llegar
+al cargo/abono contable real — bloqueado por la misma caída de
+`Poliza_Control` descrita arriba para emitidos.
 
 ## Pendiente dentro de recibido — mejoras al alcance ya construido
 

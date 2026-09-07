@@ -6,8 +6,10 @@ Conciliación automatizada entre los CFDI timbrados ante el SAT (bodega
 mpro corresponden a cada CFDI, y el importe contabilizado (cargo/abono en
 póliza) cuadra con el importe fiscal del CFDI?**
 
-Alcance actual: **CFDI recibidos**, primer semestre 2026. Emitidos y
-retención quedan pendientes — ver [`docs/pendientes.md`](docs/pendientes.md).
+Alcance actual: **CFDI recibidos** (primer semestre 2026, nivel 1 a nivel
+3) con avances en **emitidos** (nivel 1 validado para enero 2026) y
+**retención** (mapeo a mpro ya encontrado) — ver
+[`docs/pendientes.md`](docs/pendientes.md).
 
 ## Arquitectura en dos partes
 
@@ -37,6 +39,9 @@ export QUERY_API_TOKEN="..."
 python3 main.py --periodo 2026-02
 python3 main.py --periodos 2026-01,2026-02,2026-03 --salida output/conciliacion_Q1.xlsx
 
+# Igual pero para emitidos (solo 2026-01 tiene datos completos por ahora)
+python3 main.py --tipo emitido --periodo 2026-01
+
 # Conciliación a nivel póliza/cuenta contable (piloto, vía Poliza_Detalle_Comprobante)
 python3 poliza_reconciliation.py --periodo 2026-01
 
@@ -58,7 +63,7 @@ src/
   config.py                   Un solo lugar para decidir contra qué SQL Server
                                correr (mssql_205 vs mssql_207 — ver docs/arquitectura.md)
   cfdi_parser.py               Parseo de CFDI 3.3/4.0 (subtotal, IVA, total, UUID)
-  extract_sat.py               Lado SAT: raw_sat.cfdi_recibidos (Postgres)
+  extract_sat.py               Lado SAT: raw_sat.cfdi_recibidos / cfdi_emitidos (Postgres)
   extract_mpro.py              Lado mpro, nivel CFDI: Comprobante_Digital + parseo de Cd_XML
   extract_origen.py            Traza cada CFDI a su(s) documento(s) de origen en mpro
                                (Comprobante_Digital.Cd_Tabla / Cd_Documento)
@@ -80,7 +85,7 @@ docs/
   pendientes.md                 Qué falta y por qué (emitido, retención, orígenes sin resolver)
 ```
 
-## Estado (2026-09-07)
+## Estado (2026-09-07, actualizado el mismo día)
 
 - ✅ Conciliación base nivel CFDI (recibidos): corrida y validada para
   ene/feb/ago 2026 y Q1 2026, ~99% OK.
@@ -90,9 +95,19 @@ docs/
   agregado 90–97% para febrero 2026.
 - ⚠️ Gasto_Registro y Compra_Indirecto: cobertura real todavía baja (~37%
   y ~3% respectivamente) — requieren lógica adicional, ver `pendientes.md`.
-- ⛔ Emitidos: bloqueado por un hueco de datos en `raw_sat.cfdi_emitidos`
-  (solo sep/nov 2025 cargados) — pendiente de ingest en Claude Code.
-- ⛔ Retención: SAT sí está completo, pero el mapeo a mpro no está
-  resuelto — ver `pendientes.md`.
+- 🟡 Emitidos: ingest ya trajo enero 2026 completo (6,500 CFDI) — nivel 1
+  corrido y validado (99.8% OK), censo de origen hecho (FACTURA,
+  NOTA_CREDITO, COMPROBANTE_PAGO, TRASLADO). Falta el resto del histórico
+  y el nivel 3 (documento → póliza), este último bloqueado ahora mismo
+  por una caída de infraestructura — ver abajo y `pendientes.md`.
+- 🟡 Retención: el mapeo a mpro que antes no aparecía **ya se encontró**
+  (`Comprobante_Digital.Cd_Tabla='CONSTANCIA_RETENCION'`, validado 1-a-1
+  contra los 45 CFDI de enero 2026). Falta el nivel 3 — mismo bloqueo de
+  infraestructura.
+- ⛔ `Poliza_Control` (la tabla clave para trazar cualquier documento
+  hasta su póliza) está devolviendo error en la bridge desde el
+  2026-09-07, en ambos targets — bloquea todo trabajo nuevo de nivel 3
+  (emitidos y retención) hasta que se resuelva del lado de
+  `ctunlinux`/el bridge. Ver `hallazgos.md` punto 13.
 - 🔧 Mientras 207 (la base "buena") está en desarrollo, el pipeline corre
   contra 205 (`src/config.py:MPRO_TARGET`), acotado a enero–junio 2026.

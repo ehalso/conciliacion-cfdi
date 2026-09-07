@@ -128,19 +128,21 @@ ingest/ELT que corre en `ctunlinux` (Claude Code). Bloquea por completo la
 conciliación de emitidos hasta que se complete la carga — ver
 `pendientes.md` para el texto exacto que se le pasó a Esteban para pedirlo.
 
-## 10. `raw_sat.cfdi_retencion` SÍ está completo — el hueco está del lado mpro
+Actualización 2026-09-07 (mismo día): un nuevo batch agregó 2026-01
+completo — ver punto 12 y `pendientes.md` para el estado actualizado.
+
+## 10. `raw_sat.cfdi_retencion` SÍ está completo — el hueco estaba del lado mpro (RESUELTO, ver punto 12)
 
 A diferencia de emitidos, `cfdi_retencion` está bien cargado (2016-12 a
-2026-07, mes a mes, sin huecos). El problema es que ninguno de los 15 CFDI
+2026-07, mes a mes, sin huecos). El problema era que ninguno de los 15 CFDI
 de retención de febrero 2026 (retenciones de ISR por arrendamiento, clave
-16, emitidas por Trivasa) aparece en `Comprobante_Digital` de 207, y
+16, emitidas por Trivasa) aparecía en `Comprobante_Digital` de 207, y
 tampoco en la tabla dedicada `Constancia_Retencion` de mpro (esa tabla
 tiene datos históricos pero ninguno en febrero 2026 — su patrón de meses
 con carga, ene/may/sep, no coincide con estos CFDIs mensuales). En 205,
 `Comprobante_Digital.Cd_Tabla` sí incluye un valor `CONSTANCIA_RETENCION`,
-pero tampoco ahí aparecieron los UUIDs probados. Sigue sin resolverse cuál
-es la tabla/proceso correcto en mpro para este tipo de retención — ver
-`pendientes.md`.
+pero tampoco ahí aparecieron los UUIDs probados en ese momento. **Resuelto
+el mismo día** probando con enero 2026 (mes con datos) — ver punto 12.
 
 ## 11. 205 vs 207: mismo esquema, distinto avance
 
@@ -150,3 +152,53 @@ la conciliación por origen corrida contra ambas para febrero 2026 dio
 resultados prácticamente idénticos (mismos porcentajes, 2–8 documentos de
 diferencia por origen). Confirmado por Esteban: 207 es la fuente de
 verdad; 205 se usa temporalmente mientras 207 está en desarrollo.
+
+## 12. Retención SÍ mapea a mpro — vía `Comprobante_Digital.Cd_Tabla='CONSTANCIA_RETENCION'`
+
+Confirmado en vivo 2026-09-07 con los 45 CFDI de retención de enero 2026
+(periodo con datos completos, a diferencia de febrero, mes usado en la
+investigación anterior y que resultó estar vacío del lado mpro por
+casualidad, no por falta de mapeo). Dos hallazgos:
+
+- **Filtrar por fecha en `Comprobante_Digital` requiere `Cd_Timbre_Fecha`**,
+  no `Cd_Fecha` (esa columna no existe en la tabla — confirmado vía
+  `INFORMATION_SCHEMA.COLUMNS`). Un filtro por columna inexistente no
+  tira error de SQL en este bridge, tira `HTTP 502` genérico — fácil de
+  confundir con una caída real del servidor.
+- Con la fecha correcta, `Cd_RFC_Emisor='TRI970922TL2'` +
+  `Cd_Tabla='CONSTANCIA_RETENCION'` trae exactamente los folios de
+  retención. `Cd_Documento` (truncado a 10 caracteres, ej.
+  `01-0000787`) coincide 1-a-1 con `Constancia_Retencion.Cr_Folio`, y
+  `Cd_Monto` = `Cr_Importe` = `monto_total_operacion`/`monto_total_gravado`
+  del CFDI del SAT (no el monto retenido — ese vive en
+  `Cr_Importe` menos lo que calcule `Constancia_Retencion_Detalle`, no
+  validado a fondo todavía).
+- Cada UUID de retención aparece **también** una segunda vez en
+  `Comprobante_Digital` con `Cd_Tabla='GASTO_REGISTRO'` y `Cd_Monto=0`
+  — mismo patrón "stub en cero" que Cheque/REP (punto 6): la retención se
+  liga al gasto de renta correspondiente sin duplicar el importe ahí.
+- La tabla dedicada `Constancia_Retencion` en sí (no vía
+  `Comprobante_Digital`) trae menos folios que CFDI del SAT hay en el
+  mes (16 folios en enero 2026 contra 45 CFDI) — no se explica todavía
+  por qué; una hipótesis es que solo los que generan CxP
+  (`Cr_Genera_Cxp='SI'`) obtienen fila propia, pero no se confirmó con
+  suficiente muestra.
+
+Pendiente: llegar de `Cd_Documento`/`Cr_Folio` hasta `Poliza_Control` para
+el cargo/abono real — bloqueado por la caída de esa tabla específica (ver
+punto 13).
+
+## 13. `Poliza_Control` cayó (HTTP 502) en ambos targets, 2026-09-07
+
+Confirmado en vivo: `SELECT TOP 3 ... FROM Poliza_Control` sin ningún
+filtro falla con `HTTP 502` de forma persistente (probado 5+ veces con
+reintentos y esperas, en 205 y en 207), mientras que en el mismo momento
+`Comprobante_Digital`, `Poliza`, `Poliza_Detalle`, `Poliza_Configuracion` y
+`Cheque` responden con normalidad, y `SELECT 1` contra los tres targets
+del bridge (`postgres_dw`, `mssql_205`, `mssql_207`) funciona bien. Es una
+falla aislada a esa tabla específica (lock, reindexado, o efecto
+colateral de la carga de ingest que corrió el mismo día) — no algo
+resoluble desde este repo. Bloquea todo trabajo de nivel 3 (documento →
+póliza) tanto para emitidos como para el resto de retención, no solo
+para lo nuevo — recibidos ya construido no se ve afectado porque no
+vuelve a consultar esta tabla en cada corrida salvo que se re-ejecute.
