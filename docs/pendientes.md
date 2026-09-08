@@ -47,43 +47,38 @@ extractor de nivel 3 para FACTURA/NOTA_CREDITO (mismo patrón que
 cuentas de orden). Completar también el resto de 2025/2026 en el ingest
 para tener el mismo rango de fechas que recibidos.
 
-## Retención: mapeo a mpro ENCONTRADO — falta profundidad de póliza
+## Retención: mapeo a mpro encontrado, pero solo cubre ~36% de los CFDI (corregido 2026-09-08)
 
-Resuelto (2026-09-07): los CFDI de retención SÍ están en
-`Comprobante_Digital`, bajo `Cd_Tabla = 'CONSTANCIA_RETENCION'` — lo que
-antes fallaba era que las pruebas se hicieron sobre febrero 2026 (mes sin
-datos, ver abajo) y sin considerar que `Comprobante_Digital` se indexa por
-`Cd_Timbre_Fecha`, no por una columna `Cd_Fecha` que no existe.
+El mapeo SAT → mpro para retención existe y funciona vía
+`Comprobante_Digital.Cd_Tabla = 'CONSTANCIA_RETENCION'` — lo que antes
+fallaba (investigación previa a 2026-09-07) era que las pruebas se
+hicieron sobre febrero 2026 (mes sin datos) y sin considerar que
+`Comprobante_Digital` se indexa por `Cd_Timbre_Fecha`, no por una columna
+`Cd_Fecha` que no existe.
 
-Validado con los 45 CFDI de retención de enero 2026:
-`Comprobante_Digital` trae 47 filas (dos UUID quedaron duplicados, ver
-`hallazgos.md` punto 12) con `Cd_Tabla='CONSTANCIA_RETENCION'`,
-`Cd_Documento` = folio de 10 caracteres (ej. `01-0000787`) y
-`Cd_Monto` = `monto_total_operacion`/`monto_total_gravado` del CFDI
-exacto (no el monto retenido). Ese mismo folio SÍ existe ahora en la
-tabla dedicada `Constancia_Retencion.Cr_Folio`, con `Cr_Importe` igual al
-CFDI — confirma el mapeo end-to-end SAT → Comprobante_Digital →
-Constancia_Retencion.
+**Corrección importante (2026-09-08)**: el primer reporte de este hallazgo
+(2026-09-07) decía cobertura casi total ("47 filas para 45 UUIDs") — esa
+cifra estaba mal calculada (contaba UUIDs de toda la historia de la tabla,
+no solo enero 2026). La cifra real, re-verificada con los 45 CFDI de
+retención de enero 2026: **solo 16 de 45 (36%) tienen la fila
+`CONSTANCIA_RETENCION`** con folio y monto reales (ese folio sí coincide
+1-a-1 con `Constancia_Retencion.Cr_Folio` y el monto es exacto). Otros 15
+de 45 (33%) solo tienen un stub en `GASTO_REGISTRO` con `Cd_Monto=0` (sin
+monto real en ningún lado). Los **14 restantes (31%) no tienen ninguna
+fila** en `Comprobante_Digital`.
 
-Nota sobre el patrón mensual: `Constancia_Retencion` en sí (no
-`Comprobante_Digital`) solo tiene 16 folios en enero 2026 y 17 en mayo
-2026 — sigue sin explicarse por qué la tabla dedicada trae menos folios
-que CFDI hay en el mes (45 en enero según SAT), aunque el mapeo vía
-`Comprobante_Digital` sí cubre el 100%. Podría ser que algunos folios de
-retención no generan una fila propia en `Constancia_Retencion` (columna
-`Cr_Genera_Cxp='NO'` vista en el ejemplo, sugiere que no todos generan una
-cuenta por pagar) — no investigado a fondo.
+**Pendiente real, sin resolver**: por qué el 64% de los CFDI de retención
+no llega a `Constancia_Retencion`. No investigado a fondo — antes de
+seguir explorando a ciegas, vale la pena preguntarle directamente a
+alguien de Trivasa que conozca el proceso de retención de arrendamiento:
+¿hay más de un proceso/vía para registrar la retención en mpro, o
+simplemente no se está registrando contablemente en la mayoría de los
+casos?
 
-Cada UUID de retención también aparece **por segunda vez** en
-`Comprobante_Digital` con `Cd_Tabla='GASTO_REGISTRO'` y `Cd_Monto=0` — el
-mismo patrón de "stub" en $0 que Cheque (ver `hallazgos.md` punto 6):
-la retención queda referenciada en el gasto (renta) al que corresponde,
-sin duplicar el importe.
-
-**Pendiente**: trazar `Cd_Documento` (de `CONSTANCIA_RETENCION` o del
-folio real de `Constancia_Retencion`) hasta `Poliza_Control` para llegar
-al cargo/abono contable real — bloqueado por la misma caída de
-`Poliza_Control` descrita arriba para emitidos.
+Para el 36% que sí mapea, sigue pendiente además trazar `Cd_Documento`/
+`Cr_Folio` hasta `Poliza_Control` para llegar al cargo/abono contable
+real — bloqueado por la misma caída de `Poliza_Control` descrita arriba
+para emitidos.
 
 ## Pendiente dentro de recibido — mejoras al alcance ya construido
 

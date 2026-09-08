@@ -142,7 +142,9 @@ tiene datos históricos pero ninguno en febrero 2026 — su patrón de meses
 con carga, ene/may/sep, no coincide con estos CFDIs mensuales). En 205,
 `Comprobante_Digital.Cd_Tabla` sí incluye un valor `CONSTANCIA_RETENCION`,
 pero tampoco ahí aparecieron los UUIDs probados en ese momento. **Resuelto
-el mismo día** probando con enero 2026 (mes con datos) — ver punto 12.
+parcialmente el mismo día** probando con enero 2026 (mes con datos) — ver
+punto 12 para la cifra real de cobertura (36%, no el 100% que se reportó
+primero).
 
 ## 11. 205 vs 207: mismo esquema, distinto avance
 
@@ -153,40 +155,49 @@ resultados prácticamente idénticos (mismos porcentajes, 2–8 documentos de
 diferencia por origen). Confirmado por Esteban: 207 es la fuente de
 verdad; 205 se usa temporalmente mientras 207 está en desarrollo.
 
-## 12. Retención SÍ mapea a mpro — vía `Comprobante_Digital.Cd_Tabla='CONSTANCIA_RETENCION'`
+## 12. Retención SÍ mapea a mpro — pero solo para una parte de los CFDI (corregido 2026-09-08)
 
-Confirmado en vivo 2026-09-07 con los 45 CFDI de retención de enero 2026
-(periodo con datos completos, a diferencia de febrero, mes usado en la
-investigación anterior y que resultó estar vacío del lado mpro por
-casualidad, no por falta de mapeo). Dos hallazgos:
+Confirmado en vivo 2026-09-07 que el mapeo SAT → mpro para retención
+**existe y funciona** vía `Comprobante_Digital.Cd_Tabla='CONSTANCIA_RETENCION'`
+— eso sigue siendo cierto. Lo que estaba mal en la primera versión de este
+hallazgo (2026-09-07) era la cifra de cobertura: se reportó "47 filas para
+45 UUIDs, prácticamente 1-a-1" a partir de un query de "duplicados" que en
+realidad estaba contando TODOS los UUID con `Cd_Tabla='CONSTANCIA_RETENCION'`
+de la historia completa de la tabla, no solo los 45 de enero 2026 — dio la
+impresión falsa de cobertura casi total.
+
+**Cifra correcta, re-verificada 2026-09-08** contra los 45 CFDI de
+retención de enero 2026: de 45 UUIDs, solo **31 (69%) tienen alguna fila**
+en `Comprobante_Digital`, y de esos, solo **16 (36% del total) tienen la
+fila `CONSTANCIA_RETENCION`** con el folio y monto reales (los otros 15 de
+los 31 solo tienen el stub en `GASTO_REGISTRO` con `Cd_Monto=0`, sin
+ninguna fila que traiga el monto real). **14 de 45 (31%) no tienen absolutamente
+ninguna fila** en `Comprobante_Digital` bajo ningún `Cd_Tabla`.
+
+Detalle de lo que sí sigue validado para los 16 que sí aparecen:
 
 - **Filtrar por fecha en `Comprobante_Digital` requiere `Cd_Timbre_Fecha`**,
   no `Cd_Fecha` (esa columna no existe en la tabla — confirmado vía
   `INFORMATION_SCHEMA.COLUMNS`). Un filtro por columna inexistente no
   tira error de SQL en este bridge, tira `HTTP 502` genérico — fácil de
   confundir con una caída real del servidor.
-- Con la fecha correcta, `Cd_RFC_Emisor='TRI970922TL2'` +
-  `Cd_Tabla='CONSTANCIA_RETENCION'` trae exactamente los folios de
-  retención. `Cd_Documento` (truncado a 10 caracteres, ej.
-  `01-0000787`) coincide 1-a-1 con `Constancia_Retencion.Cr_Folio`, y
-  `Cd_Monto` = `Cr_Importe` = `monto_total_operacion`/`monto_total_gravado`
-  del CFDI del SAT (no el monto retenido — ese vive en
-  `Cr_Importe` menos lo que calcule `Constancia_Retencion_Detalle`, no
-  validado a fondo todavía).
-- Cada UUID de retención aparece **también** una segunda vez en
-  `Comprobante_Digital` con `Cd_Tabla='GASTO_REGISTRO'` y `Cd_Monto=0`
-  — mismo patrón "stub en cero" que Cheque/REP (punto 6): la retención se
-  liga al gasto de renta correspondiente sin duplicar el importe ahí.
-- La tabla dedicada `Constancia_Retencion` en sí (no vía
-  `Comprobante_Digital`) trae menos folios que CFDI del SAT hay en el
-  mes (16 folios en enero 2026 contra 45 CFDI) — no se explica todavía
-  por qué; una hipótesis es que solo los que generan CxP
-  (`Cr_Genera_Cxp='SI'`) obtienen fila propia, pero no se confirmó con
-  suficiente muestra.
+- `Cd_Documento` (truncado a 10 caracteres, ej. `01-0000787`) coincide
+  1-a-1 con `Constancia_Retencion.Cr_Folio`, y `Cd_Monto` = `Cr_Importe` =
+  `monto_total_operacion`/`monto_total_gravado` del CFDI del SAT (no el
+  monto retenido — ese vive en `Cr_Importe` menos lo que calcule
+  `Constancia_Retencion_Detalle`, no validado a fondo todavía).
+- De los que sí tienen `Cd_Tabla='CONSTANCIA_RETENCION'`, todos aparecen
+  también con `Cd_Tabla='GASTO_REGISTRO'` y `Cd_Monto=0` — mismo patrón
+  "stub en cero" que Cheque/REP (punto 6).
 
-Pendiente: llegar de `Cd_Documento`/`Cr_Folio` hasta `Poliza_Control` para
-el cargo/abono real — bloqueado por la caída de esa tabla específica (ver
-punto 13).
+**Pendiente real, sin resolver**: por qué 29 de 45 CFDI de retención de
+enero (64%) no llegan a `Constancia_Retencion` — ¿un proceso distinto los
+registra en otro lado de mpro, o de verdad no se están registrando
+contablemente? Antes de invertir más tiempo explorando a ciegas, vale la
+pena la pregunta directa a alguien de Trivasa que conozca el proceso.
+Para el 36% que sí mapea, sigue pendiente además llegar de `Cd_Documento`/
+`Cr_Folio` hasta `Poliza_Control` para el cargo/abono real — bloqueado por
+la caída de esa tabla específica (ver punto 13).
 
 ## 13. `Poliza_Control` cayó (HTTP 502) en ambos targets, 2026-09-07
 

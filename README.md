@@ -55,6 +55,16 @@ Cada script imprime su avance y termina escribiendo un `.xlsx` en `output/`
 (no versionado — ver `.gitignore`) con hojas de resumen y detalle, semaforeado
 por color.
 
+## GUI de revisión
+
+Hay un dashboard (Artifact HTML, publicado desde Cowork) para revisar la
+conciliación sin abrir el `.xlsx`: totales y % de cuadre por origen, y
+tabla de detalle documento-por-documento (recibido) o CFDI-por-CFDI
+(emitido, retención), con búsqueda, filtros y orden por columna. Es un
+snapshot estático de los datos de este README (no consulta la bridge en
+vivo) — se regenera pidiéndole a Cowork que lo actualice con datos más
+recientes.
+
 ## Estructura del repo
 
 ```
@@ -101,9 +111,9 @@ docs/
   y el nivel 3 (documento → póliza), este último bloqueado ahora mismo
   por una caída de infraestructura — ver abajo y `pendientes.md`.
 - 🟡 Retención: el mapeo a mpro que antes no aparecía **ya se encontró**
-  (`Comprobante_Digital.Cd_Tabla='CONSTANCIA_RETENCION'`, validado 1-a-1
-  contra los 45 CFDI de enero 2026). Falta el nivel 3 — mismo bloqueo de
-  infraestructura.
+  (`Comprobante_Digital.Cd_Tabla='CONSTANCIA_RETENCION'`) pero solo cubre
+  el 36% de los CFDI de enero 2026 (16 de 45) — el resto no tiene ninguna
+  fila en mpro, causa sin resolver. Ver `pendientes.md`.
 - ⛔ `Poliza_Control` (la tabla clave para trazar cualquier documento
   hasta su póliza) está devolviendo error en la bridge desde el
   2026-09-07, en ambos targets — bloquea todo trabajo nuevo de nivel 3
