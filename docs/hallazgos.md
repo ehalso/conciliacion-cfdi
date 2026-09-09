@@ -292,7 +292,24 @@ desde antes para el resto de los orígenes (COMPRA, CUENTA_X_PAGAR,
 NOTA_CREDITO_PROVEEDOR, COMPRA_INDIRECTO, CHEQUE) — no era necesario
 corregir nada ahí.
 
-## 16. Gasto_Registro: `Grc_Importe` puede venir duplicado idéntico entre folios/CFDI sin relación — error real de captura, no de método
+## 16. ~~Gasto_Registro: `Grc_Importe` duplicado entre folios~~ — **CORREGIDO 2026-09-10: era conversión de moneda, no un error**
+
+> ⚠️ **Este punto estaba mal.** Lo que sigue es el texto original, conservado
+> porque la corrección enseña algo: el importe idéntico de BRIGGS EQUIPMENT
+> **no** era captura duplicada, era el mismo importe en **dólares** convertido
+> con el mismo tipo de cambio. Los 5 CFDI son de **USD 2,615.00** cada uno y
+> `Grd_Tipo_Cambio` = 17.2315 en todos: 2,615.00 × 17.2315 = **45,060.3725**.
+> El "importe repetido" se repite porque el importe en dólares y el tipo de
+> cambio se repiten — es la misma renta mensual de montacargas facturada por
+> unidad. Los 8 CFDI de BRIGGS de feb-2026 ya cuadran exacto con el fix de
+> moneda (ver punto 20). **Lección**: antes de reportar un error de captura del
+> cliente, descartar que el CFDI esté en moneda extranjera y que no haya doble
+> conteo propio (ver punto 24). El "patrón simétrico del lado del abono" que
+> describe el texto de abajo tampoco era duplicación: son la cuenta de la divisa
+> y su cuenta complementaria en pesos, que suman el pasivo correcto — **ver punto
+> 26**.
+>
+> Texto original, incorrecto:
 
 Caso confirmado 2026-09-09, proveedor BRIGGS EQUIPMENT (renta de
 montacargas): 5 CFDI independientes de $2,615.00 cada uno (unidades
@@ -435,3 +452,200 @@ similar de "PREVISION SOCIAL" mensual, descartado como explicación de
 otro pendiente — suma cientos de miles a millones de pesos, no
 comparable en magnitud al CFDI que se intentaba explicar; no se confirmó
 que sea el mismo mecanismo).
+
+
+## 20. El CFDI viene en su moneda original y la póliza en MXN — hay que convertir con el tipo de cambio del documento
+
+Confirmado 2026-09-09/10. `raw_sat.cfdi_recibidos.subtotal`/`.total` están en
+la **moneda original del CFDI** (mismo criterio que
+`Comprobante_Digital.Cd_Monto`, ya documentado en `trivasa-context`), mientras
+que `Poliza_Detalle` y `Gasto_Registro_Control` postean **siempre en MXN**.
+Comparar cargo contra subtotal sin convertir da una diferencia que es
+exactamente el tipo de cambio: **43 de los 149 pendientes de feb-2026 eran CFDI
+en USD**, todos con ratio cargo/subtotal entre 15 y 20.
+
+El factor correcto es el del **propio documento de mpro**, no uno de mercado ni
+el `Cd_Tipo_Cambio` de `Comprobante_Digital` (que en varios casos difiere del
+que se usó para postear: CADECO 17.2698 real vs 17.6900 en
+`Comprobante_Digital`). Cada tabla de origen trae su par
+`Mn_Cve_Moneda` / `Xx_Tipo_Cambio`:
+
+| Origen | Tabla | Tipo de cambio |
+|---|---|---|
+| COMPRA | `Compra_Encabezado` | `Co_Tipo_Cambio` |
+| COMPRA_INDIRECTO | `Compra_Indirecto` | `Ci_Tipo_Cambio` |
+| CUENTA_X_PAGAR | `Cuenta_X_Pagar` | `Cxp_Tipo_Cambio` |
+| NOTA_CREDITO_PROVEEDOR | `Nota_Credito_Proveedor` | `Nc_Tipo_Cambio` |
+| CHEQUE | `Cheque` | `Ch_Tipo_Cambio` (⚠️ sin columna de moneda) |
+| FACTURA | `Factura_Encabezado` | `Fc_Tipo_Cambio` |
+| GASTO_REGISTRO | `Gasto_Registro_Documento` | `Grd_Tipo_Cambio` |
+
+`Cheque` es el único que **no tiene** `Mn_Cve_Moneda`; pedirla devuelve
+`HTTP 502` genérico, no un error de SQL. Implementado en
+`src/extract_moneda.py`.
+
+## 21. El `Descuento` del CFDI no existe en `raw_sat` — y mpro postea el importe NETO
+
+Confirmado 2026-09-10, el hallazgo que más pendientes explicó (33 de feb-2026).
+`raw_sat.cfdi_recibidos` **no tiene columna de descuento**: su `subtotal` es el
+bruto, antes del atributo `Descuento` del nodo `cfdi:Comprobante`. mpro captura
+y postea el importe neto, así que todo CFDI con descuento quedaba pendiente
+aunque estuviera perfectamente contabilizado:
+
+```
+AT&T COMUNICACIONES   12,472.32 - 12,120.64 =    351.68 = cargo real
+AGENCIA COMERCIALIZ. 118,205.26 - 70,215.11 = 47,990.15 = cargo real
+G3M                    4,449.96 -  1,557.49 =  2,892.47 = cargo real
+AUTO PARTES Y MAS     12,901.65 -  1,290.17 = 11,611.48 = cargo real
+```
+
+Hay que leerlo del XML (`Cd_XML`). `cfdi_parser.py` ya lo extraía; lo que
+faltaba era restarlo en `base_mpro`.
+
+## 22. El IEPS trasladado se suma a la BASE del gasto, igual que los impuestos locales
+
+Confirmado 2026-09-10 (12 pendientes de feb-2026). El IEPS (clave `003` del
+catálogo del SAT: combustibles, refrescos, botanas, telecomunicaciones) no es
+acreditable, así que mpro lo manda al gasto — exactamente el mismo tratamiento
+que el complemento `implocal` del punto 18:
+
+```
+CADENA COMERCIAL OXXO   100.11 + IEPS 3.63 = 103.74 = Grc_Importe
+SUPER SAN FRANCISCO     143.73 + IEPS 4.37 = 148.10 = Grc_Importe
+GO MART YUC             109.26 + IEPS 8.74 = 118.00 = Grc_Importe
+TELMEX          (528.55 - 65.00 desc) + 9.73 = 473.28 = Grc_Importe
+```
+
+⚠️ `raw_sat.cfdi_recibidos.iva` **no sirve** para detectarlo: trae
+`TotalImpuestosTrasladados`, que mezcla IVA con IEPS, y en varios casos ni
+siquiera coincide con la suma de los traslados (OXXO: `iva` = 8.76 pero
+`TotalImpuestosTrasladados` = 12.39). Hay que leer los `cfdi:Traslado` con
+`Impuesto="003"` del nodo `Impuestos` de nivel Comprobante.
+
+Con esto, la base comparable queda:
+
+```
+base = (SubTotal - Descuento + IEPS + impuestos_locales) x tipo_de_cambio_del_documento
+```
+
+## 23. Las cuentas de orden se identifican por la RAÍZ de la cuenta, no por el texto de la configuración
+
+Confirmado 2026-09-10 (14 pendientes, 13 de ellos con ratio exactamente 2.0).
+El filtro `Pc_Descripcion NOT LIKE '%CUENTAS DE ORDEN%'` deja pasar tres de las
+cinco redacciones que usa el catálogo — `(CTS ORDEN)`, `( CUENTA DE ORDEN)`,
+`(CUENT ORDEN)` — y por eso CUENTA_X_PAGAR (config `0360`) y
+NOTA_CREDITO_PROVEEDOR (`0235`/`0352`) contaban el cargo **dos veces**.
+
+En `Cuenta_Contable`, las cuentas de orden son exactamente las de **raíz de 5
+dígitos**: `10100`–`10600`, grupo `E.*` (`Cc_Acumula` = `E.A` Valores Ajenos,
+`E.B` Valores Contingentes, `E.C` De Control). Las cuentas reales tienen raíz
+de 4 dígitos (`1110`, `1140`, `2110`, `6100`…). El filtro robusto:
+
+```sql
+AND pd.Cc_Cve_Cuenta_Contable NOT LIKE '10[1-6]00%'
+```
+
+## 24. Los dos formatos de `Cd_Documento` duplican el cargo si se deduplica por el documento completo
+
+Confirmado 2026-09-10. Siete CFDI de feb-2026 mostraban exactamente **2× su
+importe**; parecían capturados dos veces en mpro y eran **doble conteo
+nuestro**. El mismo `(Gr_Folio, Grd_ID)` tiene dos filas en
+`Comprobante_Digital`, una en formato de 14 caracteres y otra en el de 18, con
+el mismo UUID y el mismo monto — el gotcha que `layout-gastos` ya documentó en
+`trivasa-context`:
+
+```
+05-01784220001      (14)  05E5388C-…  9,373.96
+05-017842200010001  (18)  05E5388C-…  9,373.96   <- la misma captura
+```
+
+`baseline_universal.py` deduplicaba por el `documento` completo, que no colapsa
+los dos formatos. Corregido deduplicando por `documento[:14]`, la llave
+granular real (punto 15).
+
+## 25. Vías de cuadre legítimas más allá de "cargo = base del CFDI"
+
+Confirmado 2026-09-10 revisando folio por folio los 149 pendientes. Un CFDI
+puede estar perfectamente contabilizado sin que el cargo iguale su base,
+porque el tratamiento contable correcto es otro. Las nueve vías validadas
+(implementadas en `baseline_universal.py`, cada una etiquetada en la columna
+"Vía de cuadre" del reporte):
+
+1. **Nota de crédito = total.** Reduce el adeudo con IVA incluido. Dos
+   configuraciones vivas: `0451` (DEVOLUCION) deja el importe del lado del
+   cargo a proveedores; `0350` (BONIFICACION) solo deja abonos con referencia
+   (inventario + IVA) y su cargo va sin referencia, así que el cargo aislado
+   sale en cero y hay que usar el abono.
+2. **IVA no acreditable**: mpro manda el IVA al gasto (gasolina, abarrotes) y
+   el importe contabilizado es el total del CFDI.
+3. **Capturado en el documento**: `Grd_Precio_Neto_Importe` = base del CFDI
+   pero el gasto distribuido es menor porque mpro aplicó un descuento propio
+   (cuotas IMSS: la parte obrera no es gasto de la empresa).
+4. **Arrendamiento financiero**: solo el interés pasa por Gasto_Registro; el
+   capital amortiza el pasivo `2130.*`. La póliza de pago junta las dos piezas
+   y **abona al banco el total del CFDI**. Se sigue la cadena
+   `Grd_Referencia`/`Cxp_Referencia` → `Poliza_Detalle.Pd_Referencia`. Si el
+   CFDI ampara varias unidades hay una póliza de pago por unidad y hay que
+   sumarlas (CATERPILLAR: 211,890.64 + 158,917.98 = 370,808.62).
+5. **Gasto repartido entre folios hermanos**: una factura capturada como varios
+   folios, uno por sucursal, con solo uno etiquetado (ISN, punto 19).
+6. **El CFDI cubre el folio completo**: todos los renglones del folio son del
+   CFDI pero solo uno quedó etiquetado.
+7. **Capturado en un renglón del folio**: el folio mezcla conceptos y uno de
+   sus renglones es exactamente este CFDI.
+8. **Cheque que liquida varias facturas**: el importe del cheque = suma de los
+   CFDI etiquetados (excluyendo el REP que ampara el cheque completo).
+9. **Capturado en el documento de origen**: `Xx_Precio_Neto_Importe` del
+   documento = base o total, aunque el cargo no se pueda aislar en la póliza.
+
+**Criterio descartado por permisivo**: `Pago_Cxp_Comprobante` liga pagos con el
+UUID del CFDI y `Pcc_Monto` trae su total — cubre **1,407 de 1,500 CFDI
+(93.8%)** del universo de febrero. Aceptarlo como vía de cuadre habría
+"conciliado" casi todo de un plumazo, incluidos los CFDI mal capturados (un
+CFDI contabilizado dos veces también tiene su pago correcto). Queda como
+herramienta de investigación, no de cuadre.
+
+Resultado con las nueve vías, H1 2026 completo: **9,511 / 9,572 (99.36%)**.
+Detalle completo, evidencia por caso y clasificación del residual en
+[`investigacion_pendientes.md`](investigacion_pendientes.md).
+
+## 26. Pasivo en moneda extranjera: mpro lo parte en dos cuentas (la de la divisa y una "complementaria" en pesos) que SUMAN la valuación en MXN
+
+Confirmado 2026-09-10 al verificar la retractación del punto 16. La póliza
+`0000478228` (BRIGGS EQUIPMENT) parecía tener cada referencia de proveedor
+**duplicada** en `Poliza_Detalle`: una vez con un importe chico y otra con uno
+mucho mayor. No es duplicación — son **cuentas distintas**, y las dos filas
+suman el pasivo correcto en pesos:
+
+| Cuenta | Descripción | `A370839` | `A370838` |
+|---|---|---:|---:|
+| `2110.001.001.002` | Proveedor Nacional Dollar | 3,033.40 | 1,740.00 |
+| `2110.001.001.004` | Proveedor Nacional **complementaria** Dollar | 49,236.63 | 28,242.81 |
+| | **suma = importe USD × 17.2315** | **52,270.03** | **29,982.81** |
+
+Es decir: la cuenta base guarda el importe **tal cual en la divisa** (USD
+3,033.40 = 2,615.00 × 1.16) y la "complementaria" guarda la **diferencia en
+pesos**, de modo que la suma de ambas es la valuación en MXN al tipo de cambio
+del documento. El catálogo tiene **9 cuentas** con este rol — no es un caso
+aislado:
+
+```
+1110.003.001.008.003  Banco Monex Cta.20252455 (Usd Cta Complementaria)
+1110.003.001.008.005  Banco Monex Cta.20252455 (Eur Cta Complementaria)
+2110.001.001.004      Proveedor Nacional complementaria Dollar
+2110.001.001.005      Proveedor Nacional complementaria Euro
+2110.001.002.003      Proveedores Extranjero Complementaria Dollar
+2110.001.002.004      Proveedores Extranjero Complementaria Euro
+2130.001.005.001.002  SITSA Metso Num Econ 445 complementaria Dollar
+2230.001.005.001.002  SITSA Metso Num Econ 445 complementaria Dollar
+2230.001.005.001.004  SITSA NUM ECON COMPLEMENTARIA DOLLAR
+```
+
+**Consecuencia para cualquier lectura del abono**: al conciliar el lado del
+pago de un CFDI en moneda extranjera hay que **sumar la cuenta y su
+complementaria**. Tomar solo la base da el importe en divisa (no en pesos);
+tomar solo la complementaria da un número sin significado propio; y tratar los
+dos renglones como duplicados —el error del punto 16 original— borra la mitad
+del pasivo. Esto todavía **no** está implementado en el baseline: el chequeo
+actual es de un solo lado (cargo), así que no lo toca; hay que incorporarlo
+cuando se extienda el doble chequeo cargo+abono a los orígenes en USD/EUR.

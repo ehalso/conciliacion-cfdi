@@ -104,7 +104,7 @@ docs/
   pendientes.md                 Qué falta y por qué (emitido, retención, orígenes sin resolver)
 ```
 
-## Estado (2026-09-09, actualizado el mismo día)
+## Estado (2026-09-10)
 
 - ✅ Conciliación base nivel CFDI (recibidos): corrida y validada para
   ene/feb/ago 2026 y Q1 2026, ~99% OK.
@@ -118,11 +118,24 @@ docs/
   `pendientes.md`.
 - ✅ Reconciliación por origen (Compra, Cheque, Cuenta_x_Pagar) con cuadre
   agregado 90–97% para febrero 2026.
+- ✅ **Conciliación al 99.36% en todo H1 2026** (9,511 de 9,572 CFDI con valor
+  monetario). Por mes: ene 99.2%, feb 99.5%, mar 99.2%, abr 99.8%, may 99.2%,
+  jun 99.4%. Febrero venía en 90.1% antes de la sesión de investigación folio
+  por folio del 2026-09-09/10 — el detalle completo de qué lo subió, con la
+  evidencia de cada hallazgo y la clasificación de los 61 pendientes que
+  quedan, está en [`docs/investigacion_pendientes.md`](docs/investigacion_pendientes.md).
+  Lo que más pesó: convertir el CFDI a MXN con el tipo de cambio del documento,
+  restar el `Descuento` (que `raw_sat` no guarda), sumar el IEPS a la base,
+  identificar las cuentas de orden por la raíz de la cuenta, y una cascada de
+  vías de cuadre para tratamientos contables legítimos (arrendamiento
+  financiero, nota de crédito contra total, IVA no acreditable, gasto
+  repartido entre sucursales…).
 - ✅ **Baseline UNIVERSAL (todos los orígenes, chequeo agregado de un solo
-  lado)**: sumando el cargo de TODOS los documentos con los que un CFDI
-  aparece etiquetado en mpro (sin importar el origen) y comparando contra
-  el Subtotal, **1,351/1,500 (90.1%)** de los CFDI recibidos con valor real
-  de febrero 2026 ya cuadran — resuelve de raíz los casos de CFDI repartidos
+  lado)** — *hito del 2026-09-09, superado por el punto anterior; se deja
+  porque explica de dónde salió el método*: sumando el cargo de TODOS los
+  documentos con los que un CFDI aparece etiquetado en mpro (sin importar el
+  origen) y comparando contra el Subtotal, **1,351/1,500 (90.1%)** de los CFDI
+  recibidos con valor real de febrero 2026 ya cuadran — resuelve de raíz los casos de CFDI repartidos
   entre varios documentos/orígenes (COMPRA+COMPRA_INDIRECTO,
   GASTO_REGISTRO+CUENTA_X_PAGAR, liquidación directa vía Cheque). No exige
   que el abono también cuadre (ver `baseline_universal.py` y

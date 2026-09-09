@@ -1,5 +1,13 @@
 # Pendientes
 
+> **Actualización 2026-09-10**: la conciliación pasó de 90.1% a **99.36% en
+> todo H1 2026** tras la revisión folio por folio de los pendientes. Casi todo
+> lo que este documento describe como pendiente ya está resuelto o
+> reclasificado — ver
+> [`investigacion_pendientes.md`](investigacion_pendientes.md), que es el
+> documento vigente sobre el tema. Lo de abajo se conserva como historial de
+> cómo se veía el problema antes.
+
 Estado al 2026-09-09 (actualizado el mismo día): `Poliza_Control` **volvió
 a responder** (estaba caída desde 2026-09-07, ver `hallazgos.md` punto 13)
 — desbloquea todo el trabajo de nivel 3 pendiente (emitido, retención,

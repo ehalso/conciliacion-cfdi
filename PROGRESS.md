@@ -21,33 +21,51 @@ la extracción, parseo y lógica de conciliación. El bridge es
 **estrictamente de solo lectura** — nunca se intenta un write/DDL/DML
 contra él.
 
-## Estado actual (2026-09-09) — leer esto primero
+## Estado actual (2026-09-10) — leer esto primero
 
 **El método vigente es `baseline_universal.py`, no `main.py` ni
 `reconciliacion_por_origen.py`.** Para CFDI recibidos, suma el cargo de
 TODOS los documentos con los que un CFDI aparece etiquetado en
-`Comprobante_Digital` (sin importar el origen/módulo de mpro) y compara
-esa suma contra el Subtotal del CFDI — en vez de exigir que un solo
-documento cuadre exacto. Resultado en vivo, feb-2026:
+`Comprobante_Digital` (sin importar el origen/módulo de mpro) y compara esa
+suma contra la base fiscal del CFDI. Tras la sesión de investigación folio por
+folio del 2026-09-09/10, el chequeo ya no es una sola comparación sino una
+**cascada de vías de cuadre**, cada una con su etiqueta en el reporte.
 
-```
-Universo monetario en mpro: 1,500   Conciliados: 1,351 (90.1%)   Pendientes: 149
-```
+Resultado en vivo, **todo H1 2026**:
+
+| Periodo | Universo | Conciliados | % | Pendientes |
+|---|---:|---:|---:|---:|
+| 2026-01 | 1,585 | 1,572 | 99.2% | 13 |
+| 2026-02 | 1,500 | 1,492 | 99.5% | 8 |
+| 2026-03 | 1,736 | 1,722 | 99.2% | 14 |
+| 2026-04 | 1,775 | 1,771 | 99.8% | 4 |
+| 2026-05 | 1,545 | 1,532 | 99.2% | 13 |
+| 2026-06 | 1,431 | 1,422 | 99.4% | 9 |
+| **H1** | **9,572** | **9,511** | **99.36%** | **61** |
+
+(febrero venía en 90.1% antes de esa sesión)
 
 ```bash
 python3 baseline_universal.py --periodo 2026-02
 ```
 
-Pendientes por origen (149 total):
+**Lo primero que hay que leer para retomar es
+[`docs/investigacion_pendientes.md`](docs/investigacion_pendientes.md)**: trae
+los hallazgos que subieron el porcentaje, las nueve vías de cuadre con su
+evidencia, y la clasificación de los 61 pendientes que quedan.
 
-| Origen | n pendientes | Qué se sabe |
-|---|---:|---|
-| GASTO_REGISTRO | 74 | Ver `docs/pendientes.md` — 5 patrones confirmados (arrendamiento financiero — START BANREGIO y CATERPILLAR CREDITO —, captura duplicada de `Grc_Importe`, folio-agrupa-CFDI, CFDI de gobierno repartido entre folios por sucursal) más los ya conocidos de `layout-gastos` (CONSUMO_INTERNO, reversiones, NOMINA) sin portar |
-| COMPRA | 40 | Sin drill-down dirigido esta sesión — candidatos: patrón GLM/liquidación directa vía Cheque, documento duplicado sin match (ver `docs/pendientes.md`) |
-| CUENTA_X_PAGAR | 15 | Sin investigar caso por caso — `extract_poliza_por_origen()` no encuentra póliza en absoluto para estos |
-| NOTA_CREDITO_PROVEEDOR | 13 | 0% de cuadre — el chequeo actual no maneja signo (una nota de crédito reduce el cargo, no lo iguala) |
-| CHEQUE | 6 | Vía pago directo (liquidación sin pasar por COMPRA/GASTO_REGISTRO) |
-| FACTURA | 1 | Volumen mínimo, no investigado |
+Pendientes que quedan (61 en el semestre), por familia:
+
+| Familia | CFDI | Monto | Estado |
+|---|---:|---:|---|
+| Nómina: IMSS | 16 | $7.88M | Estructural: el CFDI mezcla cuota patronal (gasto) y obrera (retención), y la póliza de provisión consolida varios CFDI. Requiere modelar la provisión de nómina |
+| Nómina: INFONAVIT | 4 | $2.46M | Mismo mecanismo |
+| Crédito bancario | 11 | $1.60M | El CFDI de intereses no coincide con el interés posteado; requiere la tabla de amortización del contrato |
+| Cheque consolidado | 15 | $58K | Cheques que liquidan facturas de otros periodos (uno de 2024) — revisar si la etiqueta apunta al cheque correcto |
+| Agencia aduanal | 6 | $50K | El folio agrupa el pedimento completo; el CFDI del agente es solo una parte |
+| SAT | 2 | $43K | `Grc_Importe` simbólico de $0.01: el pago de impuestos no se registra como gasto |
+| CONAGUA | 4 | $12K | **Captura parcial real** — solo entran actualización y recargos; los derechos no pasan por el módulo. Reportable al cliente |
+| Otros | 3 | $45K | Casos sueltos |
 
 ## Qué método usar para seguir — y por qué
 
@@ -117,10 +135,17 @@ tres documentos de referencia que hay que mantener al día:
 
 ## Siguiente paso más obvio
 
-De los 149 pendientes, **COMPRA (40 casos)** es el origen con más volumen
-sin ningún drill-down dirigido esta sesión — aplicar el mismo patrón de
-trabajo que se usó para Gasto_Registro (tomar CFDI concretos, revisar
-documentos relacionados y configuración de póliza) es probablemente el
-siguiente paso de mayor impacto. Después, extender el chequeo de signo a
-NOTA_CREDITO_PROVEEDOR (0% de cuadre, causa ya diagnosticada — solo falta
-implementar la lógica de reversión).
+1. **Subir a GitHub el trabajo del 2026-09-09/10** (quedó pedido
+   explícitamente que NO se hiciera push esa noche): incluye la corrección del
+   punto 16 de `hallazgos.md`, que estaba mal, y tres hallazgos de
+   estructura/calidad de dato que valen para `trivasa-context` — ver la lista
+   en `docs/investigacion_pendientes.md`, Parte 4.
+2. **Familia nómina (IMSS/INFONAVIT: 20 CFDI, $10.3M)** — es el 85% del monto
+   pendiente. Para cuadrarla hay que separar cuota patronal de obrera y
+   repartir la póliza consolidada de provisión entre los CFDI que la componen.
+   Alternativa más barata: conciliarla **en agregado** (todos los CFDI del IMSS
+   del mes contra el total provisionado).
+3. **Extender el chequeo al lado del abono/pago.** Todo lo de arriba sigue
+   siendo un chequeo de UN SOLO LADO (cargo). El doble chequeo existe solo para
+   COMPRA (`baseline_conciliacion.py`).
+4. **Correr emitidos y retención** con el mismo método — ya está desbloqueado.
