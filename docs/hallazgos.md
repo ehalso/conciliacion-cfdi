@@ -213,3 +213,153 @@ resoluble desde este repo. Bloquea todo trabajo de nivel 3 (documento →
 póliza) tanto para emitidos como para el resto de retención, no solo
 para lo nuevo — recibidos ya construido no se ve afectado porque no
 vuelve a consultar esta tabla en cada corrida salvo que se re-ejecute.
+
+## 14. Baseline universal: sumar el cargo de TODOS los orígenes por CFDI, no elegir "el" documento
+
+Pedido explícito de Esteban 2026-09-09: en vez de conciliar un origen a la
+vez exigiendo que UN documento cuadre exacto (`baseline_conciliacion.py`),
+sumar el cargo de TODOS los documentos con los que un CFDI aparece
+etiquetado en `Comprobante_Digital` — sin importar el origen — y comparar
+esa suma contra el Subtotal. Implementado en `baseline_universal.py`.
+Resultado en vivo, CFDI recibidos feb-2026: **1,351/1,500 (90.1%)** del
+universo con valor monetario real ya cuadra en agregado (cifra final,
+tras el fix de Gasto_Registro del punto 15 — la primera corrida, con el
+Gasto_Registro por-origen viejo, daba 87.0%). Las combinaciones cruzadas
+de orígenes (COMPRA+COMPRA_INDIRECTO, GASTO_REGISTRO+CUENTA_X_PAGAR,
+COMPRA+FACTURA) cuadran al 100% — confirma que el problema real de fondo
+era exigir 1 documento = 1 CFDI, no un hueco de datos. Es un chequeo de UN
+SOLO LADO (cargo=subtotal); no exige que el abono/pago también cuadre.
+Detalle completo, tabla por combinación de orígenes y motivación completa
+en `pendientes.md`.
+
+## 15. Gasto_Registro: la llave granular correcta es `(Gr_Folio, Grd_ID)`, sumando TODOS los `Grc_ID` — no `(Gr_Folio, Grd_ID, Grc_ID)`
+
+Corrección 2026-09-09, pedida explícitamente por Esteban ("corrige el
+parser y la lógica de folio granular"). `Comprobante_Digital.Cd_Documento`
+para `Cd_Tabla='GASTO_REGISTRO'` trae el folio (10 caracteres) más un
+sufijo — la hipótesis inicial (y también la de una sesión hermana en
+`trivasa-context`, ver `calidad-de-datos.md` sección "Comprobante_Digital
+— cuatro gotchas") es que ese sufijo puede ser de 4 caracteres (`Grd_ID`,
+formato de 14 en total) o de 8 (`Grd_ID`+`Grc_ID`, formato de 18) según el
+caso. **Lo que se verificó en vivo aquí, y que no estaba confirmado en
+ningún lado antes**: los 4 caracteres extra del formato de 18 **no
+distinguen nada** — nunca hay más de un `Cd_Documento` completo distinto
+por `(Gr_Folio, Grd_ID)` (los primeros 14 caracteres), sin importar cuántas
+líneas de `Grc_ID` (prorrateo por centro de costo) tenga
+`Gasto_Registro_Control` para esa combinación.
+
+El cargo real que corresponde a un CFDI es la **suma de TODOS los
+`Grc_Importe`** de `Gasto_Registro_Control` para `(Gr_Folio, Grd_ID)` —
+verificado exacto contra el cargo realmente posteado en `Poliza_Detalle`
+(vía `Pd_Referencia = Gr_Folio`, ya sabiendo — ver punto 4 y el hallazgo
+paralelo de `layout-gastos` — que `Poliza_Detalle` no guarda `Grd_ID`
+explícito, solo el folio). Dos ejemplos confirmados exactos:
+
+```
+folio 01-0027091, Grd_ID 0001, 4 líneas de Grc_ID (prorrateo CeCo)
+  suma Grc_Importe = $2,746.64  ==  cargo Poliza_Detalle = $2,746.64
+
+folio 01-0035252, 2 Grd_ID distintos (2 CFDI en el mismo folio)
+  Grd_ID 0001: Grc_Importe = $2,168.05  -> 1a línea de Poliza_Detalle
+  Grd_ID 0002: Grc_Importe = $1,518.69  -> 2a línea de Poliza_Detalle
+```
+
+**Vuelta en falso, útil de documentar**: la primera implementación de este
+fix asumió la llave de 18 caracteres SIEMPRE (folio+Grd_ID+Grc_ID) y
+buscaba el `Grc_Importe` de ESE renglón exacto — el % de conciliación
+**bajó** en vez de subir (87.0% → 82.7-83.3%), porque 433 de 1,211
+documentos GASTO_REGISTRO de feb-2026 traen el formato corto (14
+caracteres) y quedaban sin cargo encontrado. Corregido usando
+`documento[:14]` como llave y sumando todos los `Grc_ID`. Ver
+`extract_gasto_registro.py`.
+
+Nota de alcance: `layout-gastos` (proyecto hermano en `trivasa-context`,
+ver `layout-gastos-ceco-cont-1.md`) ya sabía que "no existe llave real
+entre `Grc_ID` y `Poliza_Detalle`" y por eso usa *rank-pairing* a nivel
+`(FOLIO, CECO, TIPO_GASTO)` en vez de aislar líneas individuales. Este
+hallazgo no resuelve esa ambigüedad del lado de `Poliza_Detalle` — la
+evita, calculando el cargo directo desde `Gasto_Registro_Control` (que sí
+tiene llave limpia hacia el CFDI) sin necesitar volver a `Poliza_Detalle`
+línea por línea. Para el propósito de este repo (cuadrar cargo contra
+CFDI) es suficiente; no es una respuesta al problema más general que
+enfrenta `layout-gastos`.
+
+**De regalo**: se confirmó también que las pólizas canceladas (`CA`) no
+afectan este método (`Gasto_Registro_Control` no tiene `Pl_Folio` ni
+`Es_Cve_Estado`, es independiente de qué póliza materializó el motor), y
+que `extract_poliza_por_origen.py` ya filtraba `Es_Cve_Estado <> 'CA'`
+desde antes para el resto de los orígenes (COMPRA, CUENTA_X_PAGAR,
+NOTA_CREDITO_PROVEEDOR, COMPRA_INDIRECTO, CHEQUE) — no era necesario
+corregir nada ahí.
+
+## 16. Gasto_Registro: `Grc_Importe` puede venir duplicado idéntico entre folios/CFDI sin relación — error real de captura, no de método
+
+Caso confirmado 2026-09-09, proveedor BRIGGS EQUIPMENT (renta de
+montacargas): 5 CFDI independientes de $2,615.00 cada uno (unidades
+U-1269 a U-1272 y U-1275, folios `05-0178783/784/786/831/832`, todos
+capturados el 2026-02-11) tienen en `Gasto_Registro_Control.Grc_Importe`
+**exactamente el mismo importe, $45,060.3725** — pese a ser folios,
+proveedores-CFDI y centros de costo (`Cc_Cve_Centro_Costo`: `000455` x3,
+`000227`, `000055`) distintos. Confirmado que el problema está en el dato
+de origen, no en cómo se generó la póliza: el renglón de la configuración
+que genera el cargo (`0450` / renglón `0010`, "CARGO A GASTOS MINA") es
+`SUM(ABS(Gasto_Registro_Control.Grc_Importe))` — simplemente suma lo que
+ya esté en la tabla, y $45,060.3725 ya estaba mal ahí ANTES de generarse
+la póliza (que además la materializó fielmente: `Poliza_Detalle` trae ese
+mismo importe repetido en los 5 renglones).
+
+Patrón simétrico del lado del abono, misma póliza (`0000478228`): las
+referencias `A370838`-`A370845` (que sí coinciden con `Grd_Referencia` de
+estos folios) aparecen **dos veces** cada una en `Poliza_Detalle` — una
+vez con su importe correcto (~$3,033.40 / ~$1,740.00, coincide con
+`Grd_Precio_Neto_Importe`) y otra vez con un importe mucho mayor
+($49,236.63 o $28,242.81) repetido idéntico entre varias referencias
+distintas.
+
+Hipótesis (no confirmada, no hace falta para el propósito de este repo):
+error de captura por lote — al registrar varias facturas del mismo
+proveedor el mismo día, algún campo de importe se copió/pegó igual en
+varios renglones en vez de capturarse individualmente. **No es algo que
+la reconciliación pueda "arreglar" prorrateando** — el importe correcto
+por folio SÍ existe en `Gasto_Registro_Documento.Grd_Precio_Descontado_Importe`
+($2,615.00 en los 5 casos), pero el importe REALMENTE contabilizado en
+póliza es el erróneo. Vale la pena reportarlo a quien mantiene la captura
+de Gasto_Registro en mpro — es un hallazgo de calidad de dato del cliente,
+no un bug de este pipeline.
+
+## 17. CFDI de arrendamiento financiero: Gasto_Registro solo captura el interés, no el capital
+
+Confirmado 2026-09-09, proveedor START BANREGIO SOFOM (arrendadora). El
+CFDI `070FE9DB-1FEE-4CD8-893F-7FEC13C70DAD` (mensualidad 23/48 de un
+arrendamiento financiero, Subtotal $60,044.90) solo tiene un documento
+relacionado en mpro: GASTO_REGISTRO folio `01-0035117`, con comentario
+*"INTERES ARRENDAMIENTO FINANCIERO 23/48"* y cargo de solo **$14,540.09**
+(el interés). La diferencia, ~$45,504.81 (la porción de capital de la
+mensualidad), no pasa por Gasto_Registro — presumiblemente reduce un
+pasivo por arrendamiento financiero en otro módulo/póliza que este
+pipeline no rastrea todavía. Al menos 2 CFDI de este mismo proveedor
+confirmados con el patrón (`070FE9DB...` y `C3D0C835...`, ambos con
+diferencia idéntica de -$45,504.81) — candidato fuerte para explicar más
+casos entre los pendientes de Gasto_Registro de proveedores financieros
+(START BANREGIO, CATERPILLAR CREDITO también aparece con una diferencia
+grande similar en los pendientes, sin confirmar todavía si es el mismo
+patrón).
+
+## 18. `implocal:ImpuestosLocales` — complemento de impuestos locales que mpro suma al "Importe", no al "Impuesto"
+
+Confirmado 2026-09-09. El complemento SAT `implocal:ImpuestosLocales`
+(namespace `http://www.sat.gob.mx/implocal`) declara impuestos
+estatales/municipales (ej. ISH — Impuesto Sobre Hospedaje) que el SAT NO
+incluye en `cfdi:Impuestos/@TotalImpuestosTrasladados` a nivel
+Comprobante. mpro, al capturar el gasto en Gasto_Registro, **suma este
+traslado local dentro del "Importe"/base del gasto, no del impuesto** —
+confirmado exacto en dos CFDI: SubTotal($2,074.69) + local($93.36) =
+Importe mpro($2,168.05); SubTotal($1,453.29) + local($65.40) = Importe
+mpro($1,518.69). El valor resultante no aparece literal en ningún lado del
+XML — hay que sumar dos campos separados para reproducirlo. Confirmado
+también que afecta un porcentaje bajo pero no despreciable: 14 de 759
+CFDI de GASTO_REGISTRO en feb-2026 (1.8%) traen este complemento con
+traslado > $0. Implementado en `cfdi_parser.py`
+(`CfdiAmounts.impuestos_locales_trasladados/retenidos`, propiedad
+`base_mpro`) y aplicado como ajuste al Subtotal en
+`baseline_universal.py` solo para CFDI de GASTO_REGISTRO.

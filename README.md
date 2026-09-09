@@ -121,18 +121,25 @@ docs/
 - ✅ **Baseline UNIVERSAL (todos los orígenes, chequeo agregado de un solo
   lado)**: sumando el cargo de TODOS los documentos con los que un CFDI
   aparece etiquetado en mpro (sin importar el origen) y comparando contra
-  el Subtotal, **1,305/1,500 (87.0%)** de los CFDI recibidos con valor real
+  el Subtotal, **1,351/1,500 (90.1%)** de los CFDI recibidos con valor real
   de febrero 2026 ya cuadran — resuelve de raíz los casos de CFDI repartidos
   entre varios documentos/orígenes (COMPRA+COMPRA_INDIRECTO,
   GASTO_REGISTRO+CUENTA_X_PAGAR, liquidación directa vía Cheque). No exige
   que el abono también cuadre (ver `baseline_universal.py` y
   `pendientes.md`).
-- ⚠️ Gasto_Registro: 37% con el método viejo por-documento
-  (`reconciliacion_por_origen.py`), pero **82.8% con el chequeo agregado
-  universal** (mismo origen, exclusión de cuentas de orden más robusta) —
-  ver baseline UNIVERSAL abajo y `pendientes.md`. Los patrones específicos
-  (CONSUMO_INTERNO, reversiones, NOMINA) siguen sin portar y explican parte
-  del resto.
+- ✅ **Gasto_Registro corregido (2026-09-09): llave granular folio+Grd_ID,
+  no el folio truncado a 10**. Pasó de 37% (método viejo por-documento) a
+  **89.4%** con el chequeo agregado universal, en dos pasos: (1) el filtro
+  robusto de cuentas-de-orden vía `Pl_Configuracion` (82.8%), y (2) la
+  llave granular vía `Gasto_Registro_Control` — sumando `Grc_Importe` por
+  `(Gr_Folio, Grd_ID)` en vez de sumar toda la póliza referenciando el
+  folio truncado — más el ajuste por el complemento `implocal:
+  ImpuestosLocales` (89.4%). Detalle completo, incluida una vuelta en
+  falso (una hipótesis de llave `folio+Grd_ID+Grc_ID` que resultó
+  incorrecta y causó una regresión temporal), en `hallazgos.md` puntos
+  14-15 y `pendientes.md`. Confirmado que las pólizas canceladas (`CA`) ya
+  estaban filtradas desde antes en `extract_poliza_por_origen.py` para
+  todos los demás orígenes.
 - ✅ Compra_Indirecto: causa del 3% ya diagnosticada (no es un hueco de
   datos — son CFDI duplicados con COMPRA, donde ya cuadran; ver
   `pendientes.md`), pendiente decidir tratamiento.
@@ -149,3 +156,10 @@ docs/
   (emitidos, retención). Ver `hallazgos.md` punto 13.
 - 🔧 Mientras 207 (la base "buena") está en desarrollo, el pipeline corre
   contra 205 (`src/config.py:MPRO_TARGET`), acotado a enero–junio 2026.
+
+## Continuidad — para retomar el trabajo en otra sesión
+
+Ver [`PROGRESS.md`](PROGRESS.md): estado actual, método validado, pendientes
+por origen con lo ya investigado de cada uno, y cómo seguir. Es el punto de
+entrada pensado para que otra sesión de Claude Code retome el trabajo sin
+tener que releer todo el historial.

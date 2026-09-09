@@ -19,10 +19,12 @@ inventario/gasto) — NO exige además que el abono cuadre; ver "SUPUESTOS"
 en la hoja de salida.
 
 Validado en vivo 2026-09-09, CFDI recibidos feb-2026: de 1,500 CFDI con
-valor monetario real (subtotal > $1) encontrados en mpro, **1,305 (87.0%)**
+valor monetario real (subtotal > $1) encontrados en mpro, **1,351 (90.1%)**
 ya cuadran en agregado — muy por encima del techo por-origen-individual
 (81.8% COMPRA con el método de doble chequeo, ~37% Gasto_Registro con el
-método viejo de `reconciliacion_por_origen.py`).
+método viejo de `reconciliacion_por_origen.py`). Cifra actualizada tras
+corregir la llave granular de GASTO_REGISTRO (ver extract_gasto_registro.py
+y docs/hallazgos.md punto 15) — la primera corrida daba 87.0%.
 
 Uso:
     python3 baseline_universal.py --periodo 2026-02
@@ -45,14 +47,23 @@ from openpyxl.utils import get_column_letter  # noqa: E402
 from extract_sat import extract_sat_recibidos  # noqa: E402
 from extract_origen import extract_origenes_por_uuids  # noqa: E402
 from extract_poliza_por_origen import extract_poliza_por_origen, extract_poliza_cheque  # noqa: E402
+from extract_gasto_registro import extract_gasto_registro_granular  # noqa: E402
+from cfdi_parser import parse_cfdi  # noqa: E402
+from bridge_client import run_query, rows_as_dicts, sql_quote  # noqa: E402
+from config import MPRO_TARGET  # noqa: E402
 
 TOL = 1.00
 SUBTOTAL_MIN = 1.00  # bajo esto se considera CFDI sin valor monetario (TRASLADO/COMPROBANTE_PAGO)
+XML_BATCH = 150
 
 # Orígenes cuyo Pd_Referencia no liga de forma confiable al folio del
 # documento (ver poliza-explor/index.md) — se manejan aparte, no con el
 # query genérico por Pd_Referencia=documento.
 ORIGEN_MONTO_ESPECIAL = {"CHEQUE"}
+# GASTO_REGISTRO tiene su propia llave granular (folio+Grd_ID, sumando
+# todos los Grc_ID/centros de costo de esa llave, ver extract_gasto_registro.py)
+# — no usa el query genérico por Pd_Referencia.
+ORIGEN_GRANULAR = {"GASTO_REGISTRO"}
 # Orígenes que son "complementos" sin valor propio (Carta Porte, REP) — se
 # excluyen de la búsqueda de cargo (no aportan, y consultarlos es ruido).
 ORIGEN_SIN_VALOR = {"TRASLADO", "COMPROBANTE_PAGO"}
@@ -96,13 +107,22 @@ def calcular(periodo: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     origenes = origenes.dropna(subset=["documento"]).copy()
     origenes["documento_real"] = origenes["documento"].str.slice(0, 10)
     origenes["origen_up"] = origenes["origen"].str.upper()
-    origenes = origenes.drop_duplicates(subset=["uuid", "origen_up", "documento_real"])
+    # Dedup origin-aware: para orígenes normales, colapsar por folio corto
+    # (documento_real) evita doble-conteo cuando el mismo folio aparece
+    # repetido con distinto sufijo (folio "fantasma" duplicado). Para
+    # GASTO_REGISTRO eso mismo colapsaría de más: un folio puede agrupar
+    # varios Grd_ID/Grc_ID legítimos (renglones de gasto y prorrateos de
+    # centro de costo distintos, cada uno con su propio importe) — para ese
+    # origen hay que deduplicar por el `documento` COMPLETO, no el truncado.
+    origenes["_dedup_doc"] = origenes["documento_real"].where(
+        ~origenes["origen_up"].isin(ORIGEN_GRANULAR), origenes["documento"])
+    origenes = origenes.drop_duplicates(subset=["uuid", "origen_up", "_dedup_doc"]).drop(columns=["_dedup_doc"])
     print(f"     {origenes['uuid'].nunique()} CFDI con al menos 1 etiqueta en mpro"
           f" ({len(origenes)} etiquetas documento, algunos CFDI tienen varias)")
 
     print("[3/5] Cargo por documento, para cada origen presente (genérico, excluye cuentas de orden)")
     origenes_cargo = sorted(o for o in origenes["origen"].unique()
-                             if o.upper() not in ORIGEN_MONTO_ESPECIAL | ORIGEN_SIN_VALOR)
+                             if o.upper() not in ORIGEN_MONTO_ESPECIAL | ORIGEN_SIN_VALOR | ORIGEN_GRANULAR)
     cargo_parts = []
     for origen in origenes_cargo:
         docs = origenes.loc[origenes["origen"] == origen, "documento_real"].dropna().unique().tolist()
@@ -118,9 +138,44 @@ def calcular(periodo: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     cargo_df = pd.concat(cargo_parts, ignore_index=True) if cargo_parts else pd.DataFrame(
         columns=["origen", "documento_real", "cargo"])
 
-    merged = origenes.merge(cargo_df, on=["origen", "documento_real"], how="left")
+    merged = origenes[~origenes["origen_up"].isin(ORIGEN_GRANULAR)].merge(
+        cargo_df, on=["origen", "documento_real"], how="left")
     merged["cargo"] = merged["cargo"].fillna(0.0)
     total_cargo = merged.groupby("uuid")["cargo"].sum().rename("cargo_agregado")
+
+    print("[3b/5] GASTO_REGISTRO: llave granular folio+Grd_ID, suma de Grc_Importe (Gasto_Registro_Control)")
+    docs_gasto = origenes.loc[origenes["origen_up"] == "GASTO_REGISTRO", "documento"].dropna().unique().tolist()
+    if docs_gasto:
+        gasto_cargo = extract_gasto_registro_granular(docs_gasto)
+        gasto_cargo["cargo"] = gasto_cargo["cargo"].fillna(0.0)
+        gasto_map = origenes[origenes["origen_up"] == "GASTO_REGISTRO"][["uuid", "documento"]].merge(
+            gasto_cargo, on="documento", how="left")
+        gasto_map["cargo"] = gasto_map["cargo"].fillna(0.0)
+        gasto_total = gasto_map.groupby("uuid")["cargo"].sum().rename("cargo_gasto")
+        print(f"     {len(docs_gasto)} documentos GASTO_REGISTRO (llave completa) -> "
+              f"{gasto_cargo['cargo'].notna().sum()} con cargo encontrado")
+        total_cargo = total_cargo.add(gasto_total, fill_value=0.0).rename("cargo_agregado")
+
+    print("[3c/5] Impuestos locales (implocal) — ajuste al Subtotal para CFDI de GASTO_REGISTRO")
+    uuids_gasto = origenes.loc[origenes["origen_up"] == "GASTO_REGISTRO", "uuid"].unique().tolist()
+    ajuste_local = {}
+    for i in range(0, len(uuids_gasto), XML_BATCH):
+        batch = uuids_gasto[i:i + XML_BATCH]
+        in_list = ", ".join(sql_quote(u) for u in batch)
+        sql = f"SELECT Cd_Timbre_UUID, Cd_XML FROM Comprobante_Digital WHERE Cd_Timbre_UUID IN ({in_list}) AND Cd_XML IS NOT NULL"
+        for r in rows_as_dicts(run_query(MPRO_TARGET, sql)):
+            u = r["Cd_Timbre_UUID"].upper()
+            if u in ajuste_local:
+                continue
+            try:
+                amounts = parse_cfdi(r["Cd_XML"])
+                ajuste = float(amounts.impuestos_locales_trasladados - amounts.impuestos_locales_retenidos)
+            except Exception:
+                ajuste = 0.0
+            ajuste_local[u] = ajuste
+    n_con_local = sum(1 for v in ajuste_local.values() if abs(v) > 0.01)
+    print(f"     {n_con_local} de {len(ajuste_local)} CFDI de GASTO_REGISTRO con impuesto local detectado")
+    ajuste_series = pd.Series(ajuste_local, name="ajuste_local")
 
     print("[4/5] CHEQUE: match por monto (Pd_Referencia no es confiable para este origen)")
     docs_cheque = origenes.loc[origenes["origen_up"] == "CHEQUE", "documento_real"].dropna().unique().tolist()
@@ -137,13 +192,15 @@ def calcular(periodo: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     origenes_str = origenes.groupby("uuid")["origen"].apply(lambda s: ", ".join(sorted(set(s)))).rename("origenes")
 
     resumen = sat.set_index("uuid").join(total_cargo, how="left").join(cheque_abono, how="left").join(
-        origenes_str, how="left").reset_index()
+        origenes_str, how="left").join(ajuste_series, how="left").reset_index()
     resumen["cargo_agregado"] = resumen["cargo_agregado"].fillna(0.0)
     resumen["cheque_abono"] = resumen["cheque_abono"].fillna(0.0)
+    resumen["ajuste_local"] = resumen["ajuste_local"].fillna(0.0)
+    resumen["subtotal_ajustado"] = resumen["subtotal"] + resumen["ajuste_local"]
     resumen["en_mpro"] = resumen["uuid"].isin(set(origenes["uuid"]))
     resumen["monetario"] = resumen["subtotal"].abs() > SUBTOTAL_MIN
 
-    resumen["cuadra_cargo_subtotal"] = (resumen["cargo_agregado"] - resumen["subtotal"]).abs() <= TOL
+    resumen["cuadra_cargo_subtotal"] = (resumen["cargo_agregado"] - resumen["subtotal_ajustado"]).abs() <= TOL
     resumen["cuadra_pago_directo"] = (~resumen["cuadra_cargo_subtotal"]) & (
         (resumen["cheque_abono"] - resumen["total"]).abs() <= TOL)
     resumen["cuadra_agregado"] = resumen["cuadra_cargo_subtotal"] | resumen["cuadra_pago_directo"]
@@ -164,7 +221,7 @@ def calcular(periodo: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 
     resumen["cuadra_via"] = resumen.apply(via, axis=1)
     resumen["motivo_pendiente"] = resumen.apply(motivo, axis=1)
-    resumen["diferencia"] = (resumen["cargo_agregado"] - resumen["subtotal"]).round(2)
+    resumen["diferencia"] = (resumen["cargo_agregado"] - resumen["subtotal_ajustado"]).round(2)
 
     universo = resumen[resumen["monetario"] & resumen["en_mpro"]].copy()
     cols_base = ["uuid", "fecha", "rfc_emisor", "nombre_emisor", "origenes",
@@ -259,9 +316,9 @@ def hoja_portada(ws, periodo, conciliados, pendientes, resumen):
         "",
         "Por comparación: el baseline por origen (solo COMPRA, doble chequeo cargo+abono) da 81.8% sobre 713 CFDI;",
         "aquí, con el chequeo agregado de un solo lado mas COMPRA solo llega a 94.3% (701 CFDI) y Gasto_Registro a",
-        "82.8% (699 CFDI) — muy por encima del ~37% que daba el método viejo (reconciliacion_por_origen.py) para",
-        "ese origen, porque ahora la exclusión de 'cuentas de orden' usa Poliza_Configuracion (robusta) en vez del",
-        "filtro de texto anterior.",
+        "89.4% (699 CFDI) — muy por encima del ~37% que daba el método viejo (reconciliacion_por_origen.py) para",
+        "ese origen, gracias a la exclusión robusta de 'cuentas de orden' vía Poliza_Configuracion y la llave",
+        "granular (Gr_Folio, Grd_ID) sobre Gasto_Registro_Control.",
         "",
         "HOJAS",
         "  • Conciliados: CFDI + orígenes donde aparece + cargo agregado + vía de cuadre.",

@@ -4,8 +4,12 @@ Estado al 2026-09-09 (actualizado el mismo día): `Poliza_Control` **volvió
 a responder** (estaba caída desde 2026-09-07, ver `hallazgos.md` punto 13)
 — desbloquea todo el trabajo de nivel 3 pendiente (emitido, retención,
 Compra_Indirecto). También se validó un **método de doble chequeo
-(cargo+abono)** para COMPRA — ver sección nueva abajo, es el trabajo de
-mayor impacto de esta sesión.
+(cargo+abono)** para COMPRA, y más tarde el mismo día un **baseline
+UNIVERSAL** que suma el cargo de todos los orígenes por CFDI — es el
+método de mayor impacto y el que se usa actualmente (**90.1%**, tras
+corregir la llave granular de Gasto_Registro). Ver
+[`PROGRESS.md`](../PROGRESS.md) en la raíz del repo para un resumen
+orientado a retomar el trabajo.
 
 ## Método de doble chequeo (cargo + abono) — validado para COMPRA, 81.8%
 
@@ -95,19 +99,24 @@ Implementado en `baseline_universal.py`. Validado en vivo sobre CFDI
 recibidos feb-2026: de 5,563 CFDI, 5,523 tienen al menos una etiqueta en
 mpro; de esos, 4,023 son complementos sin valor propio (TRASLADO/
 COMPROBANTE_PAGO, Subtotal≈$0 — excluidos del cuadre). Del universo
-monetario real (1,500 CFDI), **1,305 (87.0%)** ya cuadran en agregado —
-muy por encima del techo por-origen-individual:
+monetario real (1,500 CFDI), **1,351 (90.1%)** ya cuadran en agregado —
+muy por encima del techo por-origen-individual (cifra actualizada
+2026-09-09 tras corregir la llave granular de GASTO_REGISTRO, ver
+subsección propia abajo; la primera corrida, sin ese fix, daba 87.0%):
 
 | Combinación de orígenes | n CFDI | % cuadra |
 |---|---:|---:|
 | COMPRA (solo) | 701 | 94.3% |
-| GASTO_REGISTRO (solo) | 699 | 82.8% |
+| GASTO_REGISTRO (solo) | 699 | 89.4% |
 | CUENTA_X_PAGAR (solo) | 33 | 54.5% |
 | GASTO_REGISTRO + CUENTA_X_PAGAR | 29 | **100%** |
-| COMPRA + COMPRA_INDIRECTO | 6 | **100%** |
-| COMPRA + FACTURA | 4 | **100%** |
 | NOTA_CREDITO_PROVEEDOR (solo) | 13 | 0% |
 | CHEQUE (solo, vía pago directo) | 11 | 45.5% |
+| COMPRA + COMPRA_INDIRECTO | 6 | **100%** |
+| COMPRA + FACTURA | 4 | **100%** |
+| COMPRA + GASTO_REGISTRO | 2 | **100%** |
+| ANTICIPO_CXP + NOTA_CREDITO | 1 | **100%** |
+| FACTURA (solo) | 1 | 0% |
 
 Dos lecturas importantes:
 
@@ -115,12 +124,13 @@ Dos lecturas importantes:
   vez de elegir "el" documento resuelve de raíz el problema de CFDI
   repartidos entre orígenes, sin necesitar lógica especial por caso.
 - **Gasto_Registro sube de ~37% (método viejo, `reconciliacion_por_origen.py`)
-  a 82.8%** solo por usar el filtro robusto de cuentas-de-orden
-  (`Pl_Configuracion`) en vez del filtro de texto frágil — sin portar
+  a 89.4%** — 82.8% solo por usar el filtro robusto de cuentas-de-orden
+  (`Pl_Configuracion`) en vez del filtro de texto frágil, y de ahí a 89.4%
+  corrigiendo la llave granular (ver subsección dedicada abajo). Sin portar
   ninguno de los patrones específicos ya documentados (CONSUMO_INTERNO,
-  reversiones, GASTO_RECLASIFICACION, NOMINA). Sugiere que buena parte de
+  reversiones, GASTO_RECLASIFICACION, NOMINA) — sugiere que buena parte de
   esa deuda técnica ya está resuelta "gratis" por el cambio de método; los
-  patrones específicos seguramente explican una porción del 17.2% restante.
+  patrones específicos seguramente explican una porción del resto.
 - **NOTA_CREDITO_PROVEEDOR da 0%** — consistente con el patrón de
   "documentos partidos"/signo ya documentado (`hallazgos.md` punto 8): una
   nota de crédito reduce el cargo, no lo iguala, y el chequeo actual no
@@ -133,11 +143,102 @@ compra/gasto bien reconocido contablemente, pero el pago puede seguir sin
 verificar. Extender el doble chequeo (como ya existe para COMPRA vía
 Serie+Folio) a los demás orígenes es el siguiente paso natural.
 
-**Pendiente**: de los 195 sin cuadrar, investigar dirigido por combinación
-de orígenes (empezando por GASTO_REGISTRO solo, 120 casos, y COMPRA solo,
-40 casos) — candidatos: los patrones ya conocidos de Gasto_Registro
-(CONSUMO_INTERNO, reversiones, NOMINA) y una versión con signo para
+**Pendiente**: de los 149 sin cuadrar (actualizado 2026-09-09, tras el fix
+de llave granular), investigar dirigido por origen:
+
+| Origen (pendientes) | n |
+|---|---:|
+| GASTO_REGISTRO | 74 |
+| COMPRA | 40 |
+| CUENTA_X_PAGAR | 15 |
+| NOTA_CREDITO_PROVEEDOR | 13 |
+| CHEQUE | 6 |
+| FACTURA | 1 |
+
+Candidatos por origen: los patrones ya conocidos de Gasto_Registro
+(CONSUMO_INTERNO, reversiones, NOMINA, y los tres patrones nuevos de la
+subsección siguiente — folio-agrupa-CFDI, arrendamiento financiero,
+captura duplicada de `Grc_Importe`), y una versión con signo para
 NOTA_CREDITO_PROVEEDOR.
+
+## Gasto_Registro — llave granular corregida (2026-09-09): folio+Grd_ID, no folio truncado a 10
+
+Pedido explícito de Esteban: confirmar que las pólizas canceladas (`CA`)
+estuvieran filtradas, y corregir la lógica de folio granular de
+Gasto_Registro para ver cómo quedaba el % de conciliación. Dos hallazgos
+en el camino, uno de confirmación y uno de corrección real:
+
+**CA ya estaba filtrado.** `extract_poliza_por_origen.py` ya trae
+`AND p.Es_Cve_Estado <> 'CA'` en las dos queries que arma (la genérica por
+origen y la de CHEQUE) — COMPRA, CUENTA_X_PAGAR, NOTA_CREDITO_PROVEEDOR,
+COMPRA_INDIRECTO y CHEQUE ya excluían canceladas desde antes de esta
+sesión. Para GASTO_REGISTRO no aplica: el nuevo método (abajo) no pasa por
+`Poliza_Detalle`, así que no depende de qué póliza materializó el motor.
+
+**La llave granular correcta es `(Gr_Folio, Grd_ID)`, sumando TODOS los
+`Grc_ID`.** El primer intento asumió que `Comprobante_Digital.Cd_Documento`
+traía folio(10)+Grd_ID(4)+Grc_ID(4) = 18 caracteres siempre, y que había
+que aislar el `Grc_Importe` de ESE `Grc_ID` exacto. Verificado en vivo que
+es **incorrecto**: `Cd_Documento` para este origen tiene dos formatos,
+14 caracteres (folio+Grd_ID, sin sufijo de Grc_ID) o 18 (con un sufijo que
+resultó ser irrelevante — nunca hay más de un `Cd_Documento` distinto por
+`(folio, Grd_ID)`, sin importar cuántos `Grc_ID` tenga ese renglón en
+`Gasto_Registro_Control`). El cargo correcto es la **suma de TODOS los
+`Grc_Importe`** de esa llave — verificado exacto contra el cargo realmente
+posteado en `Poliza_Detalle` (vía `extract_poliza_por_origen`, que sí lee
+`Poliza_Detalle`), incluyendo un folio con 8 renglones de prorrateo por
+centro de costo: suma control $2,746.64 = cargo póliza $2,746.64 (folio
+`01-0027091`). Ver `extract_gasto_registro.py` (docstring actualizado con
+el detalle completo) y `hallazgos.md` puntos 14-15.
+
+Con la hipótesis equivocada (18 caracteres siempre), el % **bajó** de
+87.0% a 82.7-83.3% en vez de subir — 433 de 1,211 documentos GASTO_REGISTRO
+de feb-2026 tienen el formato de 14 caracteres y quedaban sin cargo
+encontrado (`None` → 0.0). Con la llave corregida: **89.4%** para
+GASTO_REGISTRO solo (era 82.8% con el método anterior a esta sesión), y
+**90.1%** el agregado universal completo (era 87.0%).
+
+**Bug adicional corregido en el camino**: el `drop_duplicates` inicial de
+`baseline_universal.py::calcular()` deduplicaba por `documento_real`
+(folio truncado a 10) para **todos** los orígenes por igual — correcto
+para colapsar folios "fantasma" duplicados en la mayoría de los orígenes,
+pero incorrecto para GASTO_REGISTRO: colapsaba de más los `Grd_ID`
+legítimos de un mismo folio. Se corrigió para que el dedup sea
+origin-aware (dedup por `documento` completo solo para GASTO_REGISTRO) —
+ver `ORIGEN_GRANULAR` en `baseline_universal.py`.
+
+### Tres patrones nuevos encontrados en los pendientes de Gasto_Registro (drill-down manual)
+
+- **Arrendamiento financiero (leasing) — solo se captura el interés.**
+  CFDI de START BANREGIO SOFOM (renta de mensualidad de arrendamiento
+  financiero): `Gasto_Registro_Documento` solo trae el renglón de
+  **interés** (ej. $14,540.09 de un CFDI con Subtotal $60,044.90) — la
+  porción de capital/amortización (~$45,504.81) no pasa por
+  Gasto_Registro, presumiblemente reduce un pasivo en otro módulo no
+  rastreado por este pipeline. Al menos 2 CFDI confirmados de este
+  proveedor con el mismo patrón; probablemente más entre los pendientes.
+- **Captura duplicada de `Grc_Importe` — error real de datos, no de
+  método.** Caso BRIGGS EQUIPMENT (renta de montacargas, 5 CFDI
+  independientes de $2,615.00 cada uno, folios `05-0178783/784/786/831/832`
+  del 2026-02-11): los 5 `Gasto_Registro_Control.Grc_Importe` traen
+  **exactamente el mismo importe, $45,060.3725**, pese a ser folios,
+  proveedores-CFDI y centros de costo distintos — y ese mismo valor es el
+  que terminó posteado en `Poliza_Detalle` (confirmado que el problema
+  está en la captura, no en cómo se generó la póliza — ver
+  `hallazgos.md` punto 16 para el detalle de la configuración
+  revisada, `0450`). Un patrón simétrico aparece del lado del abono de la
+  misma póliza (referencias `A370838`-`A370845` duplicadas con dos
+  totales grandes repetidos, $49,236.63 y $28,242.81, además de sus
+  montos correctos). Parece un error de captura por lote (copy-paste) al
+  registrar varias facturas del mismo proveedor el mismo día — vale la
+  pena reportarlo a quien mantiene la captura de Gasto_Registro en mpro,
+  no es algo que este pipeline pueda "arreglar" prorrateando.
+- **Folio agrupa más de un CFDI** (ya documentado en sesiones previas,
+  confirmado que sigue siendo la causa más común): un folio de
+  Gasto_Registro con varios `Grd_ID` reparte varios CFDI distintos — ya
+  resuelto por la llave granular de arriba, pero sigue explicando
+  pendientes cuando el CFDI en cuestión no tiene ninguna etiqueta propia
+  bien formada.
 
 ## Emitidos: ingest parcial — nivel 1 corrido y validado, nivel 3 bloqueado por infraestructura
 
@@ -208,12 +309,20 @@ para emitidos.
 
 ## Pendiente dentro de recibido — mejoras al alcance ya construido
 
-### Gasto_Registro — el bloque más grande sin resolver ($22–24M, ~37% cuadre agregado)
+### Gasto_Registro — actualizado a 89.4% (ver sección dedicada arriba); patrones específicos de `layout-gastos` siguen sin portar
+
+Nota: esta sección describe el estado de `reconciliacion_por_origen.py`
+(el método por-documento antiguo, 37%). El método vigente
+(`baseline_universal.py`, agregado + llave granular) ya llega a **89.4%**
+para este origen sin portar nada de lo de abajo — ver la sección "Gasto_Registro
+— llave granular corregida" más arriba para el detalle completo del fix
+2026-09-09. Lo de abajo sigue siendo relevante como candidato para explicar
+parte de los 74 pendientes restantes.
 
 El proyecto `layout-gastos` (fuera de este repo, en
 `trivasa-context/docs/proyectos/layout-gastos/`) ya documentó y validó
 varios patrones específicos de este origen que **no están portados
-todavía** a `reconciliacion_por_origen.py`:
+todavía** a `reconciliacion_por_origen.py` ni a `baseline_universal.py`:
 
 - **CONSUMO_INTERNO** (patrón de doble póliza): excluir vía
   `Poliza_Configuracion.Pc_Descripcion`, pero el filtro actual
