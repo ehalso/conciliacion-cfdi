@@ -39,12 +39,28 @@ class CfdiAmounts:
     # no basta para cuadrar contra mpro cuando este complemento existe.
     impuestos_locales_trasladados: Decimal = Decimal("0")
     impuestos_locales_retenidos: Decimal = Decimal("0")
+    # Traslados que NO son IVA (clave '002') — en la práctica IEPS (clave
+    # '003'): combustibles, refrescos, botanas, telecomunicaciones. Confirmado
+    # en vivo 2026-09-09 que mpro los suma DENTRO de la base del gasto, igual
+    # que los impuestos locales: OXXO 100.11 + IEPS 3.63 = 103.74 capturado;
+    # Telmex (528.55 - 65.00 descuento) + IEPS 9.73 = 473.28 capturado.
+    ieps_trasladado: Decimal = Decimal("0")
 
     @property
     def base_mpro(self) -> Decimal:
         """Subtotal ajustado para comparar contra el 'Importe'/base que
-        registra mpro: Subtotal + traslados locales - retenciones locales."""
-        return self.subtotal + self.impuestos_locales_trasladados - self.impuestos_locales_retenidos
+        registra mpro, en la MONEDA ORIGINAL del CFDI:
+
+            Subtotal - Descuento + IEPS + traslados locales - retenciones locales
+
+        El `Descuento` (2026-09-09) es la pieza que más pendientes explicaba:
+        `raw_sat.cfdi_recibidos.subtotal` guarda el subtotal **bruto**, sin
+        restar el descuento a nivel Comprobante, mientras que mpro captura y
+        postea el importe **neto**. Confirmado exacto en CFDI de COMPRA y de
+        GASTO_REGISTRO (ej. AT&T 12,472.32 - 12,120.64 = 351.68 = cargo real).
+        """
+        return (self.subtotal - self.descuento + self.ieps_trasladado
+                + self.impuestos_locales_trasladados - self.impuestos_locales_retenidos)
 
 
 def _dec(value: Optional[str]) -> Decimal:
@@ -106,6 +122,19 @@ def parse_cfdi(xml_data) -> CfdiAmounts:
         total_trasladados = _dec(impuestos.attrib.get("TotalImpuestosTrasladados"))
         total_retenidos = _dec(impuestos.attrib.get("TotalImpuestosRetenidos"))
 
+    # Traslados no-IVA (IEPS, clave '003') del nodo Impuestos de nivel
+    # Comprobante. mpro los suma a la BASE del gasto, no al impuesto.
+    ieps = Decimal("0")
+    if impuestos is not None:
+        for hijo in impuestos:
+            if etree.QName(hijo).localname != "Traslados":
+                continue
+            for tr in hijo:
+                if etree.QName(tr).localname != "Traslado":
+                    continue
+                if (tr.attrib.get("Impuesto") or "").strip() != "002":
+                    ieps += _dec(tr.attrib.get("Importe"))
+
     # Complemento ImpuestosLocales — no siempre presente (solo cuando el
     # emisor cobra un impuesto estatal/municipal, ej. ISH de hospedaje). Se
     # busca por localname para no depender de qué prefijo haya usado el XML.
@@ -131,4 +160,5 @@ def parse_cfdi(xml_data) -> CfdiAmounts:
         total=_dec(attrib.get("Total")),
         impuestos_locales_trasladados=local_trasladados,
         impuestos_locales_retenidos=local_retenidos,
+        ieps_trasladado=ieps,
     )
