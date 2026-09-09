@@ -47,6 +47,16 @@ def _fetch_batch(origen: str, documentos: list[str]) -> list[dict]:
         f"WHERE UPPER(pc.Pc_Tabla) = UPPER({sql_quote(origen)}) "
         "AND p.Es_Cve_Estado <> 'CA' "
         "AND (pcf.Pc_Descripcion IS NULL OR UPPER(pcf.Pc_Descripcion) NOT LIKE '%CUENTAS DE ORDEN%') "
+        # Filtro estructural de cuentas de orden (2026-09-09): el de arriba, por
+        # texto de Pc_Descripcion, se le escapan las variantes reales que usa el
+        # catálogo — "(CTS ORDEN)", "( CUENTA DE ORDEN)", "(CUENT ORDEN)",
+        # "(CUENTA ORDEN)" — y por eso Cuenta_x_Pagar (config 0360) y
+        # Nota_Credito_Proveedor (0235/0352) contaban el cargo DOS VECES.
+        # En el catálogo de cuentas, las de orden son exactamente las de raíz de
+        # 5 dígitos (10100..10600, grupo `E.*`: Valores Ajenos / Contingentes /
+        # De Control); las cuentas reales tienen raíz de 4 dígitos (1110, 1140,
+        # 2110, 6100...). Eso no depende de cómo esté redactada la configuración.
+        "AND pd.Cc_Cve_Cuenta_Contable NOT LIKE '10[1-6]00%' "
         f"AND pc.Pc_Documento IN ({in_list}) "
         "GROUP BY pd.Pd_Referencia, pd.Pd_Tipo"
     )
@@ -96,6 +106,7 @@ def extract_poliza_cheque(folios: list[str]) -> pd.DataFrame:
             "JOIN Poliza p ON p.Pl_Folio = pc.Pl_Folio AND p.Es_Cve_Estado <> 'CA' "
             "JOIN Poliza_Detalle pd ON pd.Pl_Folio = pc.Pl_Folio AND pd.Pd_Tipo = 2 "
             f"WHERE ch.Ch_Folio IN ({in_list}) "
+            "AND pd.Cc_Cve_Cuenta_Contable NOT LIKE '10[1-6]00%' "
             "AND ABS(pd.Pd_Importe - ch.Ch_Importe) <= 1"
         )
         result = run_query(MPRO_TARGET, sql)
