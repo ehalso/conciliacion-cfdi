@@ -49,6 +49,10 @@ python3 poliza_reconciliation.py --periodo 2026-01
 # Cuenta_x_Pagar, Cheque, Nota_Credito_Proveedor, Compra_Indirecto) — el nivel de
 # detalle más profundo, con cuadre documento-a-documento Y cuadre agregado por origen
 python3 reconciliacion_por_origen.py --periodo 2026-02
+
+# Baseline conciliados/pendientes (doble chequeo cargo=subtotal Y abono=total,
+# via Serie+Folio del CFDI) — por ahora validado para origen COMPRA
+python3 baseline_conciliacion.py --periodo 2026-02 --origen COMPRA
 ```
 
 Cada script imprime su avance y termina escribiendo un `.xlsx` en `output/`
@@ -95,29 +99,33 @@ docs/
   pendientes.md                 Qué falta y por qué (emitido, retención, orígenes sin resolver)
 ```
 
-## Estado (2026-09-07, actualizado el mismo día)
+## Estado (2026-09-09, actualizado el mismo día)
 
 - ✅ Conciliación base nivel CFDI (recibidos): corrida y validada para
   ene/feb/ago 2026 y Q1 2026, ~99% OK.
 - ✅ Censo de orígenes de documento en mpro para recibidos (qué módulos
   hay que reconciliar y cuánto $ representa cada uno).
+- ✅ **Método de doble chequeo (cargo + abono) validado para COMPRA**:
+  cargo (folio de compra) = Subtotal, Y abono (Serie+Folio del propio
+  CFDI) = Total → **578/713 (81.1%) conciliados** para febrero 2026. Ver
+  `baseline_conciliacion.py` y `pendientes.md`.
 - ✅ Reconciliación por origen (Compra, Cheque, Cuenta_x_Pagar) con cuadre
   agregado 90–97% para febrero 2026.
-- ⚠️ Gasto_Registro y Compra_Indirecto: cobertura real todavía baja (~37%
-  y ~3% respectivamente) — requieren lógica adicional, ver `pendientes.md`.
+- ⚠️ Gasto_Registro: cobertura real todavía baja (~37%) — requiere lógica
+  adicional, ver `pendientes.md`.
+- ✅ Compra_Indirecto: causa del 3% ya diagnosticada (no es un hueco de
+  datos — son CFDI duplicados con COMPRA, donde ya cuadran; ver
+  `pendientes.md`), pendiente decidir tratamiento.
 - 🟡 Emitidos: ingest ya trajo enero 2026 completo (6,500 CFDI) — nivel 1
   corrido y validado (99.8% OK), censo de origen hecho (FACTURA,
   NOTA_CREDITO, COMPROBANTE_PAGO, TRASLADO). Falta el resto del histórico
-  y el nivel 3 (documento → póliza), este último bloqueado ahora mismo
-  por una caída de infraestructura — ver abajo y `pendientes.md`.
+  y el nivel 3 (documento → póliza) — ya desbloqueado, ver abajo.
 - 🟡 Retención: el mapeo a mpro que antes no aparecía **ya se encontró**
   (`Comprobante_Digital.Cd_Tabla='CONSTANCIA_RETENCION'`) pero solo cubre
   el 36% de los CFDI de enero 2026 (16 de 45) — el resto no tiene ninguna
   fila en mpro, causa sin resolver. Ver `pendientes.md`.
-- ⛔ `Poliza_Control` (la tabla clave para trazar cualquier documento
-  hasta su póliza) está devolviendo error en la bridge desde el
-  2026-09-07, en ambos targets — bloquea todo trabajo nuevo de nivel 3
-  (emitidos y retención) hasta que se resuelva del lado de
-  `ctunlinux`/el bridge. Ver `hallazgos.md` punto 13.
+- ✅ `Poliza_Control` **volvió a responder** (2026-09-09) — estuvo caída
+  desde 2026-09-07. Desbloquea todo el trabajo de nivel 3 pendiente
+  (emitidos, retención). Ver `hallazgos.md` punto 13.
 - 🔧 Mientras 207 (la base "buena") está en desarrollo, el pipeline corre
   contra 205 (`src/config.py:MPRO_TARGET`), acotado a enero–junio 2026.

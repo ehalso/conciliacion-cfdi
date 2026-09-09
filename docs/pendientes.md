@@ -1,9 +1,56 @@
 # Pendientes
 
-Estado al 2026-09-07 (actualizado el mismo día): el ingest de Claude Code
-avanzó y **desbloqueó parcialmente emitido y retención** — ver el detalle
-de cada uno abajo. Sigue habiendo trabajo real por delante en ambos antes
-de llegar al mismo nivel de profundidad que recibido (nivel 3, por origen).
+Estado al 2026-09-09 (actualizado el mismo día): `Poliza_Control` **volvió
+a responder** (estaba caída desde 2026-09-07, ver `hallazgos.md` punto 13)
+— desbloquea todo el trabajo de nivel 3 pendiente (emitido, retención,
+Compra_Indirecto). También se validó un **método de doble chequeo
+(cargo+abono)** para COMPRA — ver sección nueva abajo, es el trabajo de
+mayor impacto de esta sesión.
+
+## Método de doble chequeo (cargo + abono) — validado para COMPRA, 81.1%
+
+Hasta ahora el pipeline solo comparaba el **cargo** (posteado bajo el folio
+de compra) contra subtotal-o-total del CFDI. Se encontró y validó en vivo
+(2026-09-09, 713 CFDI de COMPRA, feb-2026) un segundo chequeo independiente
+usando el **abono**:
+
+- **CARGO**: `Pd_Referencia` = folio de compra (`Comprobante_Digital.Cd_Documento`
+  truncado a 10) → debe igualar el **Subtotal** del CFDI.
+- **ABONO**: `Pd_Referencia` = **Serie+Folio del propio CFDI**
+  (`Cd_Serie`+`Cd_Serie_Folio` de `Comprobante_Digital` — columnas que ya
+  existen, no hace falta parsear el XML), normalizado (sin ceros a la
+  izquierda, ignorando el prefijo manual "Fact: " que a veces trunca el
+  campo `Pd_Referencia`, límite 15 caracteres) → debe igualar el **Total**.
+
+Con los dos chequeos juntos: **578/713 (81.1%) conciliados** (cargo 88.4%,
+abono 89.6% por separado). Implementado en `baseline_conciliacion.py`
+(nuevo script, reusa `extract_poliza_por_origen` para el cargo). Nota: el
+IVA se postea como una sola línea consolidada por día/póliza, no por
+documento — no es verificable por CFDI individual, se deja fuera del
+chequeo automatizado a propósito.
+
+**De los 135 sin cuadrar, dos causas confirmadas:**
+
+- **Patrón "liquidación directa" (≈43 casos, proveedor GLM/Gas LP de
+  Mérida y probablemente otros pagados de contado)**: la póliza de COMPRA
+  se **cancela** (`Es_Cve_Estado='CA'`) y el pago se vuelve a capturar
+  directo en el módulo **Cheque** — el abono nunca se recontabiliza en
+  COMPRA. El cargo sí cuadra; falta buscar el abono también en Cheque para
+  estos casos. Pendiente: confirmar en qué otros proveedores se repite.
+- **Cruce con COMPRA_INDIRECTO (varios casos, ej. proveedor "Industrial de
+  Alambres")**: el mismo CFDI aparece tageado en dos orígenes —
+  COMPRA (la mayor parte del valor) y COMPRA_INDIRECTO (una porción
+  prorrateada hacia *otras* compras, como costo de flete/maniobra). Si no
+  se suman ambos orígenes, cargo y abono quedan cortos exactamente por esa
+  porción.
+- Quedan ~85 casos sin causa confirmada — candidatos: más proveedores con
+  el patrón GLM, o folios de compra que agrupan más de una línea contable
+  sin corresponder 1 a 1 con un solo CFDI (confirmado que existe: ver
+  ejemplo folio `05-0030182`, reusado en varias líneas del mismo día).
+
+**Pendiente**: extender el método a los demás orígenes con mapeo
+confirmado (GASTO_REGISTRO, CUENTA_X_PAGAR, NOTA_CREDITO_PROVEEDOR), y
+buscar el patrón GLM también ahí.
 
 ## Emitidos: ingest parcial — nivel 1 corrido y validado, nivel 3 bloqueado por infraestructura
 
@@ -29,23 +76,15 @@ UUIDs):
 para Cheque/recibidos (REP tipo P y Carta Porte respectivamente — ver
 `hallazgos.md` puntos 6 y el nuevo punto 12).
 
-**Bloqueado ahora mismo**: pasar a nivel 3 (trazar FACTURA/NOTA_CREDITO
-hasta su póliza, cargo/abono real) requiere `Poliza_Control`, y esa tabla
-específica está devolviendo `HTTP 502` en la bridge para **ambos**
-targets (205 y 207) desde el 2026-09-07 — confirmado con `SELECT TOP 3`
-sin ningún filtro, mientras que `Comprobante_Digital`, `Poliza`,
-`Poliza_Detalle`, `Poliza_Configuracion` y `Cheque` sí responden con
-normalidad. Parece un problema puntual de esa tabla (lock, reindexado, o
-algo relacionado con la carga que acaba de correr) — no algo resoluble
-desde este repo. Vale la pena que Esteban le pida a Claude Code que
-revise el estado de `Poliza_Control` en `ctunlinux`/el bridge.
-
-Pendiente, una vez que Poliza_Control vuelva a responder: escribir el
-extractor de nivel 3 para FACTURA/NOTA_CREDITO (mismo patrón que
-`extract_poliza_por_origen.py`: folio truncado a 10 caracteres,
-`Pd_Referencia` para aislar el documento dentro de la póliza, exclusión de
-cuentas de orden). Completar también el resto de 2025/2026 en el ingest
-para tener el mismo rango de fechas que recibidos.
+**`Poliza_Control` ya responde de nuevo** (confirmado 2026-09-09, resuelto
+del lado de `ctunlinux`/bridge — ver `hallazgos.md` punto 13). Sigue
+pendiente escribir el extractor de nivel 3 para FACTURA/NOTA_CREDITO
+(mismo patrón que `extract_poliza_por_origen.py`: folio truncado a 10
+caracteres, `Pd_Referencia` para aislar el documento dentro de la póliza,
+exclusión de cuentas de orden — y ya con el método de doble chequeo
+cargo+abono validado esta sesión para COMPRA, ver más abajo). Completar
+también el resto de 2025/2026 en el ingest para tener el mismo rango de
+fechas que recibidos.
 
 ## Retención: mapeo a mpro encontrado, pero solo cubre ~36% de los CFDI (corregido 2026-09-08)
 
@@ -105,13 +144,18 @@ todavía** a `reconciliacion_por_origen.py`:
 Portar esta lógica es el trabajo de mayor impacto disponible ahora mismo
 (es el origen con más $ sin resolver).
 
-### Compra_Indirecto — bajo volumen, método propio ya documentado
+### Compra_Indirecto — causa del 3% confirmada (2026-09-09): no es un hueco de datos
 
-Solo 8 documentos, $253K. `poliza-explor` ya documenta un método propio
-(Cargo = `SUM(Ci_Precio_Descontado_Importe)` por `Ci_Folio`, excluyendo el
-par de cuentas de orden) que no se ha aplicado aquí — se usó el método
-genérico (Pd_Referencia) y dio 3% de cuadre. Barato de arreglar por el
-volumen tan chico.
+Investigado a fondo: los 6 CFDI de febrero SÍ tienen póliza activa. El 3%
+de cuadre pasa porque estos CFDI **también aparecen bajo COMPRA** (con su
+propio folio de compra, ahí sí cuadran ~88-102%) — COMPRA_INDIRECTO solo
+captura la porción de costo indirecto (flete/maniobra) que ese mismo CFDI
+prorratea hacia *otras* órdenes de compra, nunca su importe completo.
+Comparar COMPRA_INDIRECTO contra el total del CFDI compara contra dinero
+que ya está resuelto (duplicado) en COMPRA. **Se debe sacar del cálculo de
+% cuadre por importe de CFDI** — si se quiere validar, la comparación
+correcta es que la porción prorrateada tenga póliza y sume bien, no que
+iguale el CFDI completo.
 
 ### Cuenta_x_Pagar — 29-33 documentos sin ninguna póliza encontrada
 
