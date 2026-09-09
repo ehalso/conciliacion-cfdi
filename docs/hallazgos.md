@@ -649,3 +649,40 @@ dos renglones como duplicados —el error del punto 16 original— borra la mita
 del pasivo. Esto todavía **no** está implementado en el baseline: el chequeo
 actual es de un solo lado (cargo), así que no lo toca; hay que incorporarlo
 cuando se extienda el doble chequeo cargo+abono a los orígenes en USD/EUR.
+
+## 27. Migración de la bridge HTTP a conexión directa a BD, y primer reporte Streamlit
+
+2026-09-09. Esta sesión de Cowork, que hasta ahora no tenía ruta de red hacia
+la LAN de Trivasa (de ahí la bridge HTTP documentada en `docs/arquitectura.md`
+y usada por `src/bridge_client.py` desde el inicio del proyecto), pasó a
+correr con acceso directo — confirmado con una conexión TCP real a los tres
+targets (`192.168.117.205:1433`, `192.168.117.207:1433`,
+`192.168.117.14:5433`, esta última con `ping` mostrando ~98ms de latencia vía
+VPN).
+
+`src/bridge_client.py` se reescribió para conectar directo por SQLAlchemy
+(`psycopg2` para `postgres_dw`, `pymssql` para `mssql_205`/`mssql_207`) en vez
+de HTTP, **conservando el mismo contrato** (`run_query(target, sql) ->
+{"columns", "rows", "row_count", "truncated"}`) — los ~10 extractores que lo
+importan no cambiaron una sola línea. Se agregó un guard de solo lectura del
+lado cliente (`_guard_readonly`: un único `SELECT`/`WITH`, sin palabras clave
+de escritura), espejo del `sql_guard.py` que antes vivía del lado servidor de
+la bridge. Credenciales: `.env` local (gitignored, ver `.env.example`) con
+`PG_USER`/`PG_PASSWORD` y `MSSQL_205_USER`/`PASSWORD`/`MSSQL_207_USER`/
+`PASSWORD` — las de SQL Server no estaban en Infisical (solo las de Postgres,
+proyecto `Trivasa`, rol `ealcocer_ro`), Esteban las dio directo en el chat y
+se guardaron tanto en el `.env` local como en Infisical (mismo proyecto,
+claves `MSSQL_205_USER/PASSWORD`, `MSSQL_207_USER/PASSWORD`) para no perderlas.
+
+**Validado, no solo asumido**: correr `baseline_universal.py --periodo
+2026-02` completo contra la conexión directa dio exactamente el mismo
+resultado ya documentado (1,492/1,500 CFDI, 99.5%) que contra la bridge — el
+cambio de transporte no alteró ningún número. El guard de solo lectura se
+probó rechazando un `DELETE` y un `SELECT 1; DROP TABLE foo` (multi-statement).
+
+De la misma sesión: primer reporte Streamlit del proyecto,
+`streamlit_app_conciliacion.py` — envuelve `baseline_universal.calcular()` en
+una UI con selector de periodo(s), filtros, KPIs y descarga a Excel, sin
+duplicar la lógica de conciliación. Validado con `streamlit.testing.v1.AppTest`
+contra datos en vivo (multi-periodo, filtro por origen, búsqueda de texto,
+las tres sin excepción) antes de considerarlo listo para `streamlit run`.

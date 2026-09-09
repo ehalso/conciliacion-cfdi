@@ -14,12 +14,16 @@ Management Pro / mpro (ERP en SQL Server). La pregunta de negocio: **¿qué
 documentos de mpro corresponden a cada CFDI, y el importe contabilizado
 cuadra con el importe fiscal del CFDI?**
 
-Arquitectura en dos partes (detalle en `docs/arquitectura.md`): una API
-puente de solo lectura (`https://reportesweb.frento.com.mx/query`,
-mantenida en otra máquina) expone las bases de datos; este repo hace toda
-la extracción, parseo y lógica de conciliación. El bridge es
-**estrictamente de solo lectura** — nunca se intenta un write/DDL/DML
-contra él.
+Conexión **directa** a las bases de datos (desde 2026-09-09, ver
+`docs/arquitectura.md`) — `src/bridge_client.py` habla SQLAlchemy contra
+`postgres_dw` y los dos SQL Server de mpro, con credenciales en un `.env`
+local (gitignored, ver `.env.example`). Antes de esa fecha, esta sesión no
+tenía ruta de red a la LAN de Trivasa y todo pasaba por una API puente
+HTTP mantenida en otra máquina — historia completa y fallback conocido en
+`docs/arquitectura.md`. En ambos casos la regla no cambia: **estrictamente
+de solo lectura** — nunca un write/DDL/DML contra ninguno de los tres
+targets (`bridge_client._guard_readonly()` lo hace cumplir del lado
+cliente).
 
 ## Estado actual (2026-09-10) — leer esto primero
 
@@ -96,12 +100,16 @@ intentar una regla general de entrada.
 
 ## Constricciones que hay que seguir respetando
 
-- **Bridge de solo lectura** — nunca escribir/DDL/DML contra
-  `mssql_205`/`mssql_207`/`postgres_dw`.
-- **Token de la bridge API**: solo en `/home/claude/.query_api_token`
-  (chmod 600) o `QUERY_API_TOKEN` env var — nunca en memoria, nunca en el
-  repo (`.gitignore` ya lo excluye).
-- **`.gitignore`** excluye `output/`, `*.xlsx`, `*.parquet`,
+- **Solo lectura** — nunca escribir/DDL/DML contra `mssql_205`/`mssql_207`/
+  `postgres_dw`, sea por conexión directa o (si algún día hace falta el
+  fallback) por la bridge. `bridge_client._guard_readonly()` lo aplica en
+  código, no solo de palabra.
+- **Credenciales de conexión directa**: `.env` local (chmod 600,
+  gitignored, ver `.env.example`) con `PG_USER`/`PG_PASSWORD` y
+  `MSSQL_205_USER`/`PASSWORD`/`MSSQL_207_USER`/`PASSWORD` — nunca
+  hardcodeadas en código. Respaldo también en Infisical, proyecto
+  `Trivasa` (`b6567423-9986-448e-b2b8-dffe44fe1657`), entorno `dev`.
+- **`.gitignore`** excluye `output/`, `*.xlsx`, `*.parquet`, `.env`,
   `.query_api_token`, `*.token` — no versionar salidas ni credenciales.
 - **Push**: usar el MCP de GitHub (`mcp__Repo_Privado__push_files` o
   equivalente) — `git push` crudo está bloqueado por una restricción de

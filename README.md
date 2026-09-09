@@ -11,29 +11,28 @@ Alcance actual: **CFDI recibidos** (primer semestre 2026, nivel 1 a nivel
 **retención** (mapeo a mpro ya encontrado) — ver
 [`docs/pendientes.md`](docs/pendientes.md).
 
-## Arquitectura en dos partes
+## Arquitectura
 
-Este proyecto se construyó dividido a propósito entre dos agentes:
+Conexión **directa** (SQLAlchemy + psycopg2/pymssql) a las tres bases de
+Trivasa — `postgres_dw` (raw_sat) y los dos SQL Server de mpro
+(`mssql_205`/`mssql_207`) — vía `src/bridge_client.py`, con guard de solo
+lectura del lado cliente (un único `SELECT`/`WITH`, nunca `commit()`).
 
-- **Claude Code** (corriendo en la máquina `ctunlinux` de Esteban) construyó
-  y mantiene **únicamente** una API puente de solo lectura
-  (`https://reportesweb.frento.com.mx/query`) que expone tres bases de
-  datos de Esteban sin que este repo necesite credenciales de base de datos
-  directas.
-- **Este repo / Cowork** hace *todo* lo demás: extracción, parseo de XML,
-  lógica de conciliación, reportes .xlsx.
-
-Detalle completo en [`docs/arquitectura.md`](docs/arquitectura.md).
+Hasta el 2026-09-09 esta sesión no tenía ruta de red a la LAN de Trivasa y
+todo pasaba por una API HTTP puente mantenida en `ctunlinux`
+(`https://reportesweb.frento.com.mx/query`) — historia completa, y el
+fallback si algún día vuelve a hacer falta, en
+[`docs/arquitectura.md`](docs/arquitectura.md).
 
 ## Quickstart
 
 ```bash
 pip install -r requirements.txt
 
-# El token de la bridge API NO se versiona. Se lee de:
-#   - variable de entorno QUERY_API_TOKEN, o
-#   - archivo en QUERY_API_TOKEN_FILE (default: /home/claude/.query_api_token)
-export QUERY_API_TOKEN="..."
+# Credenciales de conexión directa: copiar .env.example a .env y llenar
+# usuario/password de cada target (host/puerto/base ya van hardcodeados
+# en src/bridge_client.py — no son secreto). .env nunca se versiona.
+cp .env.example .env
 
 # Conciliación base (nivel CFDI): SAT vs mpro, un periodo o varios
 python3 main.py --periodo 2026-02
@@ -58,6 +57,9 @@ python3 baseline_conciliacion.py --periodo 2026-02 --origen COMPRA
 # solo lado: cargo=subtotal, sumando TODOS los documentos con los que un
 # CFDI aparece etiquetado en mpro, sin importar el origen)
 python3 baseline_universal.py --periodo 2026-02
+
+# Reporte interactivo (Streamlit) sobre el baseline universal
+streamlit run streamlit_app_conciliacion.py --server.port 8507
 ```
 
 Cada script imprime su avance y termina escribiendo un `.xlsx` en `output/`
@@ -66,19 +68,23 @@ por color.
 
 ## GUI de revisión
 
-Hay un dashboard (Artifact HTML, publicado desde Cowork) para revisar la
-conciliación sin abrir el `.xlsx`: totales y % de cuadre por origen, y
-tabla de detalle documento-por-documento (recibido) o CFDI-por-CFDI
-(emitido, retención), con búsqueda, filtros y orden por columna. Es un
-snapshot estático de los datos de este README (no consulta la bridge en
-vivo) — se regenera pidiéndole a Cowork que lo actualice con datos más
-recientes.
+Dos formas de revisar la conciliación sin abrir el `.xlsx`, con datos
+en vivo (consultan la base directo, no un snapshot):
+
+- **`streamlit_app_conciliacion.py`** — reporte interactivo sobre el
+  baseline universal: selector de periodo(s), filtros por origen/RFC/
+  proveedor, KPIs, tablas de conciliados/pendientes con descarga a Excel,
+  y gráficas por vía de cuadre / motivo pendiente. Ver Quickstart arriba.
+- Un dashboard más viejo (Artifact HTML, publicado desde Cowork) con
+  totales y % de cuadre por origen — es un **snapshot estático** de los
+  datos de este README (no consulta la base en vivo); se regenera
+  pidiéndole a Cowork que lo actualice.
 
 ## Estructura del repo
 
 ```
 src/
-  bridge_client.py            Cliente HTTP de la bridge API (auth, reintentos)
+  bridge_client.py            Conexión directa a las 3 bases (SQLAlchemy, guard de solo lectura)
   config.py                   Un solo lugar para decidir contra qué SQL Server
                                correr (mssql_205 vs mssql_207 — ver docs/arquitectura.md)
   cfdi_parser.py               Parseo de CFDI 3.3/4.0 (subtotal, IVA, total, UUID)
@@ -95,9 +101,10 @@ src/
 main.py                        CLI: conciliación base (nivel CFDI)
 poliza_reconciliation.py       CLI: conciliación a nivel póliza (piloto, origen-agnóstico)
 reconciliacion_por_origen.py   CLI: conciliación por origen de documento (el más completo)
+streamlit_app_conciliacion.py  Reporte interactivo sobre baseline_universal.calcular()
 
 docs/
-  arquitectura.md              Bridge API, split Cowork/Claude Code, mssql_205 vs mssql_207
+  arquitectura.md              Conexión directa a las 3 bases, historia de la bridge, mssql_205 vs mssql_207
   metodologia.md                Cómo se define "cuadra": base, tolerancias, nivel documento vs agregado
   hallazgos.md                  Bugs y patrones reales encontrados (con evidencia)
   resultados_2026-02.md         Resultados concretos, febrero 2026 recibidos

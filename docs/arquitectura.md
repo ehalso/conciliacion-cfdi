@@ -1,49 +1,51 @@
 # Arquitectura
 
-## Por qué está partido en dos agentes
+## De bridge HTTP a conexión directa (2026-09-09)
 
-El proyecto conecta dos ambientes que normalmente no se hablan: las bases
-de datos de Esteban (en su máquina `ctunlinux`, dentro de su red) y este
-entorno de Cowork (en la nube de Anthropic, sin acceso directo a esa red).
-La solución, decidida explícitamente al arrancar el proyecto:
+Hasta el 2026-09-09 este proyecto corría en un entorno de Cowork **sin
+ruta de red** hacia la LAN de Trivasa (`192.168.117.0/24`, donde viven
+tanto `postgres_dw` como los dos SQL Server de mpro). La solución de
+entonces: **Claude Code**, corriendo en `ctunlinux` (dentro de esa red),
+construyó y mantuvo una API HTTP mínima — la "bridge"
+(`https://reportesweb.frento.com.mx/query`) — cuya única responsabilidad
+era exponer los tres targets de solo lectura; nada de lógica de negocio,
+nada de parseo de CFDI, nada de conciliación. Este repo hacía todo el
+trabajo de datos consultando esa bridge en vez de la base directamente.
 
-- **Claude Code**, corriendo en `ctunlinux`, construyó y mantiene una API
-  HTTP mínima — la "bridge" — que expone `postgres_dw` (la bodega SAT) y
-  dos instancias de SQL Server de mpro. Esa es su única responsabilidad:
-  nada de lógica de negocio, nada de parseo de CFDI, nada de conciliación.
-- **Este repo (Cowork)** hace todo el trabajo de datos: extracción vía la
-  bridge, parseo de XML, reglas de conciliación, reportes.
+Esa sesión pasó a correr **con acceso de red directo** a la LAN (VPN sobre
+`192.168.117.0/24`, confirmado con conexión TCP real a los tres targets),
+así que `src/bridge_client.py` se reescribió para conectar **directo**
+por SQLAlchemy (`psycopg2`/`pymssql`) en vez de HTTP — sin tocar los ~10
+extractores que lo importan, porque el contrato de `run_query(target,
+sql) -> {"columns", "rows", "row_count", "truncated"}` se conservó
+idéntico. Ver el docstring de ese archivo para el detalle de credenciales,
+targets y el guard de solo lectura del lado cliente.
 
-Esto mantiene las credenciales de base de datos fuera de este entorno (la
-bridge solo entrega un token bearer, nunca una cadena de conexión) y evita
-que la lógica de negocio dependa de que Claude Code esté corriendo.
+Validado 2026-09-09: la corrida completa de `baseline_universal.py
+--periodo 2026-02` contra la conexión directa dio el mismo resultado ya
+documentado (1,492/1,500, 99.5%) que contra la bridge.
 
-## La bridge API
+**Qué se conserva del diseño original** (ya no por falta de red, sino
+porque sigue siendo la práctica correcta):
 
-- **URL**: `https://reportesweb.frento.com.mx/query` (hardcodeada en
-  `src/bridge_client.py` — es un endpoint, no un secreto; el secreto es el
-  token bearer, que nunca se versiona).
-- **Contrato**: `POST /query` con body `{"target": "...", "sql": "..."}` →
-  responde `{"columns": [...], "rows": [[...], ...], "row_count": N,
-  "truncated": bool}`.
-- **Solo lectura**: cualquier sentencia de escritura (INSERT/UPDATE/DELETE/DDL)
-  es rechazada del lado del servidor. No hay forma de escribir a través de
-  esta bridge, por diseño.
-- **Sin bind params confiables**: el soporte de `params` de la bridge no
-  está verificado contra mssql, así que todo el SQL dinámico se arma con
-  literales, escapando strings con `bridge_client.sql_quote()` (duplica
-  comillas simples). Los únicos valores dinámicos que se insertan son
-  UUIDs, folios, periodos y fechas ISO — bajo riesgo, pero se escapan
-  igual.
-- **502/503/504 transitorios**: se ven ocasionalmente en consultas de
-  tabla completa sin `WHERE` selectivo. `run_query()` reintenta hasta 3
-  veces con backoff (2s, 4s, 6s).
-- **Auth**: `Authorization: Bearer <token>`. El token se lee de la
-  variable de entorno `QUERY_API_TOKEN` o, si no está, del archivo en
-  `QUERY_API_TOKEN_FILE` (default `/home/claude/.query_api_token`, fuera
-  de este repo, permisos 600). Nunca se debe pegar el token en código,
-  logs, o mensajes — si alguna vez se comparte en texto plano por error,
-  tratarlo como comprometido y rotarlo.
+- **Solo lectura**: `bridge_client._guard_readonly()` rechaza cualquier
+  cosa que no sea un único `SELECT`/`WITH` (mismo espíritu que el
+  `sql_guard.py` del lado servidor de la bridge, ahora aplicado del lado
+  cliente porque ya no hay servidor intermedio). Postgres además abre la
+  conexión en modo `postgresql_readonly=True`; para los SQL Server
+  (pymssql no tiene un modo read-only por sesión) la red de seguridad es
+  no llamar `commit()` nunca.
+- **Sin bind params**: todo el SQL dinámico se sigue armando con
+  literales, escapando strings con `bridge_client.sql_quote()`. Los
+  únicos valores dinámicos son UUIDs, folios, periodos y fechas ISO.
+- **Credenciales fuera del código**: usuario/password de cada target
+  viven en un `.env` local (gitignored, ver `.env.example`) o variable de
+  entorno — nunca hardcodeados. Host/puerto/nombre de base sí van
+  hardcodeados en `bridge_client.py` (topología de red, no secreto).
+
+Si en el futuro esta sesión (o una nueva) vuelve a correr sin ruta de red
+a la LAN, el patrón de bridge HTTP de arriba es el fallback conocido —
+recuperable de la historia de git de este archivo.
 
 ## Los tres targets
 
