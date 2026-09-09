@@ -42,7 +42,7 @@ Pendientes por origen (149 total):
 
 | Origen | n pendientes | Qué se sabe |
 |---|---:|---|
-| GASTO_REGISTRO | 74 | Ver `docs/pendientes.md` — 3 patrones nuevos confirmados (arrendamiento financiero, captura duplicada de `Grc_Importe`, folio-agrupa-CFDI) más los ya conocidos de `layout-gastos` (CONSUMO_INTERNO, reversiones, NOMINA) sin portar |
+| GASTO_REGISTRO | 74 | Ver `docs/pendientes.md` — 5 patrones confirmados (arrendamiento financiero — START BANREGIO y CATERPILLAR CREDITO —, captura duplicada de `Grc_Importe`, folio-agrupa-CFDI, CFDI de gobierno repartido entre folios por sucursal) más los ya conocidos de `layout-gastos` (CONSUMO_INTERNO, reversiones, NOMINA) sin portar |
 | COMPRA | 40 | Sin drill-down dirigido esta sesión — candidatos: patrón GLM/liquidación directa vía Cheque, documento duplicado sin match (ver `docs/pendientes.md`) |
 | CUENTA_X_PAGAR | 15 | Sin investigar caso por caso — `extract_poliza_por_origen()` no encuentra póliza en absoluto para estos |
 | NOTA_CREDITO_PROVEEDOR | 13 | 0% de cuadre — el chequeo actual no maneja signo (una nota de crédito reduce el cargo, no lo iguala) |

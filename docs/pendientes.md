@@ -156,10 +156,10 @@ de llave granular), investigar dirigido por origen:
 | FACTURA | 1 |
 
 Candidatos por origen: los patrones ya conocidos de Gasto_Registro
-(CONSUMO_INTERNO, reversiones, NOMINA, y los tres patrones nuevos de la
+(CONSUMO_INTERNO, reversiones, NOMINA, y los cinco patrones de la
 subsección siguiente — folio-agrupa-CFDI, arrendamiento financiero,
-captura duplicada de `Grc_Importe`), y una versión con signo para
-NOTA_CREDITO_PROVEEDOR.
+captura duplicada de `Grc_Importe`, CFDI de gobierno repartido entre
+sucursales), y una versión con signo para NOTA_CREDITO_PROVEEDOR.
 
 ## Gasto_Registro — llave granular corregida (2026-09-09): folio+Grd_ID, no folio truncado a 10
 
@@ -207,7 +207,7 @@ legítimos de un mismo folio. Se corrigió para que el dedup sea
 origin-aware (dedup por `documento` completo solo para GASTO_REGISTRO) —
 ver `ORIGEN_GRANULAR` en `baseline_universal.py`.
 
-### Tres patrones nuevos encontrados en los pendientes de Gasto_Registro (drill-down manual)
+### Cinco patrones encontrados en los pendientes de Gasto_Registro (drill-down manual, dos rondas)
 
 - **Arrendamiento financiero (leasing) — solo se captura el interés.**
   CFDI de START BANREGIO SOFOM (renta de mensualidad de arrendamiento
@@ -217,6 +217,33 @@ ver `ORIGEN_GRANULAR` en `baseline_universal.py`.
   Gasto_Registro, presumiblemente reduce un pasivo en otro módulo no
   rastreado por este pipeline. Al menos 2 CFDI confirmados de este
   proveedor con el mismo patrón; probablemente más entre los pendientes.
+  **Confirmado 2026-09-09 que no es exclusivo de START BANREGIO**:
+  CATERPILLAR CREDITO (pendiente de -$190,127.59) es el mismo patrón —
+  folio `01-0035173`, comentario "ARRENDAMIENTO FINANCIERO U1238 Y U1232
+  10/60", 2 `Grd_ID` (uno por unidad) capturando solo interés. Cualquier
+  proveedor de leasing/arrendadora en los pendientes es candidato a este
+  mismo patrón.
+- **CFDI de gobierno repartido entre varios folios, uno por sucursal —
+  solo uno queda etiquetado en `Comprobante_Digital`.** El pendiente de
+  mayor impacto del periodo (CFDI de "SECRETARIA DE ADMINISTRACION Y
+  FINANZAS", Subtotal $397,161.00, cargo encontrado solo $131,430.58):
+  es un CFDI de ISN (Impuesto Sobre Nómina) que Trivasa captura en un
+  folio de Gasto_Registro **por sucursal** (13 sucursales, mismo
+  `Gr_Comentario` "ISN SOBRE NOMINA TRIVASA SA DE CV"), pero mpro solo
+  adjuntó el XML/UUID a UNO de esos folios. Sumando los 13 folios activos
+  de todas las sucursales, el total cuadra exacto ($397,160.85 vs
+  $397,161.00 del CFDI) — el dinero sí está capturado en mpro, solo que
+  repartido y sin ligar de vuelta al CFDI. No hay una llave estructurada
+  para reagrupar los folios hermanos (solo texto libre en
+  `Gr_Comentario` + fecha + sucursal) — ver `hallazgos.md` punto 19 para
+  el detalle completo y la heurística candidata (no implementada, riesgo
+  de falsos positivos con otros "provisión" a otra escala). Candidato
+  fuerte para explicar otros pendientes grandes de proveedores tipo
+  gobierno/organismos que facturan consolidado (IMSS también aparece con
+  una diferencia grande, -$110,642.93, pero **no se confirmó** el mismo
+  mecanismo — el concepto que se intentó cruzar, "PREVISION SOCIAL", opera
+  a una escala de cientos de miles/millones de pesos por sucursal/mes, no
+  comparable, así que sigue sin explicación confirmada).
 - **Captura duplicada de `Grc_Importe` — error real de datos, no de
   método.** Caso BRIGGS EQUIPMENT (renta de montacargas, 5 CFDI
   independientes de $2,615.00 cada uno, folios `05-0178783/784/786/831/832`

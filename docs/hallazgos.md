@@ -345,6 +345,15 @@ casos entre los pendientes de Gasto_Registro de proveedores financieros
 grande similar en los pendientes, sin confirmar todavía si es el mismo
 patrón).
 
+**Confirmado 2026-09-09 (segunda ronda)**: CATERPILLAR CREDITO **sí** es
+el mismo patrón. CFDI `25C19AC9-0CA1-48E8-9D23-69D670FCCF7A` (Subtotal
+$322,530.44, pendiente por -$190,127.59) liga al folio `01-0035173`,
+comentario *"ARRENDAMIENTO FINANCIERO U1238 Y U1232 10/60"* — dos
+`Grd_ID` (0001/0002, uno por unidad), cada uno capturando solo la porción
+de interés. Confirma que el patrón de arrendamiento financiero no es
+exclusivo de START BANREGIO — cualquier proveedor de leasing en los
+pendientes de Gasto_Registro es candidato.
+
 ## 18. `implocal:ImpuestosLocales` — complemento de impuestos locales que mpro suma al "Importe", no al "Impuesto"
 
 Confirmado 2026-09-09. El complemento SAT `implocal:ImpuestosLocales`
@@ -363,3 +372,66 @@ traslado > $0. Implementado en `cfdi_parser.py`
 (`CfdiAmounts.impuestos_locales_trasladados/retenidos`, propiedad
 `base_mpro`) y aplicado como ajuste al Subtotal en
 `baseline_universal.py` solo para CFDI de GASTO_REGISTRO.
+
+## 19. CFDI de impuesto estatal (ISN) repartido entre MUCHOS folios de Gasto_Registro — uno por sucursal — pero solo UNO queda etiquetado en `Comprobante_Digital`
+
+Confirmado 2026-09-09, retomando el drill-down de Gasto_Registro por
+mayor impacto en $. El pendiente más grande del periodo (CFDI
+`A95D6C54-7570-4F5C-8FCF-E1BBD02CFEA1`, emisor `SHA840512SX1` —
+"SECRETARIA DE ADMINISTRACION Y FINANZAS", entidad de gobierno estatal;
+Subtotal $397,161.00, cargo agregado encontrado solo $131,430.58,
+diferencia -$265,730.42) resultó ser un CFDI de **ISN (Impuesto Sobre
+Nómina)**, que Trivasa captura **por sucursal**, un folio de
+`Gasto_Registro` por sucursal, cada uno con su propio `Gr_Comentario`
+("ISN SOBRE NOMINA TRIVASA SA DE CV"). El único documento etiquetado en
+`Comprobante_Digital` para este UUID es `05-017698000010001` (folio
+`05-0176980`, sucursal `0005`) — ese folio por sí solo captura
+$131,430.58, exactamente el `cargo_agregado` que reportaba el pendiente.
+
+El resto del CFDI **sí existe en mpro**, solo que repartido en otros
+folios de `Gasto_Registro` con el mismo comentario, uno por sucursal, sin
+ninguna fila propia en `Comprobante_Digital` que los ligue a este UUID.
+Sumando los folios activos (`Es_Cve_Estado='AP'`, cada sucursal tiene
+también un folio cancelado `CA` gemelo — mismo patrón de par
+cancelada/activa ya documentado) con el mismo comentario y periodo:
+
+```
+01-0034984 (suc 0001)   $43,853.16
+02-0000842 (suc 0002)    $1,764.43
+05-0176980 (suc 0005)  $131,430.58   <- el único etiquetado en Comprobante_Digital
+07-0082454 (suc 0007)   $83,409.86
+08-0001590 (suc 0008)    $3,514.26
+09-0001803 (suc 0009)    $4,686.63
+11-0005584 (suc 0011)    $1,343.36
+13-0001278 (suc 0013)    $1,355.54
+14-0000418 (suc 0014)    $1,946.36
+18-0001302 (suc 0018)    $3,342.39
+22-0015214 (suc 0022)   $27,221.85
+23-0006905 (suc 0023)   $17,770.74
+25-0000013 (suc 0025)   $75,521.68
+---------------------------------
+SUMA                   $397,160.85   ==  Subtotal CFDI $397,161.00 (diferencia $0.15, redondeo)
+```
+
+Match exacto. Este es un patrón **inverso** al de "folio agrupa varios
+CFDI" (punto 15/pendientes.md): aquí es **un CFDI el que se reparte entre
+varios folios**, y el proceso de adjuntar XML en mpro solo alcanza a
+etiquetar uno de ellos en `Comprobante_Digital` — probablemente porque
+adjunta el XML una sola vez, a la primera captura, sin replicarlo a las
+demás sucursales que comparten la misma factura de gobierno. No es un
+bug de este pipeline ni de la fórmula de póliza — es una limitación del
+proceso de captura/adjuntado de XML en mpro para facturas de gobierno que
+cubren varias sucursales a la vez.
+
+**No es fácil de generalizar como fix automático**: la única señal para
+agrupar los folios hermanos es texto libre en `Gr_Comentario` (aquí
+"ISN SOBRE NOMINA TRIVASA SA DE CV", fecha y sucursal) — no hay una
+referencia estructurada que los ligue entre sí ni con el CFDI. Candidato
+razonable para heurística futura: mismo `Gr_Comentario` (normalizado) +
+misma `Gr_Fecha` + `Es_Cve_Estado='AP'`, pero no se implementó — riesgo de
+falsos positivos con otros conceptos de "provisión" que usan el mismo
+patrón de comentario a una escala mucho mayor (probado con un caso
+similar de "PREVISION SOCIAL" mensual, descartado como explicación de
+otro pendiente — suma cientos de miles a millones de pesos, no
+comparable en magnitud al CFDI que se intentaba explicar; no se confirmó
+que sea el mismo mecanismo).
