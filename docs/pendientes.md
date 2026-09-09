@@ -7,7 +7,7 @@ Compra_Indirecto). También se validó un **método de doble chequeo
 (cargo+abono)** para COMPRA — ver sección nueva abajo, es el trabajo de
 mayor impacto de esta sesión.
 
-## Método de doble chequeo (cargo + abono) — validado para COMPRA, 81.1%
+## Método de doble chequeo (cargo + abono) — validado para COMPRA, 81.8%
 
 Hasta ahora el pipeline solo comparaba el **cargo** (posteado bajo el folio
 de compra) contra subtotal-o-total del CFDI. Se encontró y validó en vivo
@@ -22,14 +22,23 @@ usando el **abono**:
   izquierda, ignorando el prefijo manual "Fact: " que a veces trunca el
   campo `Pd_Referencia`, límite 15 caracteres) → debe igualar el **Total**.
 
-Con los dos chequeos juntos: **578/713 (81.1%) conciliados** (cargo 88.4%,
+Con los dos chequeos juntos: **583/713 (81.8%) conciliados** (cargo 88.4%,
 abono 89.6% por separado). Implementado en `baseline_conciliacion.py`
 (nuevo script, reusa `extract_poliza_por_origen` para el cargo). Nota: el
 IVA se postea como una sola línea consolidada por día/póliza, no por
 documento — no es verificable por CFDI individual, se deja fuera del
 chequeo automatizado a propósito.
 
-**De los 135 sin cuadrar, dos causas confirmadas:**
+**Corrección aplicada (2026-09-09): documento duplicado por CFDI.** Un
+mismo CFDI puede quedar etiquetado con más de un `Cd_Documento` bajo el
+mismo origen en `Comprobante_Digital` (50/713 CFDI de COMPRA en feb-2026)
+— normalmente una etiqueta real y una "fantasma" con cargo $0 (renglón
+vacío o mal capturado). El script ahora se queda, por UUID, con el folio
+cuyo cargo está más cerca del subtotal del CFDI, en vez de tomar el
+primero en orden arbitrario. Esto subió el resultado de 578→583/713
+(81.1%→81.8%). Ver `baseline_conciliacion.py::calcular()`.
+
+**De los 130 sin cuadrar, causas confirmadas:**
 
 - **Patrón "liquidación directa" (≈43 casos, proveedor GLM/Gas LP de
   Mérida y probablemente otros pagados de contado)**: la póliza de COMPRA
@@ -43,10 +52,22 @@ chequeo automatizado a propósito.
   prorrateada hacia *otras* compras, como costo de flete/maniobra). Si no
   se suman ambos orígenes, cargo y abono quedan cortos exactamente por esa
   porción.
-- Quedan ~85 casos sin causa confirmada — candidatos: más proveedores con
-  el patrón GLM, o folios de compra que agrupan más de una línea contable
-  sin corresponder 1 a 1 con un solo CFDI (confirmado que existe: ver
-  ejemplo folio `05-0030182`, reusado en varias líneas del mismo día).
+- **Documento duplicado sin match ni con el mejor candidato (≈35 casos)**:
+  tras la corrección de arriba, quedan casos donde el CFDI sí tiene más de
+  un `Cd_Documento` bajo COMPRA pero ninguno de los candidatos cuadra ni
+  con subtotal ni con total — sugiere que el cargo real está repartido
+  entre ambos folios, o que ninguno de los dos es el correcto.
+- **Errores puntuales de captura (al menos 1 caso confirmado — CFDI de
+  MAQUINAS DIESEL, serie IFG-89675)**: el `Cd_Documento` apunta a un folio
+  de compra sin relación con el CFDI (otro proveedor/familia, otro orden
+  de magnitud). El abono sí cuadra (vía Serie+Folio) pero el cargo quedó
+  capturado contra el folio equivocado. No parece sistemático — es ruido
+  de captura manual, no vale la pena perseguirlo caso por caso.
+- Quedan casos residuales sin causa confirmada — candidatos: más
+  proveedores con el patrón GLM, o folios de compra que agrupan más de una
+  línea contable sin corresponder 1 a 1 con un solo CFDI (confirmado que
+  existe: ver ejemplo folio `05-0030182`, reusado en varias líneas del
+  mismo día).
 
 **Pendiente**: extender el método a los demás orígenes con mapeo
 confirmado (GASTO_REGISTRO, CUENTA_X_PAGAR, NOTA_CREDITO_PROVEEDOR), y

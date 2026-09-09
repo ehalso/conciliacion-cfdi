@@ -107,8 +107,10 @@ docs/
   hay que reconciliar y cuánto $ representa cada uno).
 - ✅ **Método de doble chequeo (cargo + abono) validado para COMPRA**:
   cargo (folio de compra) = Subtotal, Y abono (Serie+Folio del propio
-  CFDI) = Total → **578/713 (81.1%) conciliados** para febrero 2026. Ver
-  `baseline_conciliacion.py` y `pendientes.md`.
+  CFDI) = Total → **583/713 (81.8%) conciliados** para febrero 2026 (tras
+  corregir la selección de documento cuando un CFDI queda etiquetado dos
+  veces bajo el mismo origen). Ver `baseline_conciliacion.py` y
+  `pendientes.md`.
 - ✅ Reconciliación por origen (Compra, Cheque, Cuenta_x_Pagar) con cuadre
   agregado 90–97% para febrero 2026.
 - ⚠️ Gasto_Registro: cobertura real todavía baja (~37%) — requiere lógica
