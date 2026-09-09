@@ -11,8 +11,8 @@ doble chequeo ya validado) en dos listas:
     en alguno de los dos lados — con el motivo, para revisión dirigida.
 
 Metodología completa y supuestos documentados en la hoja "Resumen" del
-.xlsx de salida. Validado en vivo 2026-09-09 sobre COMPRA feb-2026: 578/713
-(81.1%) conciliados.
+.xlsx de salida. Validado en vivo 2026-09-09 sobre COMPRA feb-2026: 583/713
+(81.8%) conciliados.
 
 Uso:
     python3 baseline_conciliacion.py --periodo 2026-02
@@ -110,6 +110,17 @@ def calcular(periodo: str, origen: str = "COMPRA") -> tuple[pd.DataFrame, pd.Dat
         pol.rename(columns={"documento": "documento_real", "cargo": "cargo_mpro"})[["documento_real", "cargo_mpro"]],
         on="documento_real", how="left")
     df["cargo_mpro"] = df["cargo_mpro"].fillna(0.0)
+
+    # Un mismo CFDI puede quedar etiquetado con MAS DE UN Cd_Documento bajo el
+    # mismo origen en Comprobante_Digital (confirmado en vivo 2026-09-09: 50/713
+    # CFDI de COMPRA en feb-2026) — normalmente una etiqueta real y una
+    # "fantasma" con cargo $0 (renglon vacio o mal capturado). Sin este paso,
+    # quedarse con el primer duplicado (orden arbitrario) puede tomar la
+    # fantasma y reportar cargo=0 aunque el CFDI si tenga su cargo real bajo el
+    # otro folio. Nos quedamos con el folio cuyo cargo esta mas cerca del
+    # subtotal del CFDI.
+    df["_dist_cargo"] = (df["cargo_mpro"] - df["subtotal"]).abs()
+    df = df.loc[df.groupby("uuid")["_dist_cargo"].idxmin()].drop(columns="_dist_cargo").reset_index(drop=True)
 
     print("[4/6] Serie+Folio de cada CFDI (Cd_Serie / Cd_Serie_Folio)")
     uuids = df["uuid"].unique().tolist()
@@ -257,7 +268,8 @@ def hoja_portada(ws, periodo, origen, conciliados, pendientes):
         "MÉTODO",
         f"Para cada CFDI de origen {origen} se validan dos lados de la póliza, de forma independiente:",
         "  • CARGO: el importe posteado en Poliza_Detalle referenciado por el folio de compra de mpro (Comprobante_Digital.Cd_Documento, truncado a 10",
-        "    caracteres) debe igualar el SUBTOTAL del CFDI (tolerancia $1.00).",
+        "    caracteres) debe igualar el SUBTOTAL del CFDI (tolerancia $1.00). Cuando un CFDI tiene mas de un folio etiquetado bajo el mismo origen,",
+        "    se elige el que de el cargo mas cercano al subtotal.",
         "  • ABONO: el importe posteado y referenciado por la Serie+Folio del propio CFDI (Comprobante_Digital.Cd_Serie + Cd_Serie_Folio, normalizado —",
         "    sin ceros a la izquierda, ignorando prefijos como 'Fact:') debe igualar el TOTAL del CFDI (tolerancia $1.00), dentro de la(s) póliza(s)",
         "    activa(s) ligadas a ese folio de compra vía Poliza_Control (se excluyen pólizas canceladas y la duplicada de 'cuentas de orden').",
@@ -270,6 +282,8 @@ def hoja_portada(ws, periodo, origen, conciliados, pendientes):
         "    algunos 'pendientes' son en realidad CFDI cuya diferencia coincide con su porción de COMPRA_INDIRECTO.",
         "  • Se detectó un patrón (proveedor GLM/Gas LP de Mérida, y posiblemente otros pagados de contado): la póliza de COMPRA se cancela y el",
         "    pago se registra directo en el módulo Cheque — el ABONO no se encuentra en COMPRA para esos casos, aunque el CARGO sí cuadra.",
+        "  • También hay casos sueltos de typo de captura: el Cd_Documento apunta a un folio de compra que en realidad es de OTRA compra distinta",
+        "    (cargo con un importe que no tiene relacion con el CFDI) — no es un patron sistematico, es ruido de captura manual caso por caso.",
         f"  • Base: {total} CFDI de origen {origen} en Comprobante_Digital para el periodo indicado.",
         "",
         "RESULTADO",
