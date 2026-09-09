@@ -58,14 +58,27 @@ def _parse_documento(documento: str):
 
 def extract_gasto_registro_granular(documentos_completos: list[str]) -> pd.DataFrame:
     """`documentos_completos`: valores de `Cd_Documento` TAL CUAL (sin
-    truncar). Devuelve una fila por documento con su `cargo` — suma de
-    `Grc_Importe` sobre TODOS los `Grc_ID` (prorrateos de centro de costo)
-    de su (Gr_Folio, Grd_ID) — vía `Gasto_Registro_Control`."""
+    truncar). Devuelve una fila por documento con:
+
+    - `cargo`: suma de `Grc_Importe` sobre TODOS los `Grc_ID` (prorrateos de
+      centro de costo) de su (Gr_Folio, Grd_ID), vía `Gasto_Registro_Control`.
+      Es lo que realmente se postea como gasto.
+    - `neto`: `Gasto_Registro_Documento.Grd_Precio_Neto_Importe`, el importe
+      del documento tal como se capturó — el que corresponde al CFDI.
+    - `referencia`: `Grd_Referencia`, la referencia del proveedor (número de
+      factura del emisor). Sirve para seguir el documento hacia la póliza de
+      pago cuando el gasto se registra parcial (arrendamiento financiero).
+
+    `cargo` y `neto` NO siempre coinciden: mpro puede aplicar un descuento
+    propio al distribuir el gasto (confirmado 2026-09-09 en las cuotas del
+    IMSS, donde `neto` = subtotal exacto del CFDI y `descontado`/control es
+    menor por la parte que no es gasto de la empresa)."""
     documentos_completos = sorted(set(d for d in documentos_completos if d))
     parsed = {d: _parse_documento(d) for d in documentos_completos}
     folios = sorted({p[0] for p in parsed.values() if p is not None})
 
     rows: list[dict] = []
+    doc_rows: list[dict] = []
     for i in range(0, len(folios), BATCH_SIZE):
         batch = folios[i:i + BATCH_SIZE]
         in_list = ", ".join(sql_quote(f) for f in batch)
@@ -74,6 +87,29 @@ def extract_gasto_registro_granular(documentos_completos: list[str]) -> pd.DataF
             f"FROM Gasto_Registro_Control WHERE Gr_Folio IN ({in_list})"
         )
         rows.extend(rows_as_dicts(run_query(MPRO_TARGET, sql)))
+        sql_doc = (
+            "SELECT Gr_Folio, Grd_ID, Grd_Precio_Neto_Importe, "
+            "Grd_Precio_Descontado_Importe, Grd_Referencia "
+            f"FROM Gasto_Registro_Documento WHERE Gr_Folio IN ({in_list})"
+        )
+        doc_rows.extend(rows_as_dicts(run_query(MPRO_TARGET, sql_doc)))
+
+    neto_map: dict[tuple[str, str], float] = {}
+    desc_map: dict[tuple[str, str], float] = {}
+    ref_map: dict[tuple[str, str], str] = {}
+    for r in doc_rows:
+        key = (r["Gr_Folio"], str(r["Grd_ID"]).zfill(4))
+        try:
+            neto_map[key] = neto_map.get(key, 0.0) + float(r["Grd_Precio_Neto_Importe"])
+        except (TypeError, ValueError):
+            pass
+        try:
+            desc_map[key] = desc_map.get(key, 0.0) + float(r["Grd_Precio_Descontado_Importe"])
+        except (TypeError, ValueError):
+            pass
+        ref = (r.get("Grd_Referencia") or "").strip()
+        if ref:
+            ref_map[key] = ref
 
     grc_map: dict[tuple[str, str], float] = {}
     for r in rows:
@@ -81,14 +117,19 @@ def extract_gasto_registro_granular(documentos_completos: list[str]) -> pd.DataF
             importe = float(r["Grc_Importe"])
         except (TypeError, ValueError):
             importe = 0.0
-        key = (r["Gr_Folio"], r["Grd_ID"])
+        key = (r["Gr_Folio"], str(r["Grd_ID"]).zfill(4))
         grc_map[key] = grc_map.get(key, 0.0) + importe
 
     out = []
     for d in documentos_completos:
         p = parsed[d]
         if p is None:
-            out.append({"documento": d, "cargo": None})
+            out.append({"documento": d, "cargo": None, "neto": None,
+                        "descontado": None, "folio": None, "referencia": ""})
             continue
-        out.append({"documento": d, "cargo": grc_map.get(p, 0.0)})
-    return pd.DataFrame(out, columns=["documento", "cargo"])
+        key = (p[0], str(p[1]).zfill(4))
+        out.append({"documento": d, "cargo": grc_map.get(key, 0.0),
+                    "neto": neto_map.get(key, 0.0), "descontado": desc_map.get(key, 0.0),
+                    "folio": p[0], "referencia": ref_map.get(key, "")})
+    return pd.DataFrame(out, columns=["documento", "cargo", "neto", "descontado",
+                                      "folio", "referencia"])
