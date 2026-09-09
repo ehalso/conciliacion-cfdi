@@ -13,18 +13,28 @@ repartido.
 
 Este script no elige "el" documento: para cada CFDI SUMA el cargo de TODOS
 los documentos con los que aparece etiquetado en `Comprobante_Digital`
-(cualquier `Cd_Tabla`/origen), y compara esa suma contra el SUBTOTAL del
-CFDI. Es un chequeo de un solo lado (cargo = reconocimiento de
-inventario/gasto) — NO exige además que el abono cuadre; ver "SUPUESTOS"
-en la hoja de salida.
+(cualquier `Cd_Tabla`/origen). Es un chequeo de un solo lado (cargo =
+reconocimiento de inventario/gasto) — NO exige además que el abono cuadre.
 
-Validado en vivo 2026-09-09, CFDI recibidos feb-2026: de 1,500 CFDI con
-valor monetario real (subtotal > $1) encontrados en mpro, **1,351 (90.1%)**
-ya cuadran en agregado — muy por encima del techo por-origen-individual
-(81.8% COMPRA con el método de doble chequeo, ~37% Gasto_Registro con el
-método viejo de `reconciliacion_por_origen.py`). Cifra actualizada tras
-corregir la llave granular de GASTO_REGISTRO (ver extract_gasto_registro.py
-y docs/hallazgos.md punto 15) — la primera corrida daba 87.0%.
+Tras la revisión folio por folio del 2026-09-09/10, el chequeo dejó de ser una
+sola comparación y es una **cascada de vías de cuadre**: un CFDI puede estar
+perfectamente contabilizado sin que el cargo iguale su base, porque el
+tratamiento contable correcto es otro (arrendamiento financiero partido entre
+interés y capital, nota de crédito contra el total, IVA no acreditable, gasto
+repartido entre sucursales…). Cada vía deja su etiqueta en la columna "Vía de
+cuadre" del reporte, para que el resultado sea auditable y no una caja negra.
+
+Además, la base fiscal contra la que se compara ya no es el subtotal crudo:
+
+    base = (SubTotal - Descuento + IEPS + impuestos_locales) x tipo_de_cambio
+
+porque `raw_sat` guarda el subtotal bruto y en la moneda original del CFDI,
+mientras que mpro postea el importe neto y en MXN.
+
+Resultado en vivo, H1 2026: **9,511 de 9,572 (99.36%)** — ene 99.2%, feb 99.5%,
+mar 99.2%, abr 99.8%, may 99.2%, jun 99.4%. Febrero venía en 90.1%. El detalle
+de cada hallazgo, con evidencia, y la clasificación de los 61 pendientes que
+quedan está en docs/investigacion_pendientes.md.
 
 Uso:
     python3 baseline_universal.py --periodo 2026-02
@@ -48,11 +58,16 @@ from extract_sat import extract_sat_recibidos  # noqa: E402
 from extract_origen import extract_origenes_por_uuids  # noqa: E402
 from extract_poliza_por_origen import extract_poliza_por_origen, extract_poliza_cheque  # noqa: E402
 from extract_gasto_registro import extract_gasto_registro_granular  # noqa: E402
+from extract_moneda import extract_moneda_documento, extract_moneda_gasto_registro  # noqa: E402
+from extract_vias_extra import (cuadre_arrendamiento_financiero, cuadre_repartido_por_referencia,  # noqa: E402
+                                resumen_folios_gasto, cuadre_cheque_agrupado,
+                                extract_importe_documento, extract_referencia_cxp)
 from cfdi_parser import parse_cfdi  # noqa: E402
 from bridge_client import run_query, rows_as_dicts, sql_quote  # noqa: E402
 from config import MPRO_TARGET  # noqa: E402
 
 TOL = 1.00
+TOL_RELATIVA = 0.00005  # 0.005% de la base: materialidad para redondeo de tipo de cambio
 SUBTOTAL_MIN = 1.00  # bajo esto se considera CFDI sin valor monetario (TRASLADO/COMPROBANTE_PAGO)
 XML_BATCH = 150
 
@@ -97,6 +112,67 @@ COLS = {
 }
 
 
+def xml_ajustes(uuids: list[str], periodo: str) -> pd.DataFrame:
+    """Parsea el `Cd_XML` de cada CFDI y devuelve, por UUID, el ajuste que hay
+    que aplicarle al subtotal del SAT para obtener la base que mpro captura:
+
+        ajuste = -Descuento + IEPS + impuestos_locales_trasladados - retenidos
+
+    (todo en la moneda original del CFDI; la conversión a MXN es un paso aparte).
+
+    Cachea el resultado en `output/xml_ajustes_<periodo>.csv` — el XML no cambia
+    y volver a bajarlo en cada corrida es lo más caro del pipeline.
+    """
+    cache = Path("output") / f"xml_ajustes_{periodo}.csv"
+    previo = pd.DataFrame()
+    if cache.exists():
+        previo = pd.read_csv(cache)
+        previo["uuid"] = previo["uuid"].str.upper()
+        faltan = sorted(set(uuids) - set(previo["uuid"]))
+    else:
+        faltan = sorted(set(uuids))
+
+    filas = []
+    for i in range(0, len(faltan), XML_BATCH):
+        batch = faltan[i:i + XML_BATCH]
+        in_list = ", ".join(sql_quote(u) for u in batch)
+        sql = ("SELECT Cd_Timbre_UUID, Cd_XML FROM Comprobante_Digital "
+               f"WHERE Cd_Timbre_UUID IN ({in_list}) AND Cd_XML IS NOT NULL")
+        vistos = set()
+        for r in rows_as_dicts(run_query(MPRO_TARGET, sql)):
+            u = r["Cd_Timbre_UUID"].upper()
+            if u in vistos:
+                continue
+            vistos.add(u)
+            try:
+                a = parse_cfdi(r["Cd_XML"])
+                filas.append({
+                    "uuid": u,
+                    "subtotal_xml": float(a.subtotal),
+                    "descuento": float(a.descuento),
+                    "local": float(a.impuestos_locales_trasladados - a.impuestos_locales_retenidos),
+                    "ieps": float(a.ieps_trasladado),
+                    "total_xml": float(a.total),
+                    "retenidos_xml": float(a.total_impuestos_retenidos),
+                })
+            except Exception:
+                continue
+
+    df = pd.concat([previo, pd.DataFrame(filas)], ignore_index=True) if filas else previo
+    if df.empty:
+        return pd.DataFrame(columns=["uuid", "descuento", "local", "ajuste"]).set_index("uuid")
+    df = df.drop_duplicates(subset=["uuid"])
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(cache, index=False)
+
+    df = df[df["uuid"].isin(set(uuids))].copy()
+    if "ieps" not in df.columns:
+        df["ieps"] = 0.0
+    df["ieps"] = df["ieps"].fillna(0.0)
+    df["ajuste"] = -df["descuento"] + df["local"] + df["ieps"]
+    return df.set_index("uuid")
+
+
 def calcular(periodo: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     print(f"[1/5] SAT recibidos {periodo}")
     sat = extract_sat_recibidos(periodo=periodo)
@@ -109,13 +185,17 @@ def calcular(periodo: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     origenes["origen_up"] = origenes["origen"].str.upper()
     # Dedup origin-aware: para orígenes normales, colapsar por folio corto
     # (documento_real) evita doble-conteo cuando el mismo folio aparece
-    # repetido con distinto sufijo (folio "fantasma" duplicado). Para
-    # GASTO_REGISTRO eso mismo colapsaría de más: un folio puede agrupar
-    # varios Grd_ID/Grc_ID legítimos (renglones de gasto y prorrateos de
-    # centro de costo distintos, cada uno con su propio importe) — para ese
-    # origen hay que deduplicar por el `documento` COMPLETO, no el truncado.
+    # repetido con distinto sufijo (folio "fantasma" duplicado).
+    # Para GASTO_REGISTRO la llave real es folio(10)+Grd_ID(4) = los primeros 14
+    # caracteres. NO sirve deduplicar por el `documento` completo: el mismo
+    # (folio, Grd_ID) aparece capturado DOS VECES en Comprobante_Digital, una
+    # vez en formato de 14 caracteres y otra en el de 18 (gotcha ya documentado
+    # en trivasa-context) — con el mismo UUID y el mismo monto. Deduplicar por
+    # el documento completo deja pasar las dos filas y **duplica el cargo**:
+    # eso era lo que hacía ver 7 CFDI de feb-2026 con exactamente 2x su importe,
+    # que parecían doble captura en mpro y en realidad eran doble conteo nuestro.
     origenes["_dedup_doc"] = origenes["documento_real"].where(
-        ~origenes["origen_up"].isin(ORIGEN_GRANULAR), origenes["documento"])
+        ~origenes["origen_up"].isin(ORIGEN_GRANULAR), origenes["documento"].str.slice(0, 14))
     origenes = origenes.drop_duplicates(subset=["uuid", "origen_up", "_dedup_doc"]).drop(columns=["_dedup_doc"])
     print(f"     {origenes['uuid'].nunique()} CFDI con al menos 1 etiqueta en mpro"
           f" ({len(origenes)} etiquetas documento, algunos CFDI tienen varias)")
@@ -133,15 +213,30 @@ def calcular(periodo: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
             continue
         pol = pol.rename(columns={"documento": "documento_real"})
         pol["origen"] = origen
-        cargo_parts.append(pol[["origen", "documento_real", "cargo"]])
+        cargo_parts.append(pol[["origen", "documento_real", "cargo", "abono"]])
         print(f"     {origen}: {len(docs)} documentos -> {len(pol)} con cargo/abono en póliza")
     cargo_df = pd.concat(cargo_parts, ignore_index=True) if cargo_parts else pd.DataFrame(
-        columns=["origen", "documento_real", "cargo"])
+        columns=["origen", "documento_real", "cargo", "abono"])
 
     merged = origenes[~origenes["origen_up"].isin(ORIGEN_GRANULAR)].merge(
         cargo_df, on=["origen", "documento_real"], how="left")
     merged["cargo"] = merged["cargo"].fillna(0.0)
+    merged["abono"] = merged["abono"].fillna(0.0)
     total_cargo = merged.groupby("uuid")["cargo"].sum().rename("cargo_agregado")
+    # Nota de crédito de proveedor: hay dos configuraciones vivas y solo una
+    # deja el importe del lado del CARGO. La de "BONIFICACION" (config 0350)
+    # registra únicamente abonos con `Pd_Referencia` (inventario + IVA); su
+    # cargo a proveedores va en la póliza sin referencia al documento, así que
+    # el cargo aislado sale en cero. En ese caso el abono ES el importe
+    # reconocido — y en ambas variantes cuadra contra el TOTAL del CFDI, no
+    # contra el subtotal (una nota de crédito reduce el adeudo con IVA
+    # incluido). Confirmado 2026-09-09 en las 13 notas de crédito de feb-2026.
+    nc = merged[merged["origen_up"] == "NOTA_CREDITO_PROVEEDOR"]
+    if not nc.empty:
+        nc_monto = nc.assign(monto=nc["cargo"].where(nc["cargo"].abs() > TOL, nc["abono"]))
+        monto_nota_credito = nc_monto.groupby("uuid")["monto"].sum().rename("monto_nota_credito")
+    else:
+        monto_nota_credito = pd.Series(dtype=float, name="monto_nota_credito")
 
     print("[3b/5] GASTO_REGISTRO: llave granular folio+Grd_ID, suma de Grc_Importe (Gasto_Registro_Control)")
     docs_gasto = origenes.loc[origenes["origen_up"] == "GASTO_REGISTRO", "documento"].dropna().unique().tolist()
@@ -151,31 +246,71 @@ def calcular(periodo: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         gasto_map = origenes[origenes["origen_up"] == "GASTO_REGISTRO"][["uuid", "documento"]].merge(
             gasto_cargo, on="documento", how="left")
         gasto_map["cargo"] = gasto_map["cargo"].fillna(0.0)
+        gasto_map["neto"] = pd.to_numeric(gasto_map.get("neto"), errors="coerce").fillna(0.0)
         gasto_total = gasto_map.groupby("uuid")["cargo"].sum().rename("cargo_gasto")
+        gasto_neto = gasto_map.groupby("uuid")["neto"].sum().rename("gasto_neto")
+        gasto_refs = gasto_map.groupby("uuid")["referencia"].apply(
+            lambda s: sorted({str(x).strip() for x in s if str(x).strip()})).rename("gasto_referencias")
+        gasto_map["descontado"] = pd.to_numeric(gasto_map.get("descontado"), errors="coerce").fillna(0.0)
+        gasto_folios = gasto_map.groupby("uuid")["folio"].apply(
+            lambda s: sorted({str(x) for x in s if pd.notna(x)})).rename("gasto_folios")
+        gasto_renglones = gasto_map.groupby("uuid").apply(
+            lambda d: [(float(a), float(b)) for a, b in zip(d["neto"], d["descontado"])],
+            include_groups=False).rename("gasto_renglones")
+        n_dif = int((gasto_map.groupby("uuid")["cargo"].sum() - gasto_neto).abs().gt(TOL).sum())
         print(f"     {len(docs_gasto)} documentos GASTO_REGISTRO (llave completa) -> "
-              f"{gasto_cargo['cargo'].notna().sum()} con cargo encontrado")
+              f"{gasto_cargo['cargo'].notna().sum()} con cargo encontrado, "
+              f"{n_dif} CFDI donde el gasto distribuido != importe del documento")
         total_cargo = total_cargo.add(gasto_total, fill_value=0.0).rename("cargo_agregado")
+    else:
+        gasto_neto = pd.Series(dtype=float, name="gasto_neto")
+        gasto_refs = pd.Series(dtype=object, name="gasto_referencias")
+        gasto_folios = pd.Series(dtype=object, name="gasto_folios")
+        gasto_renglones = pd.Series(dtype=object, name="gasto_renglones")
 
-    print("[3c/5] Impuestos locales (implocal) — ajuste al Subtotal para CFDI de GASTO_REGISTRO")
-    uuids_gasto = origenes.loc[origenes["origen_up"] == "GASTO_REGISTRO", "uuid"].unique().tolist()
-    ajuste_local = {}
-    for i in range(0, len(uuids_gasto), XML_BATCH):
-        batch = uuids_gasto[i:i + XML_BATCH]
-        in_list = ", ".join(sql_quote(u) for u in batch)
-        sql = f"SELECT Cd_Timbre_UUID, Cd_XML FROM Comprobante_Digital WHERE Cd_Timbre_UUID IN ({in_list}) AND Cd_XML IS NOT NULL"
-        for r in rows_as_dicts(run_query(MPRO_TARGET, sql)):
-            u = r["Cd_Timbre_UUID"].upper()
-            if u in ajuste_local:
+    print("[3c/5] XML del CFDI: Descuento + IEPS + impuestos locales (la base real que captura mpro)")
+    # Se parsea el XML de TODOS los CFDI con etiqueta en mpro, no solo los de
+    # GASTO_REGISTRO: el `Descuento` a nivel Comprobante NO existe como columna
+    # en `raw_sat.cfdi_recibidos` (solo guarda el subtotal bruto) y mpro captura
+    # y postea el importe NETO. Sin esto, todo CFDI con descuento queda como
+    # pendiente aunque esté perfectamente contabilizado.
+    ajuste_xml = xml_ajustes(origenes["uuid"].unique().tolist(), periodo)
+    ajuste_series = ajuste_xml["ajuste"].rename("ajuste_local")
+    n_desc = int((ajuste_xml["descuento"] > 0.01).sum())
+    n_local = int((ajuste_xml["local"].abs() > 0.01).sum())
+    n_ieps = int((ajuste_xml["ieps"] > 0.01).sum())
+    print(f"     {len(ajuste_xml)} XML parseados — {n_desc} con Descuento, "
+          f"{n_ieps} con IEPS, {n_local} con impuesto local")
+
+    print("[3d/5] Moneda: el CFDI viene en su moneda original, la póliza en MXN")
+    tc_partes = []
+    for origen in sorted(origenes["origen"].unique()):
+        docs_or = origenes[origenes["origen"] == origen]
+        if origen.upper() == "GASTO_REGISTRO":
+            m = extract_moneda_gasto_registro(docs_or["documento"].dropna().tolist())
+            if m.empty:
                 continue
-            try:
-                amounts = parse_cfdi(r["Cd_XML"])
-                ajuste = float(amounts.impuestos_locales_trasladados - amounts.impuestos_locales_retenidos)
-            except Exception:
-                ajuste = 0.0
-            ajuste_local[u] = ajuste
-    n_con_local = sum(1 for v in ajuste_local.values() if abs(v) > 0.01)
-    print(f"     {n_con_local} de {len(ajuste_local)} CFDI de GASTO_REGISTRO con impuesto local detectado")
-    ajuste_series = pd.Series(ajuste_local, name="ajuste_local")
+            m = m.rename(columns={"documento": "_llave"})
+            docs_or = docs_or.assign(_llave=docs_or["documento"].str.slice(0, 14))
+        else:
+            m = extract_moneda_documento(origen, docs_or["documento_real"].dropna().tolist())
+            if m.empty:
+                continue
+            m = m.rename(columns={"documento": "_llave"})
+            docs_or = docs_or.assign(_llave=docs_or["documento_real"])
+        tc_partes.append(docs_or.merge(m, on="_llave", how="left")[["uuid", "moneda", "tipo_cambio"]])
+
+    if tc_partes:
+        tc_df = pd.concat(tc_partes, ignore_index=True)
+        tc_df["tipo_cambio"] = pd.to_numeric(tc_df["tipo_cambio"], errors="coerce").fillna(1.0)
+        tc_df.loc[tc_df["tipo_cambio"] <= 0, "tipo_cambio"] = 1.0
+        tc_uuid = tc_df.groupby("uuid").agg(
+            moneda_mpro=("moneda", lambda s: ",".join(sorted({str(x) for x in s if pd.notna(x) and str(x).strip()})) or "MXN"),
+            tipo_cambio=("tipo_cambio", "max")).reset_index()
+        n_div = int((tc_uuid["tipo_cambio"] > 1.0001).sum())
+        print(f"     {n_div} CFDI capturados en moneda extranjera (se convierte el subtotal a MXN)")
+    else:
+        tc_uuid = pd.DataFrame(columns=["uuid", "moneda_mpro", "tipo_cambio"])
 
     print("[4/5] CHEQUE: match por monto (Pd_Referencia no es confiable para este origen)")
     docs_cheque = origenes.loc[origenes["origen_up"] == "CHEQUE", "documento_real"].dropna().unique().tolist()
@@ -188,28 +323,278 @@ def calcular(periodo: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     else:
         cheque_abono = pd.Series(dtype=float, name="cheque_abono")
 
+    print("[4b/5] Vías extra: arrendamiento financiero y gasto repartido entre folios")
+    # Referencias del proveedor por CFDI: las de Gasto_Registro más las de
+    # Cuenta_X_Pagar (parte del arrendamiento financiero se captura por ese
+    # módulo y sin ellas la regla de arrendamiento no lo alcanza).
+    cxp_ref = extract_referencia_cxp(
+        origenes.loc[origenes["origen_up"] == "CUENTA_X_PAGAR", "documento_real"].dropna().unique().tolist())
+    if not cxp_ref.empty:
+        cxp_por_uuid = (origenes[origenes["origen_up"] == "CUENTA_X_PAGAR"][["uuid", "documento_real"]]
+                        .merge(cxp_ref.rename(columns={"documento": "documento_real"}),
+                               on="documento_real", how="inner")
+                        .groupby("uuid")["referencia"]
+                        .apply(lambda s: sorted({str(x).strip() for x in s if str(x).strip()})).to_dict())
+    else:
+        cxp_por_uuid = {}
+
+    refs_todas = sorted({r for lista in (gasto_refs.tolist() if len(gasto_refs) else [])
+                         for r in (lista or [])}
+                        | {r for lista in cxp_por_uuid.values() for r in lista})
+    leasing = cuadre_arrendamiento_financiero(refs_todas)
+    repartido = cuadre_repartido_por_referencia(refs_todas)
+    print(f"     {len(refs_todas)} referencias de proveedor -> "
+          f"{leasing['referencia'].nunique() if not leasing.empty else 0} con póliza de pago de arrendamiento, "
+          f"{repartido['referencia'].nunique() if not repartido.empty else 0} con grupo de folios hermanos")
+
+    imp_partes = []
+    for origen in sorted(origenes["origen"].unique()):
+        if origen.upper() in ORIGEN_GRANULAR | ORIGEN_SIN_VALOR:
+            continue
+        docs_or = origenes.loc[origenes["origen"] == origen, "documento_real"].dropna().unique().tolist()
+        imp = extract_importe_documento(origen, docs_or)
+        if imp.empty:
+            continue
+        sub = origenes[origenes["origen"] == origen][["uuid", "documento_real"]].merge(
+            imp.rename(columns={"documento": "documento_real"}), on="documento_real", how="inner")
+        imp_partes.append(sub[["uuid", "importe_documento"]])
+    importe_doc = (pd.concat(imp_partes, ignore_index=True).groupby("uuid")["importe_documento"].sum()
+                   .rename("importe_documento") if imp_partes
+                   else pd.Series(dtype=float, name="importe_documento"))
+
+    folios_gasto_todos = sorted({f for lista in (gasto_folios.tolist() if len(gasto_folios) else [])
+                                 for f in (lista or [])})
+    folios_resumen = resumen_folios_gasto(folios_gasto_todos)
+    cheques_agrupados = cuadre_cheque_agrupado(
+        origenes.loc[origenes["origen_up"] == "CHEQUE", "documento_real"].dropna().unique().tolist())
+    n_ch = int(((cheques_agrupados["importe_cheque"] - cheques_agrupados["suma_cfdi"]).abs() <= TOL).sum()) \
+        if not cheques_agrupados.empty else 0
+    print(f"     {len(folios_resumen)} folios de gasto resumidos, "
+          f"{n_ch} cheques cuyo importe = suma de los CFDI que liquidan")
+
     print("[5/5] Armando resultado")
     origenes_str = origenes.groupby("uuid")["origen"].apply(lambda s: ", ".join(sorted(set(s)))).rename("origenes")
 
-    resumen = sat.set_index("uuid").join(total_cargo, how="left").join(cheque_abono, how="left").join(
-        origenes_str, how="left").join(ajuste_series, how="left").reset_index()
+    resumen = (sat.set_index("uuid").join(total_cargo, how="left").join(cheque_abono, how="left")
+               .join(origenes_str, how="left").join(ajuste_series, how="left")
+               .join(gasto_neto, how="left").join(gasto_refs, how="left")
+               .join(gasto_folios, how="left").join(gasto_renglones, how="left")
+               .join(monto_nota_credito, how="left").join(importe_doc, how="left").reset_index())
+    resumen = resumen.merge(tc_uuid, on="uuid", how="left")
     resumen["cargo_agregado"] = resumen["cargo_agregado"].fillna(0.0)
     resumen["cheque_abono"] = resumen["cheque_abono"].fillna(0.0)
     resumen["ajuste_local"] = resumen["ajuste_local"].fillna(0.0)
-    resumen["subtotal_ajustado"] = resumen["subtotal"] + resumen["ajuste_local"]
+    resumen["gasto_neto"] = pd.to_numeric(resumen.get("gasto_neto"), errors="coerce").fillna(0.0)
+    resumen["monto_nota_credito"] = pd.to_numeric(resumen.get("monto_nota_credito"), errors="coerce").fillna(0.0)
+    resumen["importe_documento"] = pd.to_numeric(resumen.get("importe_documento"), errors="coerce").fillna(0.0)
+    resumen["referencias"] = [
+        sorted(set(g if isinstance(g, list) else []) | set(cxp_por_uuid.get(u, [])))
+        for u, g in zip(resumen["uuid"], resumen["gasto_referencias"])]
+    resumen["tipo_cambio"] = pd.to_numeric(resumen.get("tipo_cambio"), errors="coerce").fillna(1.0)
+    resumen.loc[resumen["tipo_cambio"] <= 0, "tipo_cambio"] = 1.0
+    # El subtotal/total del SAT están en la moneda original del CFDI; la póliza
+    # de mpro postea SIEMPRE en MXN. Se lleva la base fiscal a MXN con el tipo
+    # de cambio del propio documento de mpro (no uno de mercado): así el cuadre
+    # compara peras con peras. Para CFDI en MXN el factor es 1.0 y no cambia nada.
+    resumen["subtotal_ajustado"] = (resumen["subtotal"] + resumen["ajuste_local"]) * resumen["tipo_cambio"]
+    resumen["total_mxn"] = resumen["total"] * resumen["tipo_cambio"]
     resumen["en_mpro"] = resumen["uuid"].isin(set(origenes["uuid"]))
     resumen["monetario"] = resumen["subtotal"].abs() > SUBTOTAL_MIN
 
-    resumen["cuadra_cargo_subtotal"] = (resumen["cargo_agregado"] - resumen["subtotal_ajustado"]).abs() <= TOL
-    resumen["cuadra_pago_directo"] = (~resumen["cuadra_cargo_subtotal"]) & (
-        (resumen["cheque_abono"] - resumen["total"]).abs() <= TOL)
-    resumen["cuadra_agregado"] = resumen["cuadra_cargo_subtotal"] | resumen["cuadra_pago_directo"]
+    # Tolerancia por materialidad: $1 fijo, o 0.005% de la base si es mayor.
+    # El componente relativo cubre el redondeo de convertir moneda extranjera
+    # renglón por renglón (un CFDI de $70,000 puede diferir $1.02 solo por eso)
+    # sin volverse permisivo: en el CFDI más grande del periodo son ~$45.
+    resumen["tolerancia"] = pd.concat([
+        pd.Series(TOL, index=resumen.index),
+        resumen["subtotal_ajustado"].abs() * TOL_RELATIVA], axis=1).max(axis=1)
+    tol = resumen["tolerancia"]
+
+    solo_nota_credito = resumen["origenes"].fillna("") == "NOTA_CREDITO_PROVEEDOR"
+
+    # --- Regla 1: el cargo contabilizado iguala la base fiscal del CFDI.
+    resumen["cuadra_cargo_subtotal"] = (
+        (resumen["cargo_agregado"] - resumen["subtotal_ajustado"]).abs() <= tol) & ~solo_nota_credito
+
+    # --- Regla 2: nota de crédito de proveedor -> contra el TOTAL (con IVA).
+    resumen["cuadra_nota_credito"] = solo_nota_credito & (
+        (resumen["monto_nota_credito"] - resumen["total_mxn"]).abs() <= tol)
+
+    # --- Regla 3: IVA no acreditable. mpro manda el IVA al gasto en vez de
+    # acreditarlo (gastos menores, gasolina, abarrotes), así que el importe
+    # contabilizado es el TOTAL del CFDI y no su base. Es un tratamiento
+    # contable legítimo, no un descuadre.
+    resumen["cuadra_iva_al_gasto"] = (~resumen["cuadra_cargo_subtotal"]) & (~solo_nota_credito) & (
+        ((resumen["cargo_agregado"] - resumen["total_mxn"]).abs() <= tol)
+        | ((resumen["gasto_neto"] * resumen["tipo_cambio"] - resumen["total_mxn"]).abs() <= tol)
+        ) & ((resumen["cargo_agregado"].abs() > TOL) | (resumen["gasto_neto"].abs() > TOL)) & (
+        # Solo tiene sentido llamarle "IVA no acreditable" si el total difiere
+        # de la base: si el CFDI no trae impuestos (cuotas IMSS, derechos),
+        # base y total son el mismo número y el caso es otro (regla 4).
+        (resumen["total_mxn"] - resumen["subtotal_ajustado"]).abs() > tol)
+
+    # --- Regla 4: el documento de Gasto_Registro capturó el importe del CFDI
+    # exacto, pero el gasto distribuido a centros de costo es menor porque mpro
+    # aplicó un descuento propio (caso confirmado: cuotas IMSS, donde la parte
+    # obrera no es gasto de la empresa). El CFDI sí está reconocido y por el
+    # importe correcto.
+    resumen["cuadra_neto_documento"] = (
+        (~resumen["cuadra_cargo_subtotal"]) & (~resumen["cuadra_nota_credito"])
+        & (~resumen["cuadra_iva_al_gasto"]) & (resumen["gasto_neto"].abs() > TOL)
+        & ((resumen["gasto_neto"] * resumen["tipo_cambio"] - resumen["subtotal_ajustado"]).abs() <= tol))
+
+    # --- Regla 5 (ya existente): liquidación directa vía Cheque.
+    resumen["cuadra_pago_directo"] = (
+        ~(resumen["cuadra_cargo_subtotal"] | resumen["cuadra_nota_credito"]
+          | resumen["cuadra_iva_al_gasto"] | resumen["cuadra_neto_documento"])) & (
+        (resumen["cheque_abono"] - resumen["total_mxn"]).abs() <= tol)
+
+    # --- Regla 6: arrendamiento financiero. El CFDI se parte entre gasto por
+    # intereses y amortización de capital; la póliza de pago abona al banco el
+    # TOTAL del CFDI. Ver src/extract_vias_extra.py.
+    banco_por_uuid = {}
+    if not leasing.empty:
+        # (referencia -> {póliza: abono a banco}). Se guarda por póliza para
+        # poder sumar: un mismo CFDI puede amparar VARIAS unidades arrendadas,
+        # cada una con su propia póliza de pago (caso CATERPILLAR CREDITO: el
+        # CFDI de $370,808.62 se paga en dos pólizas, $211,890.64 + $158,917.98).
+        por_ref = {r: dict(zip(g["Pl_Folio"], g["abono_banco"]))
+                   for r, g in leasing.groupby("referencia")}
+        for u, refs in resumen[["uuid", "referencias"]].itertuples(index=False):
+            if isinstance(refs, list):
+                polizas = {}
+                for r in refs:
+                    polizas.update(por_ref.get(r, {}))
+                if polizas:
+                    montos = list(polizas.values())
+                    if len(montos) > 1:
+                        montos = montos + [sum(montos)]
+                    banco_por_uuid[u] = montos
+    resumen["cuadra_arrendamiento"] = [
+        (not (a or b or c or d or e))
+        and any(abs(m - t) <= tl for m in banco_por_uuid.get(u, []))
+        for u, a, b, c, d, e, t, tl in zip(
+            resumen["uuid"], resumen["cuadra_cargo_subtotal"], resumen["cuadra_nota_credito"],
+            resumen["cuadra_iva_al_gasto"], resumen["cuadra_neto_documento"],
+            resumen["cuadra_pago_directo"], resumen["total_mxn"], tol)]
+
+    # --- Regla 7: el CFDI se capturó repartido en varios folios de
+    # Gasto_Registro (uno por sucursal) y solo uno quedó etiquetado. Se suma el
+    # gasto de todos los folios hermanos (misma Grd_Referencia y misma fecha).
+    grupo_por_uuid = {}
+    if not repartido.empty:
+        # Solo grupos REALES: más de un folio compartiendo la referencia en la
+        # misma fecha. Un grupo de un solo folio no es un reparto, y aceptarlo
+        # cuadraría por accidente los CFDI capturados dos veces (donde cada
+        # captura, por separado, sí trae el importe correcto).
+        rep = repartido[repartido["n_folios"] > 1]
+        por_ref2 = rep.groupby("referencia")["suma_grupo"].apply(list).to_dict()
+        for u, refs in resumen[["uuid", "gasto_referencias"]].itertuples(index=False):
+            if isinstance(refs, list):
+                montos = [m for r in refs for m in por_ref2.get(r, [])]
+                if montos:
+                    grupo_por_uuid[u] = montos
+    # Además: el documento etiquetado tiene que capturar DE MENOS (es una parte
+    # del CFDI). Si captura de más, no es un reparto — es doble captura.
+    resumen["cuadra_repartido"] = [
+        (not (a or b or c or d or e or f)) and (cg < s_ - tl)
+        and any(abs(m - s_) <= tl or abs(m - t) <= tl for m in grupo_por_uuid.get(u, []))
+        for u, a, b, c, d, e, f, s_, t, tl, cg in zip(
+            resumen["uuid"], resumen["cuadra_cargo_subtotal"], resumen["cuadra_nota_credito"],
+            resumen["cuadra_iva_al_gasto"], resumen["cuadra_neto_documento"],
+            resumen["cuadra_pago_directo"], resumen["cuadra_arrendamiento"],
+            resumen["subtotal_ajustado"], resumen["total_mxn"], tol,
+            resumen["cargo_agregado"])]
+
+    # --- Regla 8: el CFDI cubre el folio COMPLETO de Gasto_Registro, pero solo
+    # uno de sus renglones quedó etiquetado en Comprobante_Digital. Se exige que
+    # el folio no tenga otro CFDI etiquetado, para no atribuirle gasto ajeno.
+    folio_suma = dict(zip(folios_resumen.get("folio", []), folios_resumen.get("suma_folio", []))) \
+        if not folios_resumen.empty else {}
+    folio_ncfdi = dict(zip(folios_resumen.get("folio", []), folios_resumen.get("n_cfdi", []))) \
+        if not folios_resumen.empty else {}
+
+    def _suma_folios(folios):
+        if not isinstance(folios, list) or not folios:
+            return None
+        if any(folio_ncfdi.get(f, 99) != 1 for f in folios):
+            return None
+        return sum(folio_suma.get(f, 0.0) for f in folios)
+
+    suma_folio_uuid = resumen["gasto_folios"].apply(_suma_folios)
+    ya = (resumen["cuadra_cargo_subtotal"] | resumen["cuadra_nota_credito"]
+          | resumen["cuadra_iva_al_gasto"] | resumen["cuadra_neto_documento"]
+          | resumen["cuadra_pago_directo"] | resumen["cuadra_arrendamiento"]
+          | resumen["cuadra_repartido"])
+    resumen["cuadra_folio_completo"] = (~ya) & suma_folio_uuid.notna() & (
+        (suma_folio_uuid.fillna(0.0) * resumen["tipo_cambio"] - resumen["subtotal_ajustado"]).abs() <= tol)
+
+    # --- Regla 9: el folio mezcla renglones de varios conceptos y uno de ellos
+    # es exactamente este CFDI (el resto es gasto de otra factura del mismo
+    # reporte). Se pide coincidencia exacta de un renglón contra la base o el
+    # total, no un ajuste por diferencia.
+    def _renglon_coincide(renglones, base, total_, tl, tc):
+        if not isinstance(renglones, list):
+            return False
+        for neto, desc in renglones:
+            for v in (neto * tc, desc * tc):
+                if abs(v - base) <= tl or abs(v - total_) <= tl:
+                    return True
+        return False
+
+    ya = ya | resumen["cuadra_folio_completo"]
+    resumen["cuadra_renglon"] = [
+        (not y) and _renglon_coincide(r, b, t, tl, tc)
+        for y, r, b, t, tl, tc in zip(ya, resumen["gasto_renglones"], resumen["subtotal_ajustado"],
+                                      resumen["total_mxn"], tol, resumen["tipo_cambio"])]
+
+    # --- Regla 10: un cheque liquida VARIAS facturas; el importe del cheque
+    # coincide con la suma de los CFDI que tiene etiquetados.
+    ch_ok = set()
+    if not cheques_agrupados.empty:
+        ok = cheques_agrupados[(cheques_agrupados["importe_cheque"] - cheques_agrupados["suma_cfdi"]).abs() <= TOL]
+        ch_ok = set(ok["documento"])
+    docs_por_uuid = origenes[origenes["origen_up"] == "CHEQUE"].groupby("uuid")["documento_real"].apply(set).to_dict()
+    ya = ya | pd.Series(resumen["cuadra_renglon"], index=resumen.index)
+    resumen["cuadra_cheque_agrupado"] = [
+        (not y) and bool(docs_por_uuid.get(u, set()) & ch_ok)
+        for y, u in zip(ya, resumen["uuid"])]
+
+    # --- Regla 11: no se pudo aislar el cargo en la póliza, pero el documento
+    # de origen sí capturó el importe del CFDI (su propia columna
+    # `Xx_Precio_Neto_Importe`). Casos confirmados: una FACTURA y una
+    # CUENTA_X_PAGAR de feb-2026 donde el renglón contable quedó redondeado o
+    # sin referencia aislable, pero el documento trae el total exacto.
+    ya = ya | pd.Series(resumen["cuadra_cheque_agrupado"], index=resumen.index)
+    resumen["cuadra_importe_documento"] = (~ya) & (resumen["importe_documento"].abs() > TOL) & (
+        ((resumen["importe_documento"] * resumen["tipo_cambio"] - resumen["subtotal_ajustado"]).abs() <= tol)
+        | ((resumen["importe_documento"] * resumen["tipo_cambio"] - resumen["total_mxn"]).abs() <= tol))
+
+    resumen["cuadra_agregado"] = (ya | resumen["cuadra_importe_documento"])
 
     def via(row):
         if row["cuadra_cargo_subtotal"]:
-            return "cargo = subtotal"
+            return "cargo = base CFDI"
+        if row["cuadra_nota_credito"]:
+            return "nota de crédito = total"
+        if row["cuadra_iva_al_gasto"]:
+            return "IVA no acreditable (cargo = total)"
+        if row["cuadra_neto_documento"]:
+            return "capturado en el documento (gasto distribuido menor)"
         if row["cuadra_pago_directo"]:
             return "pago directo (Cheque = total)"
+        if row["cuadra_arrendamiento"]:
+            return "arrendamiento financiero (interés + capital)"
+        if row["cuadra_repartido"]:
+            return "gasto repartido entre folios hermanos"
+        if row["cuadra_folio_completo"]:
+            return "el CFDI cubre el folio completo"
+        if row["cuadra_renglon"]:
+            return "capturado en un renglón del folio"
+        if row["cuadra_cheque_agrupado"]:
+            return "cheque que liquida varias facturas"
+        if row["cuadra_importe_documento"]:
+            return "capturado en el documento de origen"
         return ""
 
     def motivo(row):
@@ -280,53 +665,70 @@ def hoja_portada(ws, periodo, conciliados, pendientes, resumen):
     n_en_mpro = int(resumen["en_mpro"].sum())
     n_sin_valor = int((resumen["en_mpro"] & ~resumen["monetario"]).sum())
 
+    vias = (resumen.loc[resumen["cuadra_agregado"] & resumen["monetario"] & resumen["en_mpro"], "cuadra_via"]
+            .value_counts())
+
     filas = [
         "",
         "MÉTODO",
-        "A diferencia de los baselines por origen (que exigen que UN documento cuadre exacto contra el CFDI),",
-        "este chequeo SUMA el cargo de TODOS los documentos de mpro con los que un CFDI aparece etiquetado en",
-        "Comprobante_Digital, sin importar el origen (Cd_Tabla) — y compara esa suma contra el SUBTOTAL del CFDI",
-        "(tolerancia $1.00). Así, un CFDI repartido entre COMPRA + COMPRA_INDIRECTO, o entre GASTO_REGISTRO +",
-        "CUENTA_X_PAGAR, o duplicado bajo dos folios del mismo origen, puede cuadrar sin necesidad de elegir 'el'",
-        "documento correcto — se suman todos.",
+        "Para cada CFDI se SUMA el cargo de TODOS los documentos de mpro con los que aparece etiquetado en",
+        "Comprobante_Digital, sin importar el origen (Cd_Tabla), y se compara contra la base fiscal del CFDI.",
+        "Así, un CFDI repartido entre COMPRA + COMPRA_INDIRECTO, o entre GASTO_REGISTRO + CUENTA_X_PAGAR, cuadra",
+        "sin necesidad de elegir 'el' documento correcto.",
         "",
-        "Caso especial CHEQUE: Pd_Referencia no liga de forma confiable al folio (72% de las veces trae la",
-        "referencia externa del beneficiario, no el folio del cheque — ver poliza-explor). Para CFDI etiquetados",
-        "bajo CHEQUE se usa match por MONTO (± $1 contra Ch_Importe) en vez de por referencia, y se compara contra",
-        "el TOTAL del CFDI (no el subtotal) — cubre el patrón de 'liquidación directa' (proveedor paga de contado,",
-        "la póliza de COMPRA se cancela y el pago se recaptura directo en Cheque).",
+        "La base fiscal NO es el subtotal crudo del SAT. Es:",
+        "      (SubTotal - Descuento + IEPS + impuestos locales)  ×  tipo de cambio del documento de mpro",
+        "porque raw_sat guarda el subtotal BRUTO y en la MONEDA ORIGINAL del CFDI, mientras que mpro captura el",
+        "importe neto y postea siempre en MXN. El Descuento no existe como columna en raw_sat: se lee del XML.",
         "",
+        "Un CFDI puede estar bien contabilizado aunque el cargo no iguale su base, porque el tratamiento contable",
+        "correcto es otro. Por eso el cuadre es una CASCADA de vías, y cada CFDI conciliado dice por cuál cuadró",
+        "(columna 'Vía de cuadre' en la hoja Conciliados):",
+        "",
+        "  1. cargo = base CFDI ................. el chequeo de siempre.",
+        "  2. nota de crédito = total ........... reduce el adeudo con IVA incluido; nunca cuadra contra la base.",
+        "  3. IVA no acreditable ................ mpro manda el IVA al gasto (gasolina, abarrotes): cargo = total.",
+        "  4. capturado en el documento ......... el documento trae el importe del CFDI pero el gasto distribuido",
+        "                                        es menor por un descuento propio de mpro (cuota obrera del IMSS).",
+        "  5. pago directo (Cheque = total) ..... liquidación sin pasar por COMPRA/GASTO_REGISTRO.",
+        "  6. arrendamiento financiero .......... solo el interés es gasto; el capital amortiza el pasivo y la",
+        "                                        póliza de pago abona al banco el total del CFDI.",
+        "  7. gasto repartido entre folios ...... una factura capturada como varios folios, uno por sucursal.",
+        "  8. el CFDI cubre el folio completo ... todos los renglones del folio son del CFDI, uno solo etiquetado.",
+        "  9. capturado en un renglón del folio . el folio mezcla conceptos y uno de ellos es este CFDI.",
+        " 10. cheque que liquida varias facturas  el importe del cheque = suma de los CFDI que tiene etiquetados.",
+        " 11. capturado en el documento de origen el cargo no se aísla en la póliza pero el documento sí lo trae.",
+        "",
+        "Tolerancia: $1.00, o 0.005% de la base si es mayor (cubre el redondeo de convertir moneda extranjera).",
         "Se excluyen de la búsqueda de cargo TRASLADO y COMPROBANTE_PAGO (complementos SAT — Carta Porte y REP —",
-        "sin valor propio, Cd_Monto siempre $0 en mpro) y, del universo comparado, cualquier CFDI con Subtotal ≤ $1.",
+        "sin valor propio) y, del universo comparado, cualquier CFDI con Subtotal ≤ $1.",
         "",
         "IMPORTANTE — esto es un chequeo de UN SOLO LADO (cargo = reconocimiento de inventario/gasto). NO exige",
         "que el abono (pago) también cuadre, a diferencia de baseline_conciliacion.py (COMPRA, doble chequeo).",
-        "Un CFDI 'conciliado' aquí tiene su compra/gasto correctamente reconocido en la póliza, pero el lado del",
-        "pago puede seguir sin verificar — ese es el trabajo pendiente, origen por origen.",
         "",
         "UNIVERSO",
         f"  • {n_total_cfdi} CFDI recibidos en el periodo.",
         f"  • {n_en_mpro} encontrados en mpro (al menos 1 etiqueta en Comprobante_Digital).",
-        f"  • {n_sin_valor} de esos son complementos sin valor monetario (Subtotal ≤ $1 — típicamente TRASLADO/COMPROBANTE_PAGO) — se excluyen del cuadre.",
-        f"  • {total_universo} CFDI con valor monetario real, encontrados en mpro — este es el universo comparado abajo.",
+        f"  • {n_sin_valor} de esos son complementos sin valor monetario (Subtotal ≤ $1) — se excluyen del cuadre.",
+        f"  • {total_universo} CFDI con valor monetario real, encontrados en mpro — este es el universo comparado.",
         "",
         "RESULTADO",
-        f"  • Conciliados (cargo agregado cuadra, vía cargo=subtotal o pago directo): {len(conciliados)} CFDI  ({len(conciliados)/total_universo*100:.1f}%)" if total_universo else "  • Sin datos",
+        f"  • Conciliados: {len(conciliados)} CFDI  ({len(conciliados)/total_universo*100:.1f}%)" if total_universo else "  • Sin datos",
         f"  • Pendientes: {len(pendientes)} CFDI  ({len(pendientes)/total_universo*100:.1f}%)" if total_universo else "",
         "",
-        "Por comparación: el baseline por origen (solo COMPRA, doble chequeo cargo+abono) da 81.8% sobre 713 CFDI;",
-        "aquí, con el chequeo agregado de un solo lado mas COMPRA solo llega a 94.3% (701 CFDI) y Gasto_Registro a",
-        "89.4% (699 CFDI) — muy por encima del ~37% que daba el método viejo (reconciliacion_por_origen.py) para",
-        "ese origen, gracias a la exclusión robusta de 'cuentas de orden' vía Poliza_Configuracion y la llave",
-        "granular (Gr_Folio, Grd_ID) sobre Gasto_Registro_Control.",
+        "POR VÍA DE CUADRE",
+    ] + [f"  • {via}: {n}" for via, n in vias.items()] + [
         "",
         "HOJAS",
         "  • Conciliados: CFDI + orígenes donde aparece + cargo agregado + vía de cuadre.",
-        "  • Pendientes: CFDI encontrados en mpro pero sin cuadrar en agregado, con el motivo.",
+        "  • Pendientes: CFDI encontrados en mpro pero sin cuadrar, con el motivo.",
+        "",
+        "El detalle de cómo se llegó a cada vía, con la evidencia caso por caso, y la clasificación de los",
+        "pendientes que quedan está en docs/investigacion_pendientes.md del repo.",
     ]
     for i, texto in enumerate(filas, start=3):
         cell = ws.cell(row=i, column=1, value=texto)
-        cell.font = Font(name=FONT, size=10, bold=(texto in ("MÉTODO", "UNIVERSO", "RESULTADO", "HOJAS")))
+        cell.font = Font(name=FONT, size=10, bold=(texto in ("MÉTODO", "UNIVERSO", "RESULTADO", "HOJAS", "POR VÍA DE CUADRE")))
         cell.alignment = Alignment(wrap_text=True, vertical="top")
 
 
