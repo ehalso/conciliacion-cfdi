@@ -53,6 +53,11 @@ python3 reconciliacion_por_origen.py --periodo 2026-02
 # Baseline conciliados/pendientes (doble chequeo cargo=subtotal Y abono=total,
 # via Serie+Folio del CFDI) — por ahora validado para origen COMPRA
 python3 baseline_conciliacion.py --periodo 2026-02 --origen COMPRA
+
+# Baseline UNIVERSAL (todos los origenes a la vez, chequeo agregado de un
+# solo lado: cargo=subtotal, sumando TODOS los documentos con los que un
+# CFDI aparece etiquetado en mpro, sin importar el origen)
+python3 baseline_universal.py --periodo 2026-02
 ```
 
 Cada script imprime su avance y termina escribiendo un `.xlsx` en `output/`
@@ -113,8 +118,21 @@ docs/
   `pendientes.md`.
 - ✅ Reconciliación por origen (Compra, Cheque, Cuenta_x_Pagar) con cuadre
   agregado 90–97% para febrero 2026.
-- ⚠️ Gasto_Registro: cobertura real todavía baja (~37%) — requiere lógica
-  adicional, ver `pendientes.md`.
+- ✅ **Baseline UNIVERSAL (todos los orígenes, chequeo agregado de un solo
+  lado)**: sumando el cargo de TODOS los documentos con los que un CFDI
+  aparece etiquetado en mpro (sin importar el origen) y comparando contra
+  el Subtotal, **1,305/1,500 (87.0%)** de los CFDI recibidos con valor real
+  de febrero 2026 ya cuadran — resuelve de raíz los casos de CFDI repartidos
+  entre varios documentos/orígenes (COMPRA+COMPRA_INDIRECTO,
+  GASTO_REGISTRO+CUENTA_X_PAGAR, liquidación directa vía Cheque). No exige
+  que el abono también cuadre (ver `baseline_universal.py` y
+  `pendientes.md`).
+- ⚠️ Gasto_Registro: 37% con el método viejo por-documento
+  (`reconciliacion_por_origen.py`), pero **82.8% con el chequeo agregado
+  universal** (mismo origen, exclusión de cuentas de orden más robusta) —
+  ver baseline UNIVERSAL abajo y `pendientes.md`. Los patrones específicos
+  (CONSUMO_INTERNO, reversiones, NOMINA) siguen sin portar y explican parte
+  del resto.
 - ✅ Compra_Indirecto: causa del 3% ya diagnosticada (no es un hueco de
   datos — son CFDI duplicados con COMPRA, donde ya cuadran; ver
   `pendientes.md`), pendiente decidir tratamiento.

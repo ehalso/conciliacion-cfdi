@@ -73,6 +73,72 @@ primero en orden arbitrario. Esto subió el resultado de 578→583/713
 confirmado (GASTO_REGISTRO, CUENTA_X_PAGAR, NOTA_CREDITO_PROVEEDOR), y
 buscar el patrón GLM también ahí.
 
+## Baseline UNIVERSAL (todos los orígenes, chequeo agregado) — 87.0%, 2026-09-09
+
+Pivote pedido explícitamente por Esteban: en vez de conciliar un origen a
+la vez exigiendo que UN documento cuadre exacto contra el CFDI (como hace
+`baseline_conciliacion.py`), sumar el cargo de **todos** los documentos con
+los que un CFDI aparece etiquetado en `Comprobante_Digital` — sin importar
+el origen — y comparar esa suma contra el Subtotal. Motivado por hallazgos
+ya confirmados de que un mismo CFDI puede repartirse entre varios
+documentos/orígenes (COMPRA+COMPRA_INDIRECTO, GASTO_REGISTRO+CUENTA_X_PAGAR,
+folio duplicado dentro del mismo origen, liquidación directa vía Cheque) y
+por la investigación de `trivasa-context` (`poliza-explor` /
+`configuracion-polizas.md`) que confirmó que el motor de pólizas (`CT001` /
+`Poliza_Configuracion`) genera el cargo con la misma fórmula
+(`SUM(subtotal)`, referenciado al folio del documento) en varios orígenes,
+y que el filtro robusto de "cuentas de orden" (vía `Pl_Configuracion` →
+`Poliza_Configuracion.Pc_Descripcion`) generaliza sin cambios a cualquier
+origen.
+
+Implementado en `baseline_universal.py`. Validado en vivo sobre CFDI
+recibidos feb-2026: de 5,563 CFDI, 5,523 tienen al menos una etiqueta en
+mpro; de esos, 4,023 son complementos sin valor propio (TRASLADO/
+COMPROBANTE_PAGO, Subtotal≈$0 — excluidos del cuadre). Del universo
+monetario real (1,500 CFDI), **1,305 (87.0%)** ya cuadran en agregado —
+muy por encima del techo por-origen-individual:
+
+| Combinación de orígenes | n CFDI | % cuadra |
+|---|---:|---:|
+| COMPRA (solo) | 701 | 94.3% |
+| GASTO_REGISTRO (solo) | 699 | 82.8% |
+| CUENTA_X_PAGAR (solo) | 33 | 54.5% |
+| GASTO_REGISTRO + CUENTA_X_PAGAR | 29 | **100%** |
+| COMPRA + COMPRA_INDIRECTO | 6 | **100%** |
+| COMPRA + FACTURA | 4 | **100%** |
+| NOTA_CREDITO_PROVEEDOR (solo) | 13 | 0% |
+| CHEQUE (solo, vía pago directo) | 11 | 45.5% |
+
+Dos lecturas importantes:
+
+- **Las combinaciones cruzadas cuadran al 100%** — confirma que sumar en
+  vez de elegir "el" documento resuelve de raíz el problema de CFDI
+  repartidos entre orígenes, sin necesitar lógica especial por caso.
+- **Gasto_Registro sube de ~37% (método viejo, `reconciliacion_por_origen.py`)
+  a 82.8%** solo por usar el filtro robusto de cuentas-de-orden
+  (`Pl_Configuracion`) en vez del filtro de texto frágil — sin portar
+  ninguno de los patrones específicos ya documentados (CONSUMO_INTERNO,
+  reversiones, GASTO_RECLASIFICACION, NOMINA). Sugiere que buena parte de
+  esa deuda técnica ya está resuelta "gratis" por el cambio de método; los
+  patrones específicos seguramente explican una porción del 17.2% restante.
+- **NOTA_CREDITO_PROVEEDOR da 0%** — consistente con el patrón de
+  "documentos partidos"/signo ya documentado (`hallazgos.md` punto 8): una
+  nota de crédito reduce el cargo, no lo iguala, y el chequeo actual no
+  maneja signo. Pendiente aplicar la misma lógica de reversión pensada para
+  Gasto_Registro.
+
+**Límite importante**: este chequeo es de UN SOLO LADO (cargo=subtotal). No
+exige que el abono/pago también cuadre — un CFDI "conciliado" aquí tiene su
+compra/gasto bien reconocido contablemente, pero el pago puede seguir sin
+verificar. Extender el doble chequeo (como ya existe para COMPRA vía
+Serie+Folio) a los demás orígenes es el siguiente paso natural.
+
+**Pendiente**: de los 195 sin cuadrar, investigar dirigido por combinación
+de orígenes (empezando por GASTO_REGISTRO solo, 120 casos, y COMPRA solo,
+40 casos) — candidatos: los patrones ya conocidos de Gasto_Registro
+(CONSUMO_INTERNO, reversiones, NOMINA) y una versión con signo para
+NOTA_CREDITO_PROVEEDOR.
+
 ## Emitidos: ingest parcial — nivel 1 corrido y validado, nivel 3 bloqueado por infraestructura
 
 `raw_sat.cfdi_emitidos` ya no está congelado en sep/nov 2025: un nuevo
