@@ -91,7 +91,7 @@ gap de backfill real (18 UUID). Se agregó estatus dedicado `SIN_RAW_SAT_
 CANCELADO`/`SIN_RAW_SAT_PENDIENTE` para no confundir ese hueco con un
 descuadre — **ojo con la regla exacta** (solo aplica si TODOS los UUID del
 grupo faltan, no si falta uno solo — ver el detalle de por qué en el punto
-34 de abajo, casi se tapó un hallazgo real). De paso se encontró que
+35 de abajo, casi se tapó un hallazgo real). De paso se encontró que
 `raw_sat.iva` es solo IVA (no el total de impuestos trasladados) —
 documentado en `trivasa-context/docs/schema/calidad-de-datos.md`.
 
@@ -103,7 +103,7 @@ respuestas secuenciales de `mssql_205` (~900ms/consulta) — **paralelizar
 los lotes de consulta (son independientes entre sí) es el siguiente paso
 obvio de rendimiento y NO está hecho todavía**; medir primero cuántas
 conexiones concurrentes tolera `.205`. Detalle completo, números exactos y
-qué se descartó en `docs/hallazgos.md` puntos 34-35.
+qué se descartó en `docs/hallazgos.md` puntos 35-36.
 
 ## EMITIDOS y RETENCIONES (nuevo, 2026-09-10) — 100% de conciliación + hallazgo SAT
 
