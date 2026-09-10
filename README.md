@@ -15,6 +15,17 @@ independiente contra el SAT que encontró 29 constancias timbradas que el
 ERP nunca registró — ver [`docs/pendientes.md`](docs/pendientes.md) y
 [`docs/emitidos_retenciones.md`](docs/emitidos_retenciones.md).
 
+**Consolidación 2026-09-10**: este repo unificó varios proyectos hermanos
+que respondían la misma pregunta por separado —
+`~/proyectos/conciliacion-master/adjuntar-xml` (→ `recibidos/nivel_documento/`),
+`conciliacion-emitidos` (ya portado, retirado) y `layout-gastos` (→
+`layout_gastos_poliza/`). Se retiró también
+`~/proyectos/layout-contabilidad/layout-gastos-streamlit-claude`, superado
+por `streamlit-reportes` (el deployment real de producción). `funcionales-
+auditoria` (reportes RPTRV79, dominio de auditoría, no de conciliación)
+pasó a su propio repo, `ehalso/reportes-mpro`. Backup completo de las
+carpetas originales en `~/backups/consolidacion-conciliacion-2026-09-10.zip`.
+
 ## Acceso a las bases
 
 Conexión **directa** a las tres bases de Trivasa — Postgres (`raw_sat`) y
@@ -36,54 +47,81 @@ extractor cambió una sola línea — el modo bridge queda documentado como
 fallback histórico (recuperable del historial de git de ese archivo) para
 el caso de que una sesión futura vuelva a correr sin ruta de red directa.
 
+## Estructura (2026-09-10 — reorganizado por pregunta de negocio, no por sesión)
+
+Cada dominio (recibidos/emitidos/retención) se concilia desde **dos ángulos
+independientes y complementarios**, no un método único:
+
+- **`nivel_documento`** — ¿el documento que capturó/originó el CFDI en mpro
+  trae el mismo importe? (compara contra la tabla propia del módulo —
+  `Compra_Encabezado`, `Factura_Encabezado`, etc. — nunca contra la póliza).
+- **`nivel_poliza`** — ¿lo que se **contabilizó** en `Poliza_Detalle`
+  (Cargo/Abono real) cuadra contra el CFDI? Un nivel más profundo: el
+  documento puede estar perfecto y la póliza no aislarlo bien (ver
+  `docs/hallazgos.md` puntos 28/30 para un caso real, FACTURA/VENTA).
+
+```
+recibidos/
+  nivel_documento/   Documento↔CFDI+impuestos (ex adjuntar-xml). 03_conciliacion_xml_vs_mpro_impuestos.py,
+                     04_conciliacion_mpro_vs_xml.py (inverso: mpro sin CFDI), 05_resumen_conciliacion.py
+  nivel_poliza/      Póliza↔CFDI — el método vigente. baseline_universal.py (99.36% H1),
+                     baseline_conciliacion.py, reconciliacion_por_origen.py, poliza_reconciliation.py
+  cruce_sat/         (pendiente) independiente de Comprobante_Digital — ver su README
+
+emitidos/
+  nivel_documento/   conciliacion_emitidos_documento.py — 100% H1 (por construcción: el
+                     CFDI se genera DESDE el documento, no captura contra él)
+  nivel_poliza/      baseline_universal_emitido.py — NOTA_CREDITO 99.5%, FACTURA sin método aún
+
+retencion/
+  cruce_sat/         retencion_reconciliation.py — SAT (raw_sat.cfdi_retencion, fuente
+                     INDEPENDIENTE del ERP) vs Cd_Monto. Aquí vive el hallazgo real: 29
+                     constancias timbradas que el ERP nunca registró ($536,597.04)
+
+cobranza_rep/       (pendiente) REP vs Pago_CXC — ver su README
+
+layout_gastos_poliza/  Reconciliación CECO/Gasto_Registro (Cargo-Abono vs Importe), la
+                       fuente de desarrollo de las páginas CONT-1/CONT-2 de streamlit-reportes
+
+src/                 Extractores compartidos entre los métodos de arriba (ver abajo)
+reportes_streamlit/  UIs interactivas — candidatas a promover a streamlit-reportes (producción)
+docs/                Metodología, hallazgos, pendientes — consolidados, no uno por dominio
+```
+
+`main.py` queda en la raíz (nivel 1, el más simple — CFDI existe y el
+importe coincide, sirve para ambas direcciones vía `--tipo`) por ser
+cross-cutting y ya no el punto de partida para trabajo nuevo.
+
 ## Quickstart
 
 ```bash
 pip install -r requirements.txt
 cp .env.example .env   # llenar PG_USER/PASSWORD, MSSQL_205/207_USER/PASSWORD
 
-# Conciliación base (nivel CFDI): SAT vs mpro, un periodo o varios
+# --- Recibidos ---
+python3 recibidos/nivel_documento/03_conciliacion_xml_vs_mpro_impuestos.py --fecha-ini 2026-01-01 --fecha-fin 2026-02-01
+python3 recibidos/nivel_documento/04_conciliacion_mpro_vs_xml.py           --fecha-ini 2026-01-01 --fecha-fin 2026-02-01
+python3 recibidos/nivel_poliza/baseline_universal.py --periodo 2026-02          # método vigente, 99.36% H1
+
+# --- Emitidos ---
+python3 emitidos/nivel_documento/conciliacion_emitidos_documento.py --periodo 2026-01   # 100%
+python3 emitidos/nivel_poliza/baseline_universal_emitido.py --periodo 2026-01          # NOTA_CREDITO 99.5%
+
+# --- Retención (incluye el cruce independiente contra el SAT) ---
+python3 retencion/cruce_sat/retencion_reconciliation.py --periodo 2026-01
+python3 retencion/cruce_sat/retencion_reconciliation.py --periodos 2026-01,2026-02,2026-03,2026-04,2026-05,2026-06
+
+# --- Layout de gastos por CECO ---
+python3 layout_gastos_poliza/07_reconciliacion_completa_ceco.py --fecha-ini 2026-01-01 --fecha-fin 2026-02-01
+
+# --- Nivel 1 (cross-cutting, el más simple) ---
 python3 main.py --periodo 2026-02
-python3 main.py --periodos 2026-01,2026-02,2026-03 --salida output/conciliacion_Q1.xlsx
-
-# Igual pero para emitidos (solo 2026-01 tiene datos completos por ahora)
 python3 main.py --tipo emitido --periodo 2026-01
-
-# Conciliación a nivel póliza/cuenta contable (piloto, vía Poliza_Detalle_Comprobante)
-python3 poliza_reconciliation.py --periodo 2026-01
-
-# Conciliación distinguida por origen de documento en mpro (Compra, Gasto_Registro,
-# Cuenta_x_Pagar, Cheque, Nota_Credito_Proveedor, Compra_Indirecto) — el nivel de
-# detalle más profundo, con cuadre documento-a-documento Y cuadre agregado por origen
-python3 reconciliacion_por_origen.py --periodo 2026-02
-
-# Baseline conciliados/pendientes (doble chequeo cargo=subtotal Y abono=total,
-# via Serie+Folio del CFDI) — por ahora validado para origen COMPRA
-python3 baseline_conciliacion.py --periodo 2026-02 --origen COMPRA
-
-# Baseline UNIVERSAL (todos los origenes a la vez, chequeo agregado de un
-# solo lado: cargo=subtotal, sumando TODOS los documentos con los que un
-# CFDI aparece etiquetado en mpro, sin importar el origen) — método vigente
-python3 baseline_universal.py --periodo 2026-02
-
-# Emitidos: factura, nota de crédito y retenciones vs su documento fuente en mpro
-python3 conciliacion_emitidos_documento.py --periodo 2026-01
-
-# Emitidos, nivel 3 (vía póliza contable): NOTA_CREDITO validado, FACTURA sin método aún
-python3 baseline_universal_emitido.py --periodo 2026-01
-
-# Retención: SAT (raw_sat.cfdi_retencion) vs Cd_Monto de Comprobante_Digital,
-# sin parsear XML (el XML de retención no es un CFDI normal — ver
-# docs/hallazgos.md punto 28). Es también el cruce independiente contra el
-# SAT (encuentra constancias timbradas que el ERP no registró) — correrlo
-# sobre varios periodos a la vez es lo que da esa vista.
-python3 retencion_reconciliation.py --periodo 2026-01
-python3 retencion_reconciliation.py --periodos 2026-01,2026-02,2026-03,2026-04,2026-05,2026-06
 ```
 
 Cada script imprime su avance y termina escribiendo un `.xlsx`/`.csv` en
-`output/` (no versionado — ver `.gitignore`) con hojas de resumen y detalle,
-semaforeado por color.
+`output/` (o junto al script — no versionado, ver `.gitignore`) con hojas
+de resumen y detalle, semaforeado por color.
 
 ## Reportes
 
@@ -93,12 +131,15 @@ semaforeado por color.
   (emitido, retención), con búsqueda, filtros y orden por columna. Es un
   snapshot estático de los datos de este README — se regenera pidiendo que
   se actualice con datos más recientes.
-- **Streamlit** (`streamlit_app.py`): reporte interactivo en vivo sobre
-  `baseline_universal.calcular()` — selector de periodo(s), filtros, KPIs y
-  descarga a Excel, sin duplicar la lógica de conciliación. Correr con
-  `streamlit run streamlit_app.py`.
+- **Streamlit interno** (`reportes_streamlit/`): UIs en vivo sobre los
+  métodos de arriba, sin duplicar lógica — candidatas a promoverse a
+  `streamlit-reportes` (el deployment de producción real, Docker +
+  Cloudflare Tunnel en `reportes.frento.com.mx`) cuando maduren. Correr con
+  `streamlit run reportes_streamlit/streamlit_app.py` (recibidos) o
+  `streamlit run reportes_streamlit/layout_gastos_ceco/streamlit_app.py`
+  (CECO).
 
-## Estructura del repo
+## Estructura de código compartido
 
 ```
 src/
@@ -108,8 +149,6 @@ src/
   cfdi_parser.py               Parseo de CFDI 3.3/4.0 (subtotal, IVA, total, UUID)
   extract_sat.py               Lado SAT: raw_sat.cfdi_recibidos / cfdi_emitidos (Postgres)
   extract_mpro.py              Lado mpro, nivel CFDI: Comprobante_Digital + parseo de Cd_XML
-  extract_retencion.py         Retención: lado SAT (cfdi_retencion, columnas propias) + lado
-                               mpro (Cd_Monto nativo, sin parsear XML — ver hallazgos.md #28)
   extract_origen.py            Traza cada CFDI a su(s) documento(s) de origen en mpro
                                (Comprobante_Digital.Cd_Tabla / Cd_Documento)
   extract_poliza.py            Piloto: CFDI → póliza vía Poliza_Detalle_Comprobante (agnóstico de origen)
@@ -122,19 +161,7 @@ src/
   reconcile.py                  Cruce SAT vs mpro a nivel CFDI + clasificación
   report.py                     Reporte .xlsx (colores por estatus)
 
-main.py                        CLI: conciliación base (nivel CFDI)
-poliza_reconciliation.py       CLI: conciliación a nivel póliza (piloto, origen-agnóstico)
-reconciliacion_por_origen.py   CLI: conciliación por origen de documento (el más completo)
-baseline_conciliacion.py       CLI: doble chequeo cargo+abono (COMPRA)
-baseline_universal.py          CLI: baseline universal recibidos (método vigente)
-baseline_universal_emitido.py CLI: baseline universal emitidos, nivel póliza (NOTA_CREDITO 99.5%, FACTURA sin método)
-conciliacion_emitidos_documento.py CLI: conciliación de emitidos vs documento fuente (factura, NC, retenciones) — 100%
-retencion_reconciliation.py    CLI: conciliación de retención — existencia + cuadre vs SAT, incluye el cruce independiente
-
-streamlit_app.py                       Reporte interactivo (ver "Reportes" arriba)
-streamlit_app_conciliacion.py          Vista principal
-streamlit_app_conciliacion_detalle.py  Drill-down documento/línea
-streamlit_common.py                    Utilidades compartidas entre páginas
+main.py                        CLI: conciliación base (nivel CFDI, ambas direcciones)
 
 investigacion/
   dump_contexto.py             Dump de contexto de los pendientes para investigación

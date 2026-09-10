@@ -6,6 +6,18 @@
 > mismo commit que cambie el código — es más valioso que esté al día que
 > completo.
 
+> **Reorganización 2026-09-10**: los scripts de este PROGRESS se movieron a
+> carpetas por dominio × nivel (`recibidos/nivel_documento/`,
+> `recibidos/nivel_poliza/`, `emitidos/nivel_documento/`,
+> `emitidos/nivel_poliza/`, `retencion/cruce_sat/`,
+> `layout_gastos_poliza/`) — ver el mapa completo y el porqué en
+> `README.md`. Este documento no repite esa estructura, solo referencia los
+> scripts por su nombre; si un comando no corre, buscar el archivo en el
+> árbol de `README.md` antes de asumir que se perdió. También se
+> consolidaron aquí los proyectos hermanos `adjuntar-xml` y
+> `conciliacion-emitidos` (retirados tras portarse), y `funcionales-
+> auditoria` pasó a su propio repo, `ehalso/reportes-mpro`.
+
 ## Qué es este proyecto
 
 Conciliación automatizada entre CFDI (facturas electrónicas) recibidos
@@ -48,7 +60,7 @@ Resultado en vivo, **todo H1 2026** (recibidos):
 (febrero venía en 90.1% antes de esa sesión)
 
 ```bash
-python3 baseline_universal.py --periodo 2026-02
+python3 recibidos/nivel_poliza/baseline_universal.py --periodo 2026-02
 ```
 
 **Lo primero que hay que leer para retomar RECIBIDOS es

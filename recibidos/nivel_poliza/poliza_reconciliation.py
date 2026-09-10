@@ -13,7 +13,7 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from extract_sat import extract_sat_recibidos  # noqa: E402
 from extract_poliza import extract_poliza_por_uuids  # noqa: E402

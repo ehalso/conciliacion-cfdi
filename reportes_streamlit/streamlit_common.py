@@ -18,8 +18,10 @@ import pandas as pd
 import streamlit as st
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
 sys.path.insert(0, SCRIPT_DIR)
-sys.path.insert(0, os.path.join(SCRIPT_DIR, "src"))
+sys.path.insert(0, os.path.join(REPO_ROOT, "src"))
+sys.path.insert(0, os.path.join(REPO_ROOT, "recibidos", "nivel_poliza"))
 
 from baseline_universal import calcular, detalle_regla1  # noqa: E402
 

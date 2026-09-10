@@ -11,7 +11,7 @@ import argparse
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import pandas as pd  # noqa: E402
 from openpyxl.styles import Font, PatternFill  # noqa: E402

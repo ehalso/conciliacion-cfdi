@@ -19,7 +19,7 @@ import sys
 from decimal import Decimal
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from extract_retencion import (  # noqa: E402
     extract_sat_retencion,
