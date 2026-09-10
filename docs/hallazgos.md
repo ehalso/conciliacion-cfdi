@@ -686,3 +686,234 @@ una UI con selector de periodo(s), filtros, KPIs y descarga a Excel, sin
 duplicar la lógica de conciliación. Validado con `streamlit.testing.v1.AppTest`
 contra datos en vivo (multi-periodo, filtro por origen, búsqueda de texto,
 las tres sin excepción) antes de considerarlo listo para `streamlit run`.
+
+## 28. Primer intento de nivel 3 para EMITIDOS (`baseline_universal_emitido.py`) — FACTURA no aísla por documento, NOTA_CREDITO sí
+
+2026-09-10. Arranque del trabajo de emitidos pedido explícitamente por
+Esteban ("extiende baseline universal", ver `PROGRESS.md` punto 4 de la
+sesión anterior). Exploración directa a `mssql_205` (sin pasar por ninguna
+API — conexión SQL directa vía `bridge_client.py`, igual que el resto del
+repo). Censo de origen ya conocido (`docs/pendientes.md`): FACTURA, NOTA_CREDITO,
+COMPROBANTE_PAGO/TRASLADO (estos dos últimos, complementos sin valor, mismo
+tratamiento que recibidos).
+
+**`Comprobante_Digital.Cd_Tabla='FACTURA'` no tiene módulo homónimo en
+`Poliza_Control`** — no existe `Pc_Tabla='FACTURA'`; se contabiliza bajo
+`Pc_Tabla='VENTA'`. `Cd_Tabla='NOTA_CREDITO'` sí es homónimo directo
+(`Pc_Tabla='NOTA_CREDITO'` = `Nc_Folio`) — verificado con fecha (`Poliza.
+Pl_Fecha` = `Nota_Credito.Nc_Fecha` = `Cd_Timbre_Fecha`, mismo día, en 8/8 de
+una muestra de enero 2026) y **confiable**.
+
+**Corrección a media sesión, casi documentada mal**: el primer intento probó
+`Poliza_Control WHERE Pc_Documento = '<Fc_Folio>'` y sí devolvió filas
+`Pc_Tabla='VENTA'` — parecía confirmar que el folio era el mismo valor
+directamente. Es un **falso positivo por reciclaje de folio**: la serie
+`XX-NNNNNNN` de `Venta_Encabezado.Vn_Folio` es independiente de la de
+`Factura_Encabezado.Fc_Folio`, y ambas reciclan el mismo rango de números en
+años distintos. Se detectó cruzando `Poliza.Pl_Fecha` contra `Factura_
+Encabezado.Fc_Fecha`: para una muestra de 8 FACTURA de enero 2026, TODOS los
+matches por texto directo traían pólizas de 2018-2025, sin relación con la
+fecha real de la factura (ejemplo: `Cd_Documento='02-0019715'`,
+`Cd_Timbre_Fecha=2026-01-02`, pero el "match" en `Poliza_Control` traía
+`Pl_Fecha=2020-01-11`). **Lección para cualquier exploración futura de
+folios de mpro: validar SIEMPRE la fecha del match, no solo el string** —
+recibidos no tuvo este problema (o no se detectó), pero emitidos sí, al
+menos para el módulo VENTA.
+
+La cadena real, verificada con fecha: `Factura_Encabezado.Fc_Folio` (=
+`Cd_Documento`, siempre 10 caracteres exactos, sin sufijo — a diferencia de
+recibidos no hace falta truncar) -> `Venta_Encabezado.Fc_Folio` (una factura
+puede consolidar VARIAS ventas/tickets — hasta 382 `Vn_Folio` distintos para
+una sola factura en enero 2026; el caso típico, 93.5% de 2,201 facturas con
+al menos un match, es 1 factura = 1 venta) -> `Vn_Folio` =
+`Poliza_Control.Pc_Documento` bajo `Pc_Tabla='VENTA'`, exigiendo además
+`ABS(DATEDIFF(day, Poliza.Pl_Fecha, Venta_Encabezado.Vn_Fecha)) <= 3` (el
+mismo reciclaje de folio aplica un nivel más abajo, a `Vn_Folio`).
+Implementado en `extract_poliza_factura()` (`src/extract_poliza_por_origen.py`).
+
+**VENTA postea DOS pólizas separadas por documento** (censo real, enero
+2026, `Poliza_Configuracion.Pc_Descripcion`):
+
+- `VENTAS 2019 EN ADELANTE` — la de INGRESO: Cargo a Clientes (`1120.xxx`) =
+  Total del CFDI (con IVA); Abono a Ventas (`4100.xxx`, ≈ subtotal) + IVA
+  Trasladado (`2160.xxx`, ≈ iva). Es la que importa para conciliar.
+- `COSTO DE VENTA 2018 EN ADELANTE` — la de COSTO: Cargo a Costo de Venta
+  (`5100.xxx`) = Abono a Inventario (`1140.xxx`) — el costo del producto
+  vendido, sin relación con el importe fiscal del CFDI. Hay que excluirla
+  (`extract_poliza_por_origen()` ahora acepta `excluir_descripcion` para
+  esto) para no sumar costo+ingreso en un solo número sin sentido.
+
+**Hallazgo grave para el método**: de las dos, la que SÍ aísla el documento
+por `Pd_Referencia` de forma consistente es la de COSTO DE VENTA — la de
+INGRESO casi nunca trae `Pd_Referencia` al documento individual (verificado
+caso por caso, ej. `Vn_Folio='05-0271923'`: la póliza de costo trae la línea
+con `Pd_Referencia` exacto, la póliza de ingreso activa de la misma fecha
+tiene CERO líneas con esa referencia). Aparenta postearse consolidada por
+sucursal/día sin trazabilidad a documento individual, para la inmensa
+mayoría de las ventas. **Resultado real, enero 2026, con la cadena
+corregida**: de 2,191 FACTURA, solo 19 documentos encuentran algún cargo/abono
+aislado (excluyendo costo de venta), y de esos solo 13 cuadran contra el
+Total — **0.6% de cobertura**. NOTA_CREDITO, en cambio, con el match directo
+confiable, arrancó en 33.5% con el mismo patrón dual cargo/abono vs total
+usado para `NOTA_CREDITO_PROVEEDOR` en recibidos — pero **subió a 99.5%**
+tras el fix descrito en el punto 29 (abajo): el 33.5% inicial no era ruido
+real, era el mismo problema del punto 3 (dos pólizas mezcladas bajo el mismo
+`Pd_Referencia`) aplicado a NOTA_CREDITO.
+
+**No resuelto — candidato principal para la siguiente sesión**: no se
+encontró ninguna columna/tabla que ligue la póliza de INGRESO de VENTA a su
+documento de forma confiable. Se probaron sin éxito: `Pd_Referencia` =
+`Fc_Folio` (folio reciclado, descartado), `Pd_Referencia` = `Vn_Folio` (casi
+vacío), `Poliza_Detalle_Comprobante` (nivel 2, liga UUID directo — SÍ
+encuentra huella para 2,377/6,500 UUIDs de enero, pero el `suma_abono`
+agregado mezcla la cuenta de Clientes (`1120.xxx`) con la de Ventas
+(`4100.xxx`) para el 87% de esos casos — sugiere que el anexo también etiqueta
+la póliza de COBRANZA/pago del cliente con el mismo UUID del CFDI de venta,
+no solo la de reconocimiento de ingreso; sin separar ambas pólizas por
+`Pl_Configuracion`, el nivel 2 tampoco sirve para cuadrar contra el Total —
+0% de cuadre directo probado). Antes de seguir explorando a ciegas, vale la
+pena la misma recomendación que para retención (`docs/pendientes.md`):
+preguntar directo a alguien de Trivasa cómo se referencia el documento en la
+póliza de ingreso de VENTA — el patrón de "consolidado por sucursal/día sin
+referencia" es consistente con un negocio de alto volumen (POS/mostrador),
+donde quizás la conciliación real vive a otro nivel (agregado por
+sucursal/día contra la suma de CFDI del mismo corte), no por documento
+individual.
+
+## 29. NOTA_CREDITO (emitidos): separar por cuenta contable sube el cuadre de 33.5% a 99.5%
+
+2026-09-10, misma sesión que el punto 28. Protocolo de diagnóstico estándar
+(ver skill `trivasa-comprobacion`): aislar los pendientes en su propio
+conjunto y buscar patrones antes de investigar caso por caso. El primer
+intento de NOTA_CREDITO (sumar TODO el `Cargo`/`Abono` por `Pd_Referencia`,
+igual que el método genérico de `extract_poliza_por_origen`) daba 33.5%
+(63/188) — pero los pendientes mostraban un patrón clarísimo al calcular
+`monto_agregado / total`: un cluster limpio en **0.862** (= 1/1.16, el factor
+del IVA — es decir, `monto_agregado` caía EXACTO en el subtotal, no el
+total) y otro cluster disperso entre **1.2 y 1.65** (con valores idénticos
+repetidos entre UUIDs *distintos* — señal de que se estaba sumando algo
+ajeno al CFDI, no ruido de redondeo).
+
+**Censo real por configuración** (`Poliza_Configuracion.Pc_Descripcion`,
+enero 2026, `Pd_Tipo=1` agrupado por raíz de cuenta):
+
+| Config | Cargo `4200.xxx` | Cargo `2140.xxx` | Cargo `2160.xxx` | Abono `5100.xxx` | Abono `2140.xxx` |
+|---|---:|---:|---:|---:|---:|
+| BONIFICACION (22 docs) | $15,251.71 | — | — | — | — |
+| DEVOL C/REF (98-102 docs) | $2,033,891.11 | $1,296,132.74 | — | $1,296,132.74 | — |
+| DEVOL S/REF (4-7 docs) | $23,482.26 | $15,117.55 | — | $15,117.55 | — |
+| DIRECTA (64 docs) | — | $1,864,123.13 | $298,259.45 | — | $2,162,383.18 |
+
+Drill-down de un folio real (`05-0013517`, config DEVOL C/REF, CFDI
+subtotal=10,344.96, total=12,000.15): `Cargo 4200.001.001.001 = 10,344.96`
+(exacto = subtotal) + `Cargo 2140.001.005 = 4,326.24` (sin relación con el
+IVA de este CFDI, 1,655.19) + `Abono 5100.001.001.002 = 4,326.24` (misma
+cifra que el segundo cargo — reversión de costo de venta por la devolución
+física de mercancía, autobalanceada, cero relación con el importe fiscal).
+El método genérico sumaba los dos Cargos (10,344.96+4,326.24=14,671.20) —
+de ahí el cluster de ratios dispersos (1.2-1.65: la proporción entre "ruido
+de costo" e "importe real" varía por documento, por eso no era un factor
+constante).
+
+**Fix**: separar el `Cargo` por cuenta al extraer — `cargo_4200` (cuenta
+`4200%`, Devoluciones sobre Ventas) vs `cargo_resto` (todo lo demás).
+Comparar `cargo_4200` contra el **Subtotal** (cubre BONIFICACION/DEVOL
+C-S REF) y `cargo_resto` contra el **Total** (cubre DIRECTA, que nunca usa
+la cuenta 4200 y por eso no se contamina). Implementado en
+`extract_poliza_nota_credito()` (`src/extract_poliza_por_origen.py`).
+Drill-down de DIRECTA confirmó el patrón limpio, sin necesidad de fix (5/5
+folios de muestra: `Cargo 2140 (=subtotal) + Cargo 2160 (=iva) = Abono 2140
+(sub-cuenta distinta) = Total`, exacto al centavo).
+
+**Resultado**: NOTA_CREDITO pasa de 33.5% a **99.5% (187/188)**. El único
+pendiente residual (`9ED9C67A-...`) es una BONIFICACION donde la línea de
+devolución se capturó por error en la cuenta `8200` en vez de `4200` — un
+caso aislado de mala captura (n=1), no un patrón — se deja como pendiente
+real, no se fuerza una regla para un solo caso (mismo criterio que otros
+"errores de captura reales" ya documentados en este repo, ej. BRIGGS
+EQUIPMENT punto 16).
+
+## 30. Conciliación de emitidos y retenciones — proyecto hermano portado y validado en vivo (100% documento↔CFDI, 29 retenciones faltantes en el ERP)
+
+2026-09-10, misma sesión. Esteban le pasó a otra sesión de Claude Code
+("cowork") la documentación de un proyecto hermano ya maduro,
+`~/proyectos/conciliacion-master/conciliacion-emitidos` (metodología propia,
+no la de este repo — ver su `docs/metodologia.md`/`esquema-datos.md`, no
+duplicados aquí). Esa sesión de cowork lo adaptó en su propio sandbox, pero
+el commit quedó local (push bloqueado por la restricción de proxy de sesión,
+ya documentada en `PROGRESS.md` — el fix conocido es el MCP de GitHub, no
+`git push` crudo) y no se pudo recuperar directo — Esteban rescató a mano el
+`.md` de resumen que esa sesión había producido.
+
+**Hallazgo metodológico central, que faltaba en este repo**: del lado
+emitido, **el CFDI se genera DESDE el documento de mpro** (al revés que
+recibidos, donde el CFDI llega de fuera y mpro lo captura). Por eso la
+relación CFDI↔documento es **1:1 estricta**, nunca N:M, y comparar el CFDI
+contra el documento que lo originó (no contra la póliza contable) es la
+validación correcta y más fundamental — no es circular. Esto es justo la
+pregunta que `baseline_universal_emitido.py` (nivel 3, vía póliza) no
+contesta para FACTURA, y por una razón distinta (ver punto 28): son dos
+preguntas legítimas y complementarias, no la misma.
+
+En vez de confiar en los números rescatados sin más, se re-implementó la
+metodología completa **en este repo**, con `bridge_client` (conexión SQL
+directa, ya el patrón de este repo desde el punto 27) — dos scripts nuevos:
+
+- **`conciliacion_emitidos_documento.py`** (equivalente al reporte 01 del
+  proyecto original): factura/nota de crédito/constancia de retención/gasto-
+  retención vs su documento fuente en mpro.
+- **`cruce_sat_retenciones.py`** (equivalente al reporte 04): cruce
+  independiente contra `raw_sat.cfdi_retencion` — detecta un CFDI timbrado
+  que el ERP nunca registró (invisible para el primero, por construcción).
+
+**Aceleración real, no solo copiada del proyecto original**: ningún XML se
+parsea en este puerto. FACTURA/NOTA_CREDITO/CONSTANCIA_RETENCION usan
+`Comprobante_Digital.Cd_Monto` directo (ya es el importe comparable — el
+proyecto original lo midió, aquí se reconfirmó en la corrida). GASTO_REGISTRO
+con retención (`Cd_Monto=0` por diseño del SAT) usa
+`raw_sat.cfdi_retencion.monto_total_operacion` — columna ya parseada desde
+la ingesta (mejora de `consulta-xmls` del 2026-09-10, la misma sesión que
+agregó `descuento`/`ieps_trasladado`/`impuestos_locales_*` a
+`cfdi_recibidos`/`cfdi_emitidos`, ver `trivasa-context/docs/proyectos/
+conciliacion-cfdi/PROGRESS.md`) — en vez de bajar y parsear `Cd_XML`.
+`raw_sat.cfdi_retencion` tiene cobertura histórica completa (2016-2026), así
+que esta aceleración no le cuesta cobertura a ningún periodo.
+
+**Resultado, corrido en vivo contra `mssql_205`, H1 2026 — coincide EXACTO
+con lo rescatado de la sesión de cowork**:
+
+| Periodo | Universo | Conciliables (sin cancelados) | Concilian | % |
+|---|---:|---:|---:|---:|
+| 2026-01 | 2,479 | 2,429 | 2,429 | 100.00% |
+| 2026-02 | 2,240 | 2,209 | 2,209 | 100.00% |
+| 2026-03 | 2,505 | 2,450 | 2,450 | 100.00% |
+| 2026-04 | 2,529 | 2,486 | 2,486 | 100.00% |
+| 2026-05 | 2,450 | 2,410 | 2,410 | 100.00% |
+| 2026-06 | 2,624 | 2,570 | 2,570 | 100.00% |
+| **H1** | **14,827** | **14,554** | **14,554** | **100.00%** |
+
+Y el cruce contra el SAT (`cruce_sat_retenciones.py --periodos 2026-01,...,
+2026-06`), también exacto contra lo rescatado:
+
+| Periodo | Timbradas (SAT) | En el ERP | Faltantes | Monto de operación | ISR faltante |
+|---|---:|---:|---:|---:|---:|
+| 2026-01 | 45 | 31 | 14 | $282,291.65 | $56,458.35 |
+| 2026-02 | 15 | 0 | 15 | $254,305.39 | $50,861.10 |
+| 2026-03..06 | 76 | 76 | 0 | — | — |
+| **H1** | **136** | **107** | **29** | **$536,597.04** | **$107,319.45** |
+
+**Lectura**: del lado emitido, el importe **no es el problema** (100% por
+construcción, confirmado). El problema real de negocio son **29 constancias
+de retención de intereses, timbradas ante el SAT y nunca registradas en el
+ERP** ($536,597.04, $107,319.45 de ISR) — dos lotes (22 de enero, 26 de
+febrero), mismo mecanismo, mismo tipo de retención (`CveRetenc 16`,
+intereses a prestamistas), acreedores casi todos repetidos. No se repite en
+marzo-junio. Ver `docs/pendientes.md` para la recomendación de siguiente
+paso (llevarlo a Contabilidad, y correr el mismo cruce sobre meses
+posteriores a junio cuando estén disponibles).
+
+**Pendiente, no portado esta sesión** (documentado en el proyecto original,
+sección "Qué falta"): el reporte 02/03 de cobranza (REP) — parcialidades
+cobradas sin timbrar y REP timbrados por duplicado. El proyecto original ya
+lo tiene medido (96.18% de facturas con cobranza conciliada, enero 2026) —
+portarlo con el mismo patrón es el siguiente paso natural de este frente.

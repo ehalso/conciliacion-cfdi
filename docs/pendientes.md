@@ -275,7 +275,38 @@ ver `ORIGEN_GRANULAR` en `baseline_universal.py`.
   pendientes cuando el CFDI en cuestión no tiene ninguna etiqueta propia
   bien formada.
 
-## Emitidos: ingest parcial — nivel 1 corrido y validado, nivel 3 bloqueado por infraestructura
+## Emitidos ↔ documento fuente y retenciones vs SAT: 100% + 29 retenciones faltantes en el ERP (2026-09-10)
+
+**Resuelto — no requiere más trabajo salvo lo indicado.** Documento↔CFDI:
+100% (14,554/14,554 conciliables, H1 2026). Metodología distinta a la de
+más abajo (nivel 3 vía póliza) — ver `docs/hallazgos.md` punto 30 para el
+detalle completo, la validación en vivo y por qué es la pregunta correcta
+del lado emitido ("el CFDI se genera DESDE el documento", relación 1:1
+estricta). Scripts: `conciliacion_emitidos_documento.py`,
+`cruce_sat_retenciones.py`.
+
+**Hallazgo real de negocio, el que sí hay que actuar**: 29 constancias de
+retención de intereses (`CveRetenc 16`) timbradas ante el SAT que el ERP
+nunca registró — $536,597.04, $107,319.45 de ISR. Dos lotes: 14 de enero
+(22 de enero, $282,291.65), 15 de febrero (26 de febrero, $254,305.39),
+nada en marzo-junio. **Es lo primero que hay que llevar a Contabilidad** —
+no es un problema de este pipeline, es un hueco real de registro contable.
+Correr `cruce_sat_retenciones.py` sobre julio en adelante cuando esos meses
+estén disponibles, para ver si el patrón sigue.
+
+**Pendiente, no portado todavía**: cobranza (REP) — el proyecto hermano
+(`~/proyectos/conciliacion-master/conciliacion-emitidos`) ya mide 96.18% de
+facturas con cobranza conciliada (enero 2026) y encontró parcialidades
+cobradas sin timbrar ($53K-$134K/mes) y REP timbrados por duplicado.
+Portarlo con el mismo patrón (bridge_client, sin XML) es el siguiente paso
+natural de este frente.
+
+## Emitidos, nivel 3 (vía póliza contable): ingest parcial — NOTA_CREDITO 99.5%, FACTURA sin método (0.6%)
+
+> Esta sección es la pregunta "¿la póliza contable cuadra con el CFDI?" —
+> distinta y más difícil que la de arriba ("¿el CFDI cuadra con el
+> documento que lo originó?", ya resuelta al 100%). Útil para detectar
+> errores de *contabilización*, no de *captura del CFDI*.
 
 `raw_sat.cfdi_emitidos` ya no está congelado en sep/nov 2025: un nuevo
 batch (2026-09-07) agregó **2026-01 completo** (6,500 CFDI). 2026-02 solo
@@ -300,14 +331,58 @@ para Cheque/recibidos (REP tipo P y Carta Porte respectivamente — ver
 `hallazgos.md` puntos 6 y el nuevo punto 12).
 
 **`Poliza_Control` ya responde de nuevo** (confirmado 2026-09-09, resuelto
-del lado de `ctunlinux`/bridge — ver `hallazgos.md` punto 13). Sigue
-pendiente escribir el extractor de nivel 3 para FACTURA/NOTA_CREDITO
-(mismo patrón que `extract_poliza_por_origen.py`: folio truncado a 10
-caracteres, `Pd_Referencia` para aislar el documento dentro de la póliza,
-exclusión de cuentas de orden — y ya con el método de doble chequeo
-cargo+abono validado esta sesión para COMPRA, ver más abajo). Completar
-también el resto de 2025/2026 en el ingest para tener el mismo rango de
-fechas que recibidos.
+del lado de `ctunlinux`/bridge — ver `hallazgos.md` punto 13), lo que
+desbloqueó arrancar nivel 3. Sesión 2026-09-10: `baseline_universal_emitido.py`
+(nuevo script, calcado de `baseline_universal.py` pero mucho más simple —
+el censo de arriba no trae GASTO_REGISTRO/CHEQUE/arrendamiento). Resultado
+real corriendo contra enero 2026 completo tras dos rondas de fix (ver
+`hallazgos.md` puntos 28 y 29 para el detalle completo — incluyen una
+corrección a media sesión: un primer match de FACTURA por folio directo
+resultó ser un falso positivo por reciclaje de folio):
+
+| Origen | Universo | Conciliados | % |
+|---|---:|---:|---:|
+| NOTA_CREDITO | 188 | 187 | **99.5%** |
+| FACTURA | 2,191 | 13 | **0.6%** |
+| **Total** | **2,379** | **200** | **8.4%** |
+
+- **NOTA_CREDITO ya es un resultado confiable y reportable — 99.5%
+  (187/188).** `Pc_Tabla='NOTA_CREDITO'` = `Nc_Folio` es homónimo directo y
+  confiable (verificado con fecha), pero sumar TODO el Cargo (primer intento,
+  33.5%) mezclaba dos movimientos distintos bajo el mismo `Pd_Referencia`:
+  la devolución de mercancía (cuenta `4200`, = Subtotal) y la reversión de
+  costo de venta asociada (cuentas `2140`/`5100`, sin relación con el CFDI).
+  Separando por cuenta contable (`extract_poliza_nota_credito()`, ver
+  `hallazgos.md` punto 29 para el detalle completo con evidencia por
+  configuración) subió a 99.5%. El único pendiente restante es una
+  `BONIFICACION` con la línea de devolución capturada por error en la cuenta
+  `8200` en vez de `4200` — error de captura real (n=1), no un patrón, no
+  vale la pena modelarlo. Con esto, NOTA_CREDITO no necesita más trabajo por
+  ahora — el margen de mejora que quedaba no era de método, era ruido real.
+- **FACTURA no tiene método nivel 3 funcional.** `Cd_Tabla='FACTURA'` se
+  contabiliza bajo `Pc_Tabla='VENTA'` (no homónimo), y la cadena correcta
+  hasta el documento (`Fc_Folio` -> `Venta_Encabezado.Fc_Folio` -> `Vn_Folio`
+  = `Pc_Documento`) requiere filtrar por fecha para evitar el reciclaje de
+  folio. Aun con la cadena correcta, la póliza de INGRESO de VENTA (Cargo
+  Clientes / Abono Ventas+IVA, la que importa para conciliar) casi nunca
+  aísla el documento por `Pd_Referencia` — solo la póliza de COSTO DE VENTA
+  (irrelevante para el importe fiscal) lo hace de forma consistente.
+  `Poliza_Detalle_Comprobante` (nivel 2) tampoco resuelve: tiene huella para
+  2,377/6,500 UUIDs de enero, pero mezcla la cuenta de Clientes con la de
+  Ventas en el mismo agregado (probablemente porque también etiqueta la
+  póliza de cobranza del cliente, no solo la de venta) y da 0% de cuadre
+  directo contra el Total. **Pendiente real, sin resolver — candidato para
+  preguntar directo a Trivasa** (mismo patrón que el pendiente de retención
+  más abajo): ¿cómo se referencia realmente el documento en la póliza de
+  ingreso de VENTA? Hipótesis sin confirmar: es un negocio de alto volumen
+  (POS/mostrador) donde la venta se postea consolidada por sucursal/día, y
+  la conciliación real correcta sería agregada por corte, no por CFDI
+  individual — análogo a por qué el IVA de COMPRA "se postea como una sola
+  línea consolidada por día/póliza" y se deja fuera del chequeo automatizado
+  (ver `metodologia.md`).
+
+Completar también el resto de 2025/2026 en el ingest para tener el mismo
+rango de fechas que recibidos (sigue pendiente, sin cambios esta sesión).
 
 ## Retención: mapeo a mpro encontrado, pero solo cubre ~36% de los CFDI (corregido 2026-09-08)
 

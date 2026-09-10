@@ -33,6 +33,8 @@ FUENTES = {
     "NOTA_CREDITO_PROVEEDOR": ("Nota_Credito_Proveedor", "Nc_Folio", "Nc_Tipo_Cambio", True),
     "CHEQUE": ("Cheque", "Ch_Folio", "Ch_Tipo_Cambio", False),
     "FACTURA": ("Factura_Encabezado", "Fc_Folio", "Fc_Tipo_Cambio", True),
+    # Emitidos (ventas) — confirmado en vivo 2026-09-10, mismo patrón que COMPRA.
+    "NOTA_CREDITO": ("Nota_Credito", "Nc_Folio", "Nc_Tipo_Cambio", True),
 }
 
 

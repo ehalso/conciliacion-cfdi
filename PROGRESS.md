@@ -156,4 +156,26 @@ tres documentos de referencia que hay que mantener al día:
 3. **Extender el chequeo al lado del abono/pago.** Todo lo de arriba sigue
    siendo un chequeo de UN SOLO LADO (cargo). El doble chequeo existe solo para
    COMPRA (`baseline_conciliacion.py`).
-4. **Correr emitidos y retención** con el mismo método — ya está desbloqueado.
+4. **Emitidos (rama `emitido`, worktree `reconciliacion-cowork_emitido`):
+   arrancado 2026-09-10** (`baseline_universal_emitido.py`, nuevo script).
+   **NOTA_CREDITO ya es un resultado confiable: 99.5% (187/188)** — separar
+   el Cargo por cuenta contable (devolución de mercancía vs reversión de
+   costo de venta, ver `docs/hallazgos.md` punto 29) resolvió lo que parecía
+   ruido. **FACTURA sigue sin método nivel 3 funcional** (0.6%, el 92% del
+   universo monetario) — la póliza de ingreso de VENTA no aísla el documento
+   por `Pd_Referencia` como sí hacen recibidos y NOTA_CREDITO; ver
+   `docs/hallazgos.md` punto 28 y `docs/pendientes.md` sección Emitidos para
+   el detalle completo y la recomendación (preguntar a Trivasa cómo se
+   referencia el documento en esa póliza, o probar un chequeo agregado por
+   sucursal/día en vez de por CFDI).
+5. **Emitidos ↔ documento fuente + retenciones vs SAT: resuelto, 100% +
+   hallazgo real (2026-09-10).** Metodología distinta a la del punto 4
+   (pregunta "¿el CFDI cuadra con el documento?", no "¿con la póliza?") —
+   portada y validada en vivo desde un proyecto hermano
+   (`~/proyectos/conciliacion-master/conciliacion-emitidos`). Scripts:
+   `conciliacion_emitidos_documento.py` (100%, 14,554/14,554 H1 2026),
+   `cruce_sat_retenciones.py` (29 constancias de retención timbradas que el
+   ERP nunca registró, $536,597.04, $107,319.45 de ISR — **llevar a
+   Contabilidad**). Ver `docs/hallazgos.md` punto 30 y `docs/pendientes.md`.
+   Pendiente: portar cobranza/REP del mismo proyecto hermano (reportes
+   02/03, ya con 96.18% medido ahí).
