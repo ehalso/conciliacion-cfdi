@@ -261,13 +261,27 @@ cargo/abono real de lo que sí concilia.
    referencia el documento en esa póliza, o probar un chequeo agregado por
    sucursal/día en vez de por CFDI). Distinto de los puntos 3-4 arriba
    (pregunta "¿cuadra la póliza contable?", no "¿cuadra el documento?").
-6. **Retención (nivel 1 ya construido y corrido, ver sección dedicada
-   arriba)**: (a) fallback por RFC+proveedor+mes+monto contra
-   `Gasto_Registro_Documento` para recuperar el mecanismo de omisión de
-   `cve=16` sin depender del link; (b) seguir `CfdiRetenRelacionados` para
-   el mecanismo de sustitución antes de reportar un CFDI como huérfano;
-   (c) nivel 3 — trazar hasta `Poliza_Control` para el cargo/abono real de
-   lo que sí concilia.
+6. **Retención**: nivel 1 y nivel 3 (`retencion/nivel_poliza/baseline_retencion.py`,
+   2026-09-10) ya construidos y corridos — nivel 3 es granular por CFDI
+   (mismo método que `baseline_universal.py`: ubicar cada UUID en
+   `Comprobante_Digital`, sumar su cargo real vía `Gasto_Registro_Control`,
+   comparar contra `monto_total_operacion`), deliberadamente NO al 100%
+   (35.6% en los 3 periodos probados: nov-2025 6.7%, ene-2026 100%,
+   feb-2026 0%) — sirve para exponer errores reales, no para promediarlos.
+   Pendiente:
+   (a) fallback por RFC+proveedor+mes+monto contra `Gasto_Registro_Documento`
+   para recuperar el mecanismo de omisión de `cve=16` sin depender del link;
+   (b) **pedirle al ELT que agregue `CfdiRetenRelacionados` (UUID
+   relacionado + `TipoRelacion`) como columna nueva de
+   `raw_sat.cfdi_retencion`**, en vez de parsear el XML en vivo por cada
+   pendiente — confirmado en vivo 2026-09-10 que el mecanismo de sustitución
+   es sistemático (13 de 15 CFDI de retención de intereses de noviembre 2025
+   se re-timbraron en bloque el 22-ene-2026, y `Comprobante_Digital` se
+   quedó apuntando al UUID viejo/invalidado en cada caso). Con esa columna
+   ya ingerida, `baseline_retencion.py` podría reintentar cada pendiente
+   `SIN_MAPEO` contra el UUID relacionado antes de reportarlo como error, y
+   el mismo campo serviría para el hub de Streamlit (`retencion_cruce_sat.py`
+   del PR #1) para mostrar "sustituido, ver UUID X" en vez de "no encontrado".
 7. Tres hallazgos de estructura/calidad de dato de la sesión de recibidos
    (2026-09-09/10) que valen para `trivasa-context` — ver la lista en
    `docs/investigacion_pendientes.md`, Parte 4 (ya subidos ahí).
