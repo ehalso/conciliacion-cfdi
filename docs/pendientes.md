@@ -283,7 +283,7 @@ más abajo (nivel 3 vía póliza) — ver `docs/hallazgos.md` punto 30 para el
 detalle completo, la validación en vivo y por qué es la pregunta correcta
 del lado emitido ("el CFDI se genera DESDE el documento", relación 1:1
 estricta). Scripts: `conciliacion_emitidos_documento.py`,
-`cruce_sat_retenciones.py`.
+`retencion_reconciliation.py`.
 
 **Hallazgo real de negocio, el que sí hay que actuar**: 29 constancias de
 retención de intereses (`CveRetenc 16`) timbradas ante el SAT que el ERP
@@ -291,7 +291,7 @@ nunca registró — $536,597.04, $107,319.45 de ISR. Dos lotes: 14 de enero
 (22 de enero, $282,291.65), 15 de febrero (26 de febrero, $254,305.39),
 nada en marzo-junio. **Es lo primero que hay que llevar a Contabilidad** —
 no es un problema de este pipeline, es un hueco real de registro contable.
-Correr `cruce_sat_retenciones.py` sobre julio en adelante cuando esos meses
+Correr `retencion_reconciliation.py` sobre julio en adelante cuando esos meses
 estén disponibles, para ver si el patrón sigue.
 
 **Pendiente, no portado todavía**: cobranza (REP) — el proyecto hermano

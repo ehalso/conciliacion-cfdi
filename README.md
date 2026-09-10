@@ -72,13 +72,13 @@ python3 conciliacion_emitidos_documento.py --periodo 2026-01
 # Emitidos, nivel 3 (vía póliza contable): NOTA_CREDITO validado, FACTURA sin método aún
 python3 baseline_universal_emitido.py --periodo 2026-01
 
-# Retención, nivel 1: SAT cfdi_retencion vs Cd_Monto de Comprobante_Digital,
+# Retención: SAT (raw_sat.cfdi_retencion) vs Cd_Monto de Comprobante_Digital,
 # sin parsear XML (el XML de retención no es un CFDI normal — ver
-# docs/hallazgos.md punto 28)
+# docs/hallazgos.md punto 28). Es también el cruce independiente contra el
+# SAT (encuentra constancias timbradas que el ERP no registró) — correrlo
+# sobre varios periodos a la vez es lo que da esa vista.
 python3 retencion_reconciliation.py --periodo 2026-01
-
-# Cruce independiente contra el SAT (retenciones que el ERP no registró)
-python3 cruce_sat_retenciones.py --periodos 2026-01,2026-02,2026-03,2026-04,2026-05,2026-06
+python3 retencion_reconciliation.py --periodos 2026-01,2026-02,2026-03,2026-04,2026-05,2026-06
 ```
 
 Cada script imprime su avance y termina escribiendo un `.xlsx`/`.csv` en
@@ -129,8 +129,7 @@ baseline_conciliacion.py       CLI: doble chequeo cargo+abono (COMPRA)
 baseline_universal.py          CLI: baseline universal recibidos (método vigente)
 baseline_universal_emitido.py CLI: baseline universal emitidos, nivel póliza (NOTA_CREDITO 99.5%, FACTURA sin método)
 conciliacion_emitidos_documento.py CLI: conciliación de emitidos vs documento fuente (factura, NC, retenciones) — 100%
-cruce_sat_retenciones.py       CLI: cruce independiente SAT vs ERP para retenciones
-retencion_reconciliation.py    CLI: conciliación de CFDI de retención (nivel 1)
+retencion_reconciliation.py    CLI: conciliación de retención — existencia + cuadre vs SAT, incluye el cruce independiente
 
 streamlit_app.py                       Reporte interactivo (ver "Reportes" arriba)
 streamlit_app_conciliacion.py          Vista principal
@@ -211,7 +210,7 @@ docs/
   retenciones). Del lado emitido no hay problema de importes: el CFDI se
   genera desde el documento de mpro, así que no puede diferir. El hallazgo
   real está en el cruce independiente contra el SAT
-  (`cruce_sat_retenciones.py`): **29 constancias de retención por
+  (`retencion_reconciliation.py`): **29 constancias de retención por
   $536,597.04 ($107,319.45 de ISR) que el SAT tiene timbradas y el ERP
   nunca registró** — 14 en enero, 15 más en febrero. Detalle completo en
   [`docs/emitidos_retenciones.md`](docs/emitidos_retenciones.md).

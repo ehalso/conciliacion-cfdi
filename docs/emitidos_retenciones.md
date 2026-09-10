@@ -4,7 +4,7 @@ Metodología del proyecto hermano `~/proyectos/conciliacion-master/
 conciliacion-emitidos` (Esteban, 2026-09-10 — ver su `docs/metodologia.md`
 y `docs/esquema-datos.md`, no repetidos aquí), **implementada y validada en
 vivo en este repo** el mismo día: `conciliacion_emitidos_documento.py`
-(reporte 01, documento↔CFDI) y `cruce_sat_retenciones.py` (reporte 04,
+(reporte 01, documento↔CFDI) y `retencion_reconciliation.py` (reporte 04,
 cruce independiente contra el SAT). Conexión directa por LAN
 (`bridge_client.py`, sin bridge HTTP — ese patrón quedó atrás desde
 `docs/arquitectura.md`).
@@ -86,7 +86,23 @@ hay una causa común (ej. un proceso manual que a veces se salta el paso de
 registrar en mpro) y correr este mismo cruce sobre meses posteriores a
 junio para ver si el patrón sigue.
 
-Script: `cruce_sat_retenciones.py --periodos 2026-01,...,2026-06`
+Script: `retencion_reconciliation.py --periodos 2026-01,...,2026-06`
+
+**Nota de consolidación (2026-09-10):** este cruce se construyó dos veces en
+paralelo, por dos sesiones distintas el mismo día (una lo llamó "reporte 04
+de emitidos"/`cruce_sat_retenciones.py`, la otra "retención nivel 1"/
+`retencion_reconciliation.py`) — ambas llegaron exacto a los mismos 29
+faltantes por caminos independientes. Se quedó `retencion_reconciliation.py`
+porque separa un tercer estatus más útil que un simple faltante/no-faltante:
+`STUB_GASTO_REGISTRO_SIN_MONTO` (75 en H1, $1,271,526.95) — CFDI de
+retención de intereses que SÍ tienen fila en `Comprobante_Digital`
+(`GASTO_REGISTRO`) pero con `Cd_Monto=0` por diseño de esa columna, no por
+un hueco real: el importe correcto vive en `Gasto_Registro_Documento.
+Grd_Precio_Descontado_Importe`, y el reporte 01 de arriba ya confirma que
+esos documentos conciliar al 100% contra `raw_sat.cfdi_retencion` cuando sí
+existen. Solo `SIN_MAPEO_MPRO` (los 29 de la tabla de arriba) es el hueco
+real — **no confundir los 75 `STUB` con faltantes**, son casos ya resueltos
+por otra vía.
 
 ## Qué falta (siguiente paso natural)
 

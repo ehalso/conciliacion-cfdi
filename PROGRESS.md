@@ -79,7 +79,7 @@ documento.py`** da 100.00% en los 6 meses de H1 2026 (14,554/14,554 CFDI de
 factura, nota de crédito y retenciones). Esto confirma que el lado emitido
 no tiene problema de importes por construcción.
 
-El hallazgo real está en **`cruce_sat_retenciones.py`** (cruce independiente
+El hallazgo real está en **`retencion_reconciliation.py`** (cruce independiente
 contra `raw_sat.cfdi_retencion`, que no pasa por el ERP): **29 constancias
 de retención por $536,597.04 ($107,319.45 de ISR) que el SAT tiene timbradas
 y el ERP nunca registró** — 14 en enero (ya conocidas), 15 más en febrero
@@ -104,7 +104,7 @@ y correr el cruce SAT sobre meses posteriores a junio.
    (`extract_poliza_por_origen.py`, `extract_origen.py`) sigue siendo la
    base de `baseline_universal.py`.
 4. **`conciliacion_emitidos_documento.py`** (emitidos, factura/NC/retenciones) y
-   **`cruce_sat_retenciones.py`** (cruce independiente SAT vs ERP) — el
+   **`retencion_reconciliation.py`** (cruce independiente SAT vs ERP) — el
    frente nuevo. Ver docs/emitidos_retenciones.md.
 
 **Patrón de trabajo que ha funcionado bien esta sesión** (drill-down
@@ -209,7 +209,7 @@ cargo/abono real de lo que sí concilia.
    portando la metodología del proyecto hermano
    (`~/proyectos/conciliacion-master/conciliacion-emitidos`, reportes 02/03,
    ya con 96.18% medido ahí).
-4. **Correr `cruce_sat_retenciones.py` sobre meses posteriores a junio** para
+4. **Correr `retencion_reconciliation.py` sobre meses posteriores a junio** para
    ver si el patrón de retenciones faltantes sigue.
 5. **Emitidos, nivel 3 vía póliza (rama `emitido`, worktree
    `reconciliacion-cowork_emitido`): arrancado 2026-09-10**

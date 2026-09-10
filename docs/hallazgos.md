@@ -1109,3 +1109,29 @@ asumir que no hay gasto; (3) confirmar si el mecanismo 2 (sustitución sin
 re-ligar) explica también los "sin constancia ligada" de `cve=14` que
 reportó el punto 12 (residual de `layout-gastos`, ver
 `trivasa-context/docs/schema/calidad-de-datos.md`).
+
+## 33. Retención: dos sesiones construyeron el mismo cruce contra SAT en paralelo — se consolidó en `retencion_reconciliation.py`
+
+2026-09-10. Al fusionar la rama `emitido` (que traía `cruce_sat_retenciones.py`,
+puerto del proyecto hermano `conciliacion-emitidos`) con el trabajo de
+retención de otra sesión (`retencion_reconciliation.py`/`src/extract_retencion.py`),
+se encontró que ambos scripts resuelven la MISMA pregunta — SAT
+(`raw_sat.cfdi_retencion`) vs mpro (`Comprobante_Digital`) — de forma
+independiente. Corridos ambos en vivo contra H1 2026: **coinciden exacto**
+en los 29 faltantes ($536,597.04, $107,319.45 de ISR) — confirmación
+cruzada real, no casualidad de código copiado.
+
+Se quedó `retencion_reconciliation.py` porque es más granular: separa
+`CONCILIADO` (32, `Cd_Monto` trae el monto real — el caso `CONSTANCIA_
+RETENCION`/dividendos) de `STUB_GASTO_REGISTRO_SIN_MONTO` (75,
+`Cd_Monto=0` — el caso `GASTO_REGISTRO`/intereses) en vez de tratarlos
+igual. El segundo grupo **no es un hueco**: es una limitación conocida de
+esa columna para ese módulo — el importe real vive en `Gasto_Registro_
+Documento.Grd_Precio_Descontado_Importe`, y `conciliacion_emitidos_
+documento.py` (que sí lee esa tabla) ya confirma 100% de conciliación ahí
+cuando el documento existe. Sin esta separación, el hallazgo real (los 29
+`SIN_MAPEO_MPRO`) se diluye entre 104 "no conciliados" en vez de resaltar
+como el 21% que de verdad importa.
+
+`cruce_sat_retenciones.py` se retiró (superado). Referencias actualizadas
+en `README.md`/`PROGRESS.md`/`docs/emitidos_retenciones.md`.
