@@ -7,33 +7,40 @@ mpro corresponden a cada CFDI, y el importe contabilizado (cargo/abono en
 póliza) cuadra con el importe fiscal del CFDI?**
 
 Alcance actual: **CFDI recibidos** (primer semestre 2026, nivel 1 a nivel
-3) con avances en **emitidos** (nivel 1 validado para enero 2026) y
-**retención** (mapeo a mpro ya encontrado) — ver
-[`docs/pendientes.md`](docs/pendientes.md).
+3, 99.36%) y **emitidos** (100%, factura/nota de crédito/retenciones) al
+día. **Retención**: dos conceptos con mecánica de conciliación distinta
+(arrendamiento/honorarios vs. intereses a prestamista — ver
+[`docs/hallazgos.md`](docs/hallazgos.md) puntos 28-29) y un cruce
+independiente contra el SAT que encontró 29 constancias timbradas que el
+ERP nunca registró — ver [`docs/pendientes.md`](docs/pendientes.md) y
+[`docs/emitidos_retenciones.md`](docs/emitidos_retenciones.md).
 
-## Arquitectura en dos partes
+## Acceso a las bases
 
-Este proyecto se construyó dividido a propósito entre dos agentes:
+Conexión **directa** a las tres bases de Trivasa — Postgres (`raw_sat`) y
+los dos SQL Server de mpro (`.205`/`.207`) — vía `src/bridge_client.py`
+(SQLAlchemy: `psycopg2`/`pymssql`), solo lectura (`_guard_readonly` valida
+que cada SQL sea un único `SELECT`/`WITH`, sin palabras clave de
+escritura). Credenciales por variable de entorno o `.env` local
+(gitignored) — copiar `.env.example` y llenar usuario/password de cada
+target (host/puerto/base no son secreto, van hardcodeados). Detalle
+completo, incluidos los tres targets y la decisión 205 vs 207, en
+[`docs/arquitectura.md`](docs/arquitectura.md).
 
-- **Claude Code** (corriendo en la máquina `ctunlinux` de Esteban) construyó
-  y mantiene **únicamente** una API puente de solo lectura
-  (`https://reportesweb.frento.com.mx/query`) que expone tres bases de
-  datos de Esteban sin que este repo necesite credenciales de base de datos
-  directas.
-- **Este repo / Cowork** hace *todo* lo demás: extracción, parseo de XML,
-  lógica de conciliación, reportes .xlsx.
-
-Detalle completo en [`docs/arquitectura.md`](docs/arquitectura.md).
+**Método deprecado**: antes de tener red directa a la LAN de Trivasa, este
+repo pasaba por una API puente HTTP de solo lectura
+(`https://reportesweb.frento.com.mx/query`, mantenida en `ctunlinux`).
+`bridge_client.py` conservó el mismo contrato (`run_query(target, sql) ->
+{"columns", "rows", ...}`) al migrar a conexión directa, así que ningún
+extractor cambió una sola línea — el modo bridge queda documentado como
+fallback histórico (recuperable del historial de git de ese archivo) para
+el caso de que una sesión futura vuelva a correr sin ruta de red directa.
 
 ## Quickstart
 
 ```bash
 pip install -r requirements.txt
-
-# El token de la bridge API NO se versiona. Se lee de:
-#   - variable de entorno QUERY_API_TOKEN, o
-#   - archivo en QUERY_API_TOKEN_FILE (default: /home/claude/.query_api_token)
-export QUERY_API_TOKEN="..."
+cp .env.example .env   # llenar PG_USER/PASSWORD, MSSQL_205/207_USER/PASSWORD
 
 # Conciliación base (nivel CFDI): SAT vs mpro, un periodo o varios
 python3 main.py --periodo 2026-02
@@ -56,7 +63,7 @@ python3 baseline_conciliacion.py --periodo 2026-02 --origen COMPRA
 
 # Baseline UNIVERSAL (todos los origenes a la vez, chequeo agregado de un
 # solo lado: cargo=subtotal, sumando TODOS los documentos con los que un
-# CFDI aparece etiquetado en mpro, sin importar el origen)
+# CFDI aparece etiquetado en mpro, sin importar el origen) — método vigente
 python3 baseline_universal.py --periodo 2026-02
 
 # Emitidos: factura, nota de crédito y retenciones vs su documento fuente en mpro
@@ -64,6 +71,11 @@ python3 conciliacion_emitidos_documento.py --periodo 2026-01
 
 # Emitidos, nivel 3 (vía póliza contable): NOTA_CREDITO validado, FACTURA sin método aún
 python3 baseline_universal_emitido.py --periodo 2026-01
+
+# Retención, nivel 1: SAT cfdi_retencion vs Cd_Monto de Comprobante_Digital,
+# sin parsear XML (el XML de retención no es un CFDI normal — ver
+# docs/hallazgos.md punto 28)
+python3 retencion_reconciliation.py --periodo 2026-01
 
 # Cruce independiente contra el SAT (retenciones que el ERP no registró)
 python3 cruce_sat_retenciones.py --periodos 2026-01,2026-02,2026-03,2026-04,2026-05,2026-06
@@ -73,15 +85,18 @@ Cada script imprime su avance y termina escribiendo un `.xlsx`/`.csv` en
 `output/` (no versionado — ver `.gitignore`) con hojas de resumen y detalle,
 semaforeado por color.
 
-## GUI de revisión
+## Reportes
 
-Hay un dashboard (Artifact HTML, publicado desde Cowork) para revisar la
-conciliación sin abrir el `.xlsx`: totales y % de cuadre por origen, y
-tabla de detalle documento-por-documento (recibido) o CFDI-por-CFDI
-(emitido, retención), con búsqueda, filtros y orden por columna. Es un
-snapshot estático de los datos de este README (no consulta la bridge en
-vivo) — se regenera pidiéndole a Cowork que lo actualice con datos más
-recientes.
+- **GUI estática**: un dashboard (Artifact HTML) para revisar la
+  conciliación sin abrir el `.xlsx` — totales y % de cuadre por origen, y
+  tabla de detalle documento-por-documento (recibido) o CFDI-por-CFDI
+  (emitido, retención), con búsqueda, filtros y orden por columna. Es un
+  snapshot estático de los datos de este README — se regenera pidiendo que
+  se actualice con datos más recientes.
+- **Streamlit** (`streamlit_app.py`): reporte interactivo en vivo sobre
+  `baseline_universal.calcular()` — selector de periodo(s), filtros, KPIs y
+  descarga a Excel, sin duplicar la lógica de conciliación. Correr con
+  `streamlit run streamlit_app.py`.
 
 ## Estructura del repo
 
@@ -93,12 +108,15 @@ src/
   cfdi_parser.py               Parseo de CFDI 3.3/4.0 (subtotal, IVA, total, UUID)
   extract_sat.py               Lado SAT: raw_sat.cfdi_recibidos / cfdi_emitidos (Postgres)
   extract_mpro.py              Lado mpro, nivel CFDI: Comprobante_Digital + parseo de Cd_XML
+  extract_retencion.py         Retención: lado SAT (cfdi_retencion, columnas propias) + lado
+                               mpro (Cd_Monto nativo, sin parsear XML — ver hallazgos.md #28)
   extract_origen.py            Traza cada CFDI a su(s) documento(s) de origen en mpro
                                (Comprobante_Digital.Cd_Tabla / Cd_Documento)
   extract_poliza.py            Piloto: CFDI → póliza vía Poliza_Detalle_Comprobante (agnóstico de origen)
   extract_poliza_por_origen.py Cargo/abono por documento, YA distinguido por origen,
                                vía Poliza_Control → Poliza → Poliza_Detalle
   extract_gasto_registro.py    Cargo granular para GASTO_REGISTRO (folio+Grd_ID)
+  extract_detalle_lineas.py    Detalle a nivel línea de póliza/control de gasto (drill-down)
   extract_moneda.py            Moneda y tipo de cambio del documento de mpro, por origen
   extract_vias_extra.py        Vías de cuadre adicionales (arrendamiento, folios hermanos...)
   reconcile.py                  Cruce SAT vs mpro a nivel CFDI + clasificación
@@ -112,13 +130,19 @@ baseline_universal.py          CLI: baseline universal recibidos (método vigent
 baseline_universal_emitido.py CLI: baseline universal emitidos, nivel póliza (NOTA_CREDITO 99.5%, FACTURA sin método)
 conciliacion_emitidos_documento.py CLI: conciliación de emitidos vs documento fuente (factura, NC, retenciones) — 100%
 cruce_sat_retenciones.py       CLI: cruce independiente SAT vs ERP para retenciones
+retencion_reconciliation.py    CLI: conciliación de CFDI de retención (nivel 1)
+
+streamlit_app.py                       Reporte interactivo (ver "Reportes" arriba)
+streamlit_app_conciliacion.py          Vista principal
+streamlit_app_conciliacion_detalle.py  Drill-down documento/línea
+streamlit_common.py                    Utilidades compartidas entre páginas
 
 investigacion/
   dump_contexto.py             Dump de contexto de los pendientes para investigación
   triage.py                    Batería de relaciones numéricas candidatas
 
 docs/
-  arquitectura.md              Bridge API, split Cowork/Claude Code, mssql_205 vs mssql_207
+  arquitectura.md              Conexión directa a las 3 bases, bridge HTTP deprecada, mssql_205 vs mssql_207
   metodologia.md                Cómo se define "cuadra": base, tolerancias, nivel documento vs agregado
   hallazgos.md                  Bugs y patrones reales encontrados (con evidencia)
   resultados_2026-02.md         Resultados concretos, febrero 2026 recibidos
@@ -152,7 +176,10 @@ docs/
   identificar las cuentas de orden por la raíz de la cuenta, y una cascada de
   vías de cuadre para tratamientos contables legítimos (arrendamiento
   financiero, nota de crédito contra total, IVA no acreditable, gasto
-  repartido entre sucursales…).
+  repartido entre sucursales…). El `Descuento`/IEPS/impuestos locales ya no
+  se re-parsean del XML de mpro en cada corrida: `raw_sat.cfdi_recibidos`/
+  `cfdi_emitidos` los trae parseados desde la ingesta (`baseline_universal.py`
+  los lee directo con `ajustes_desde_sat()`).
 - ✅ **Baseline UNIVERSAL (todos los orígenes, chequeo agregado de un solo
   lado)** — *hito del 2026-09-09, superado por el punto anterior; se deja
   porque explica de dónde salió el método*: sumando el cargo de TODOS los
@@ -181,17 +208,23 @@ docs/
   `pendientes.md`), pendiente decidir tratamiento.
 - ✅ **Emitidos y retenciones (2026-09-10): conciliación al 100% en todo H1
   2026** (14,554/14,554 CFDI conciliables — factura, nota de crédito,
-  retenciones), a partir de la metodología de una investigación previa de
-  Claude Code. Del lado emitido no hay problema de importes: el CFDI se
+  retenciones). Del lado emitido no hay problema de importes: el CFDI se
   genera desde el documento de mpro, así que no puede diferir. El hallazgo
   real está en el cruce independiente contra el SAT
   (`cruce_sat_retenciones.py`): **29 constancias de retención por
   $536,597.04 ($107,319.45 de ISR) que el SAT tiene timbradas y el ERP
-  nunca registró** — 14 en enero, 15 más en febrero (mismo patrón, mismo
-  tipo de retención, no visto en la investigación original). Detalle
-  completo en [`docs/emitidos_retenciones.md`](docs/emitidos_retenciones.md).
+  nunca registró** — 14 en enero, 15 más en febrero. Detalle completo en
+  [`docs/emitidos_retenciones.md`](docs/emitidos_retenciones.md).
   Pendiente: reporte de cobranza (REP) y correr el cruce SAT más allá de
   junio.
+- ✅ **Retención recibida por Trivasa (nivel 1, H1 2026): dos conceptos
+  distintos bajo el mismo `cve_retenc`** — arrendamiento/honorarios (10%,
+  cada ~4 meses, concilia 100% vía `CONSTANCIA_RETENCION`) vs. intereses a
+  prestamista (20%, mensual, nunca usa `CONSTANCIA_RETENCION` — concilia
+  vía `Gasto_Registro`). Los CFDI "huérfanos" de este segundo tipo tienen
+  dos mecanismos reales, no uno: omisión de etiquetado, o CFDI sustituido
+  (`CfdiRetenRelacionados`) sin re-ligar el link contable al UUID nuevo.
+  Detalle completo en `docs/hallazgos.md` puntos 28-29.
 - ✅ `Poliza_Control` **volvió a responder** (2026-09-09) — estuvo caída
   desde 2026-09-07. Desbloquea todo el trabajo de nivel 3 pendiente
   (emitidos, retención). Ver `hallazgos.md` punto 13.
@@ -202,5 +235,5 @@ docs/
 
 Ver [`PROGRESS.md`](PROGRESS.md): estado actual, método validado, pendientes
 por origen con lo ya investigado de cada uno, y cómo seguir. Es el punto de
-entrada pensado para que otra sesión de Claude Code retome el trabajo sin
-tener que releer todo el historial.
+entrada pensado para que otra sesión retome el trabajo sin tener que releer
+todo el historial.

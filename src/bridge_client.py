@@ -1,10 +1,10 @@
 """Cliente de conexión DIRECTA a las bases de Trivasa (Postgres `raw_sat` /
 `trivasa_dw`, y los dos SQL Server de mpro), sin pasar por una bridge HTTP.
 
-Historia: hasta 2026-09, este repo corría en un entorno Cowork sin ruta de
+Historia: hasta 2026-09, este repo corría sin ruta de
 red hacia la LAN de Trivasa, así que todas las extracciones pasaban por una
-API bridge (`https://reportesweb.frento.com.mx/query`) mantenida aparte en
-ctunlinux. Con acceso de red directo ya disponible (VPN sobre
+API bridge (`https://reportesweb.frento.com.mx/query`, deprecada, mantenida
+en `ctunlinux`). Con acceso de red directo ya disponible (VPN sobre
 192.168.117.0/24), este módulo conserva el mismo contrato —
 `run_query(target, sql) -> {"columns", "rows", "row_count", "truncated"}` —
 para que los ~10 extractores que hacen `from bridge_client import run_query,

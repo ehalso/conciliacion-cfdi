@@ -2,19 +2,19 @@
 
 ## De bridge HTTP a conexión directa (2026-09-09)
 
-Hasta el 2026-09-09 este proyecto corría en un entorno de Cowork **sin
+Hasta el 2026-09-09 este proyecto corría **sin
 ruta de red** hacia la LAN de Trivasa (`192.168.117.0/24`, donde viven
 tanto `postgres_dw` como los dos SQL Server de mpro). La solución de
-entonces: **Claude Code**, corriendo en `ctunlinux` (dentro de esa red),
-construyó y mantuvo una API HTTP mínima — la "bridge"
-(`https://reportesweb.frento.com.mx/query`) — cuya única responsabilidad
-era exponer los tres targets de solo lectura; nada de lógica de negocio,
-nada de parseo de CFDI, nada de conciliación. Este repo hacía todo el
-trabajo de datos consultando esa bridge en vez de la base directamente.
+entonces: una API HTTP mínima — la "bridge"
+(`https://reportesweb.frento.com.mx/query`, mantenida en `ctunlinux`, dentro
+de esa red) — cuya única responsabilidad era exponer los tres targets de
+solo lectura; nada de lógica de negocio, nada de parseo de CFDI, nada de
+conciliación. Este repo hacía todo el trabajo de datos consultando esa
+bridge en vez de la base directamente.
 
-Esa sesión pasó a correr **con acceso de red directo** a la LAN (VPN sobre
+Al conseguirse **acceso de red directo** a la LAN (VPN sobre
 `192.168.117.0/24`, confirmado con conexión TCP real a los tres targets),
-así que `src/bridge_client.py` se reescribió para conectar **directo**
+`src/bridge_client.py` se reescribió para conectar **directo**
 por SQLAlchemy (`psycopg2`/`pymssql`) en vez de HTTP — sin tocar los ~10
 extractores que lo importan, porque el contrato de `run_query(target,
 sql) -> {"columns", "rows", "row_count", "truncated"}` se conservó

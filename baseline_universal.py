@@ -63,14 +63,10 @@ from extract_moneda import extract_moneda_documento, extract_moneda_gasto_regist
 from extract_vias_extra import (cuadre_arrendamiento_financiero, cuadre_repartido_por_referencia,  # noqa: E402
                                 resumen_folios_gasto, cuadre_cheque_agrupado,
                                 extract_importe_documento, extract_referencia_cxp)
-from cfdi_parser import parse_cfdi  # noqa: E402
-from bridge_client import run_query, rows_as_dicts, sql_quote  # noqa: E402
-from config import MPRO_TARGET  # noqa: E402
 
 TOL = 1.00
 TOL_RELATIVA = 0.00005  # 0.005% de la base: materialidad para redondeo de tipo de cambio
 SUBTOTAL_MIN = 1.00  # bajo esto se considera CFDI sin valor monetario (TRASLADO/COMPROBANTE_PAGO)
-XML_BATCH = 150
 
 # Orígenes cuyo Pd_Referencia no liga de forma confiable al folio del
 # documento (ver poliza-explor/index.md) — se manejan aparte, no con el
@@ -113,63 +109,31 @@ COLS = {
 }
 
 
-def xml_ajustes(uuids: list[str], periodo: str) -> pd.DataFrame:
-    """Parsea el `Cd_XML` de cada CFDI y devuelve, por UUID, el ajuste que hay
-    que aplicarle al subtotal del SAT para obtener la base que mpro captura:
+def ajustes_desde_sat(sat: pd.DataFrame, uuids: list[str]) -> pd.DataFrame:
+    """Ajuste que hay que aplicarle al subtotal del SAT para obtener la base
+    que mpro captura:
 
-        ajuste = -Descuento + IEPS + impuestos_locales_trasladados - retenidos
+        ajuste = -Descuento + IEPS + impuestos_locales_trasladados - retenidos_locales
 
     (todo en la moneda original del CFDI; la conversión a MXN es un paso aparte).
 
-    Cachea el resultado en `output/xml_ajustes_<periodo>.csv` — el XML no cambia
-    y volver a bajarlo en cada corrida es lo más caro del pipeline.
+    Hasta 2026-09-10 esto requería volver a bajar y parsear el `Cd_XML` de
+    cada CFDI desde `Comprobante_Digital` (mpro) en cada corrida — el paso
+    más caro del pipeline (~1,500+ XML por mes, sin caché entre worktrees).
+    Desde esa fecha, `raw_sat.cfdi_recibidos`/`cfdi_emitidos` ya traen estos
+    campos parseados en la propia ingesta (`descuento`, `ieps_trasladado`,
+    `impuestos_locales_trasladados`, `impuestos_locales_retenidos` — ver
+    `src/cfdi_parser.py` para el detalle de cómo se extraen del XML), así que
+    basta leerlos de `sat` — validado en vivo contra el parseo directo del
+    XML de mpro, exacto en los casos probados.
     """
-    cache = Path("output") / f"xml_ajustes_{periodo}.csv"
-    previo = pd.DataFrame()
-    if cache.exists():
-        previo = pd.read_csv(cache)
-        previo["uuid"] = previo["uuid"].str.upper()
-        faltan = sorted(set(uuids) - set(previo["uuid"]))
-    else:
-        faltan = sorted(set(uuids))
-
-    filas = []
-    for i in range(0, len(faltan), XML_BATCH):
-        batch = faltan[i:i + XML_BATCH]
-        in_list = ", ".join(sql_quote(u) for u in batch)
-        sql = ("SELECT Cd_Timbre_UUID, Cd_XML FROM Comprobante_Digital "
-               f"WHERE Cd_Timbre_UUID IN ({in_list}) AND Cd_XML IS NOT NULL")
-        vistos = set()
-        for r in rows_as_dicts(run_query(MPRO_TARGET, sql)):
-            u = r["Cd_Timbre_UUID"].upper()
-            if u in vistos:
-                continue
-            vistos.add(u)
-            try:
-                a = parse_cfdi(r["Cd_XML"])
-                filas.append({
-                    "uuid": u,
-                    "subtotal_xml": float(a.subtotal),
-                    "descuento": float(a.descuento),
-                    "local": float(a.impuestos_locales_trasladados - a.impuestos_locales_retenidos),
-                    "ieps": float(a.ieps_trasladado),
-                    "total_xml": float(a.total),
-                    "retenidos_xml": float(a.total_impuestos_retenidos),
-                })
-            except Exception:
-                continue
-
-    df = pd.concat([previo, pd.DataFrame(filas)], ignore_index=True) if filas else previo
-    if df.empty:
-        return pd.DataFrame(columns=["uuid", "descuento", "local", "ajuste"]).set_index("uuid")
-    df = df.drop_duplicates(subset=["uuid"])
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(cache, index=False)
-
-    df = df[df["uuid"].isin(set(uuids))].copy()
-    if "ieps" not in df.columns:
-        df["ieps"] = 0.0
-    df["ieps"] = df["ieps"].fillna(0.0)
+    cols = ["uuid", "descuento", "ieps_trasladado",
+            "impuestos_locales_trasladados", "impuestos_locales_retenidos"]
+    df = sat.loc[sat["uuid"].isin(set(uuids)), cols].drop_duplicates(subset=["uuid"]).copy()
+    for c in cols[1:]:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+    df = df.rename(columns={"ieps_trasladado": "ieps"})
+    df["local"] = df["impuestos_locales_trasladados"] - df["impuestos_locales_retenidos"]
     df["ajuste"] = -df["descuento"] + df["local"] + df["ieps"]
     return df.set_index("uuid")
 
@@ -269,18 +233,17 @@ def calcular(periodo: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         gasto_folios = pd.Series(dtype=object, name="gasto_folios")
         gasto_renglones = pd.Series(dtype=object, name="gasto_renglones")
 
-    print("[3c/5] XML del CFDI: Descuento + IEPS + impuestos locales (la base real que captura mpro)")
-    # Se parsea el XML de TODOS los CFDI con etiqueta en mpro, no solo los de
-    # GASTO_REGISTRO: el `Descuento` a nivel Comprobante NO existe como columna
-    # en `raw_sat.cfdi_recibidos` (solo guarda el subtotal bruto) y mpro captura
-    # y postea el importe NETO. Sin esto, todo CFDI con descuento queda como
-    # pendiente aunque esté perfectamente contabilizado.
-    ajuste_xml = xml_ajustes(origenes["uuid"].unique().tolist(), periodo)
+    print("[3c/5] Descuento + IEPS + impuestos locales (ya parseados en raw_sat, sin volver a bajar XML)")
+    # Antes: se parseaba el XML de TODOS los CFDI con etiqueta en mpro (no solo
+    # GASTO_REGISTRO) porque el `Descuento` a nivel Comprobante no existía como
+    # columna en `raw_sat.cfdi_recibidos`. Desde 2026-09-10 el ingest de
+    # ctunlinux ya lo trae — ver `ajustes_desde_sat()`.
+    ajuste_xml = ajustes_desde_sat(sat, origenes["uuid"].unique().tolist())
     ajuste_series = ajuste_xml["ajuste"].rename("ajuste_local")
     n_desc = int((ajuste_xml["descuento"] > 0.01).sum())
     n_local = int((ajuste_xml["local"].abs() > 0.01).sum())
     n_ieps = int((ajuste_xml["ieps"] > 0.01).sum())
-    print(f"     {len(ajuste_xml)} XML parseados — {n_desc} con Descuento, "
+    print(f"     {len(ajuste_xml)} CFDI — {n_desc} con Descuento, "
           f"{n_ieps} con IEPS, {n_local} con impuesto local")
 
     print("[3d/5] Moneda: el CFDI viene en su moneda original, la póliza en MXN")

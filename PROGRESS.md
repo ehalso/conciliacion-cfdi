@@ -14,12 +14,14 @@ Management Pro / mpro (ERP en SQL Server). La pregunta de negocio: **¿qué
 documentos de mpro corresponden a cada CFDI, y el importe contabilizado
 cuadra con el importe fiscal del CFDI?**
 
-Arquitectura en dos partes (detalle en `docs/arquitectura.md`): una API
-puente de solo lectura (`https://reportesweb.frento.com.mx/query`,
-mantenida en otra máquina) expone las bases de datos; este repo hace toda
-la extracción, parseo y lógica de conciliación. El bridge es
-**estrictamente de solo lectura** — nunca se intenta un write/DDL/DML
-contra él.
+Conexión **directa** (SQLAlchemy vía `src/bridge_client.py`, credenciales en
+`.env` local) a las tres bases de Trivasa — Postgres `raw_sat` y los dos SQL
+Server de mpro — detalle en `docs/arquitectura.md`. Es **estrictamente de
+solo lectura** (`_guard_readonly` valida cada SQL) — nunca se intenta un
+write/DDL/DML. El modo anterior, una API puente HTTP
+(`https://reportesweb.frento.com.mx/query`), queda deprecado como fallback
+histórico — `bridge_client.py` conservó el mismo contrato así que ningún
+extractor cambió al migrar.
 
 ## Estado actual (2026-09-10) — leer esto primero
 
@@ -58,8 +60,8 @@ Pendientes que quedan (61 en el semestre), por familia:
 
 | Familia | CFDI | Monto | Estado |
 |---|---:|---:|---|
-| Nómina: IMSS | 16 | $7.88M | Estructural: el CFDI mezcla cuota patronal (gasto) y obrera (retención), y la póliza de provisión consolida varios CFDI. Requiere modelar la provisión de nómina |
-| Nómina: INFONAVIT | 4 | $2.46M | Mismo mecanismo |
+| Nómina: IMSS | 16 | $7.88M | **No filtrar del universo, no crear una vía de cuadre dedicada — confirmado con Esteban 2026-09-10: son errores de captura reales, no un patrón estructural a modelar.** Se les aplica exactamente la misma Regla 1 (cargo=subtotal) que a cualquier otro CFDI del universo, sin excepción ni regla especial — si no cuadra por ahí, se queda como no conciliado, y eso es correcto. El ratio cargo/subtotal no es una proporción fija (0.14-0.48 en el análisis original de H1; 0.88-0.94 en una muestra de 5/6 de febrero, un sexto en ~0.50) — esa variabilidad es la señal de que es error de captura, no una fórmula patronal/obrera consistente que valga la pena modelar como regla propia |
+| Nómina: INFONAVIT | 4 | $2.46M | Mismo mecanismo — misma instrucción: no filtrar, no regla especial |
 | Crédito bancario | 11 | $1.60M | El CFDI de intereses no coincide con el interés posteado; requiere la tabla de amortización del contrato |
 | Cheque consolidado | 15 | $58K | Cheques que liquidan facturas de otros periodos (uno de 2024) — revisar si la etiqueta apunta al cheque correcto |
 | Agencia aduanal | 6 | $50K | El folio agrupa el pedimento completo; el CFDI del agente es solo una parte |
@@ -118,30 +120,33 @@ intentar una regla general de entrada.
 
 ## Constricciones que hay que seguir respetando
 
-- **Bridge de solo lectura** — nunca escribir/DDL/DML contra
-  `mssql_205`/`mssql_207`/`postgres_dw`.
-- **Token de la bridge API**: solo en `/home/claude/.query_api_token`
-  (chmod 600) o `QUERY_API_TOKEN` env var — nunca en memoria, nunca en el
-  repo (`.gitignore` ya lo excluye).
-- **`.gitignore`** excluye `output/`, `*.xlsx`, `*.parquet`,
+- **Solo lectura contra las bases** — nunca escribir/DDL/DML contra
+  `mssql_205`/`mssql_207`/`postgres_dw` (`_guard_readonly` en
+  `bridge_client.py` lo valida por texto, pero no reemplaza el criterio).
+- **Credenciales**: `.env` local (gitignored, plantilla en `.env.example`)
+  o variables de entorno — nunca hardcodeadas, nunca en el repo. El token
+  de la bridge HTTP deprecada (`QUERY_API_TOKEN`) ya no hace falta salvo
+  que una sesión futura vuelva a correr sin ruta de red directa.
+- **`.gitignore`** excluye `.env`, `output/`, `*.xlsx`, `*.parquet`,
   `.query_api_token`, `*.token` — no versionar salidas ni credenciales.
-- **Push**: usar el MCP de GitHub (`mcp__Repo_Privado__push_files` o
-  equivalente) — `git push` crudo está bloqueado por una restricción de
-  proxy a nivel de sesión.
+- **Push**: `git push` directo funciona si la sesión lo corre
+  interactivamente (el usuario lo autoriza); si el propio agente lo intenta
+  automatizado puede quedar bloqueado por el clasificador de auto mode —
+  en ese caso pedirle al usuario que lo corra él (`! git push ...`).
 - **Alcance temporal**: mientras el pipeline corre contra `mssql_205`
   (`src/config.py:MPRO_TARGET`), el rango acordado con Esteban es
   **enero–junio 2026**. No correr fuera de ese rango sin antes validar
   cobertura de mes (mismo chequeo que se hizo para confirmar H1: contar
   filas por mes en `Poliza` y `Comprobante_Digital`).
-- **Repo hermano `ehalso/trivasa-context`** (clonado en `/tmp/` en
-  sesiones de Cowork, o donde corresponda): documentación de estructura,
+- **Repo hermano `ehalso/trivasa-context`**: documentación de estructura,
   esquemas y calidad de datos de TODO mpro, mantenida por otras sesiones
   además de esta. Revisarlo antes de investigar un patrón nuevo — es
   común que ya esté documentado ahí (`docs/schema/calidad-de-datos.md`,
-  `docs/proyectos/poliza-explor/`, `docs/proyectos/layout-gastos/`).
+  `docs/proyectos/poliza-explor/`, `docs/proyectos/layout-gastos/`,
+  `docs/proyectos/conciliacion-cfdi/` — la entrada de este mismo proyecto).
   Actualizarlo con hallazgos genéricos de estructura/esquema/calidad de
   dato (no específicos de este proyecto de conciliación) para que el
-  resto del ecosistema de sesiones se beneficie.
+  resto del ecosistema se beneficie.
 
 ## Dónde está cada cosa
 
@@ -160,16 +165,46 @@ documentos de referencia que hay que mantener al día:
 - **`docs/emitidos_retenciones.md`** — conciliación de emitidos y
   retenciones, y el hallazgo del cruce contra el SAT.
 
+## Retención — nivel 1 construido y corrido para H1 2026, dos conceptos distintos identificados (2026-09-09/10)
+
+**Nuevo**: `src/extract_retencion.py` + `retencion_reconciliation.py` —
+nivel 1 (existencia + cuadre de `monto_total_operacion` SAT vs `Cd_Monto`
+mpro, sin parsear XML: el XML de retención en mpro NO es un CFDI normal,
+ver `docs/hallazgos.md` punto 28).
+
+**Hay dos tipos de retención de ISR completamente distintos bajo el mismo
+`cve_retenc`** (`hallazgos.md` punto 29): `cve_retenc=14` (arrendamiento/
+honorarios, 10%, se emite cada ~4 meses, concilia 100% vía
+`CONSTANCIA_RETENCION`) y `cve_retenc=16` (intereses a prestamista, 20%,
+mensual, **nunca** pasa por `CONSTANCIA_RETENCION`). Para `cve=16` el gasto
+SÍ está bien capturado en `Gasto_Registro` (verificado exacto, folio por
+folio) — lo que falta es solo el *link* en `Comprobante_Digital`, por dos
+mecanismos reales y distintos: omisión pura (un lote de 15 CFDI de febrero
+nunca se etiquetó) y CFDI sustituido sin re-ligar (`CfdiRetenRelacionados`
+apuntando a un UUID viejo/cancelado). Detalle completo en `docs/pendientes.md`
+(sección Retención) y `docs/hallazgos.md` puntos 28-29.
+
+Siguiente paso natural para retención: (1) construir el fallback por RFC+
+proveedor+mes+monto contra `Gasto_Registro_Documento` para `cve=16` (recupera
+el mecanismo de omisión sin depender del link), (2) seguir
+`CfdiRetenRelacionados` para el mecanismo de sustitución, (3) nivel 3 — trazar hasta `Poliza_Control` para el
+cargo/abono real de lo que sí concilia.
+
 ## Siguiente paso más obvio
 
 1. **Familia nómina (IMSS/INFONAVIT: 20 CFDI, $10.3M)** — es el 85% del monto
-   pendiente de recibidos. Para cuadrarla hay que separar cuota patronal de obrera y
-   repartir la póliza consolidada de provisión entre los CFDI que la componen.
-   Alternativa más barata: conciliarla **en agregado** (todos los CFDI del IMSS
-   del mes contra el total provisionado).
-2. **Extender el chequeo al lado del abono/pago** (recibidos). Todo lo de arriba sigue
-   siendo un chequeo de UN SOLO LADO (cargo). El doble chequeo existe solo para
-   COMPRA (`baseline_conciliacion.py`).
+   pendiente de recibidos. **Confirmado con Esteban 2026-09-10: NO conciliar
+   en agregado, NO modelar la separación patronal/obrera, y NO filtrarlos del
+   universo** — se les aplica la misma Regla 1 (cargo=subtotal) que a
+   cualquier otro CFDI, sin ninguna vía de cuadre dedicada. Son errores de
+   captura reales; que la lógica estándar los deje como no conciliados es el
+   comportamiento correcto. La variabilidad del ratio cargo/subtotal entre
+   distintos CFDI de la misma familia (0.14-0.48 en el análisis original de
+   H1; 0.88-0.94 en una muestra de febrero) es la señal de que no hay una
+   proporción fija que valga la pena modelar como regla propia.
+2. **Extender el chequeo al lado del abono/pago** (recibidos). Todo lo de
+   arriba sigue siendo un chequeo de UN SOLO LADO (cargo). El doble chequeo
+   existe solo para COMPRA (`baseline_conciliacion.py`).
 3. **Reporte de cobranza para emitidos** (REP vs `Pago_CXC`/`DoctoRelacionado`),
    portando la metodología del proyecto hermano
    (`~/proyectos/conciliacion-master/conciliacion-emitidos`, reportes 02/03,
@@ -190,3 +225,13 @@ documentos de referencia que hay que mantener al día:
    referencia el documento en esa póliza, o probar un chequeo agregado por
    sucursal/día en vez de por CFDI). Distinto de los puntos 3-4 arriba
    (pregunta "¿cuadra la póliza contable?", no "¿cuadra el documento?").
+6. **Retención (nivel 1 ya construido y corrido, ver sección dedicada
+   arriba)**: (a) fallback por RFC+proveedor+mes+monto contra
+   `Gasto_Registro_Documento` para recuperar el mecanismo de omisión de
+   `cve=16` sin depender del link; (b) seguir `CfdiRetenRelacionados` para
+   el mecanismo de sustitución antes de reportar un CFDI como huérfano;
+   (c) nivel 3 — trazar hasta `Poliza_Control` para el cargo/abono real de
+   lo que sí concilia.
+7. Tres hallazgos de estructura/calidad de dato de la sesión de recibidos
+   (2026-09-09/10) que valen para `trivasa-context` — ver la lista en
+   `docs/investigacion_pendientes.md`, Parte 4 (ya subidos ahí).

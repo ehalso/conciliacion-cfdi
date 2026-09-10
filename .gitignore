@@ -8,6 +8,7 @@ venv/
 # QUERY_API_TOKEN), y así se queda.
 .query_api_token
 *.token
+.env
 
 # Credenciales de conexión directa a BD (Postgres/SQL Server) — ver
 # docs/arquitectura.md y .env.example. Nunca se versiona.

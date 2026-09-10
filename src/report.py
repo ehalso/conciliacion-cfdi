@@ -7,9 +7,12 @@ from openpyxl.utils import get_column_letter
 
 ESTATUS_COLORS = {
     "OK": "C6EFCE",
+    "CONCILIADO": "C6EFCE",
     "DIFERENCIA_IMPORTE": "FFC7CE",
     "SOLO_SAT": "FFEB9C",
     "SOLO_MPRO": "FFEB9C",
+    "STUB_GASTO_REGISTRO_SIN_MONTO": "FFEB9C",
+    "SIN_MAPEO_MPRO": "FFC7CE",
 }
 
 
@@ -22,6 +25,8 @@ def write_report(detalle: pd.DataFrame, resumen_df: pd.DataFrame, salida: str) -
             "SOLO_SAT",
             "SOLO_MPRO",
             "DIFERENCIA_IMPORTE",
+            "STUB_GASTO_REGISTRO_SIN_MONTO",
+            "SIN_MAPEO_MPRO",
         ):
             subset = detalle[detalle["estatus"] == field]
             if not subset.empty:

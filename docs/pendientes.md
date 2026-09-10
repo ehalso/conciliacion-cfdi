@@ -384,38 +384,82 @@ resultó ser un falso positivo por reciclaje de folio):
 Completar también el resto de 2025/2026 en el ingest para tener el mismo
 rango de fechas que recibidos (sigue pendiente, sin cambios esta sesión).
 
-## Retención: mapeo a mpro encontrado, pero solo cubre ~36% de los CFDI (corregido 2026-09-08)
+## Retención: dos conceptos distintos (`cve_retenc` 14 vs 16) — cada uno con su propio camino de conciliación (actualizado 2026-09-10, ver `hallazgos.md` punto 28)
 
-El mapeo SAT → mpro para retención existe y funciona vía
-`Comprobante_Digital.Cd_Tabla = 'CONSTANCIA_RETENCION'` — lo que antes
-fallaba (investigación previa a 2026-09-07) era que las pruebas se
-hicieron sobre febrero 2026 (mes sin datos) y sin considerar que
-`Comprobante_Digital` se indexa por `Cd_Timbre_Fecha`, no por una columna
-`Cd_Fecha` que no existe.
+**Corrección 2026-09-10**: la primera pasada (2026-09-09) trató el hueco de
+cobertura como un solo fenómeno "estacional" — estaba mal. `raw_sat.cfdi_retencion`
+mezcla dos tipos de retención de ISR con comportamiento completamente
+distinto, diferenciados por `cve_retenc`:
 
-**Corrección importante (2026-09-08)**: el primer reporte de este hallazgo
-(2026-09-07) decía cobertura casi total ("47 filas para 45 UUIDs") — esa
-cifra estaba mal calculada (contaba UUIDs de toda la historia de la tabla,
-no solo enero 2026). La cifra real, re-verificada con los 45 CFDI de
-retención de enero 2026: **solo 16 de 45 (36%) tienen la fila
-`CONSTANCIA_RETENCION`** con folio y monto reales (ese folio sí coincide
-1-a-1 con `Constancia_Retencion.Cr_Folio` y el monto es exacto). Otros 15
-de 45 (33%) solo tienen un stub en `GASTO_REGISTRO` con `Cd_Monto=0` (sin
-monto real en ningún lado). Los **14 restantes (31%) no tienen ninguna
-fila** en `Comprobante_Digital`.
+| `cve_retenc` | Tasa | Concepto | Frecuencia | Camino de conciliación |
+|---|---:|---|---|---|
+| `14` | 10% | Arrendamiento/honorarios | Cada ~4 meses (así se emite, no es un hueco) | `Comprobante_Digital.Cd_Tabla='CONSTANCIA_RETENCION'`, 100% cuando se busca en el mes correcto |
+| `16` | 20% | Intereses a prestamista/inversionista | Mensual, ~15 CFDI/mes | `Comprobante_Digital.Cd_Tabla='GASTO_REGISTRO'` (stub) — **`CONSTANCIA_RETENCION` nunca aparece para este tipo** |
 
-**Pendiente real, sin resolver**: por qué el 64% de los CFDI de retención
-no llega a `Constancia_Retencion`. No investigado a fondo — antes de
-seguir explorando a ciegas, vale la pena preguntarle directamente a
-alguien de Trivasa que conozca el proceso de retención de arrendamiento:
-¿hay más de un proceso/vía para registrar la retención en mpro, o
-simplemente no se está registrando contablemente en la mayoría de los
-casos?
+**Implementado**: `src/extract_retencion.py` + `retencion_reconciliation.py`
+(nivel 1 — existencia + cuadre de `monto_total_operacion` contra
+`Comprobante_Digital.Cd_Monto`, sin parsear XML — el XML de mpro para este
+origen NO es un CFDI normal, ver `hallazgos.md` punto 27 para el detalle).
+Esta implementación cubre bien `cve=14`; para `cve=16` solo detecta
+"conciliado si hay `CONSTANCIA_RETENCION`" — que nunca pasa, así que hoy
+reporta a este grupo siempre como pendiente aunque el gasto esté bien
+capturado (ver abajo).
 
-Para el 36% que sí mapea, sigue pendiente además trazar `Cd_Documento`/
-`Cr_Folio` hasta `Poliza_Control` para llegar al cargo/abono contable
-real — bloqueado por la misma caída de `Poliza_Control` descrita arriba
-para emitidos.
+```bash
+python3 retencion_reconciliation.py --periodo 2026-01
+```
+
+**Corrida en vivo para los 6 meses de H1 2026** (sin separar por `cve_retenc`
+— cifra agregada, `hallazgos.md` punto 27/28):
+
+| Periodo | Total SAT | Conciliado (CONSTANCIA_RETENCION) | Stub Gasto_Registro ($0) | Sin ninguna fila |
+|---|---:|---:|---:|---:|
+| 2026-01 | 45 | 16 | 15 | 14 |
+| 2026-02 | 15 | 0 | 0 | 15 |
+| 2026-03 | 15 | 0 | 15 | 0 |
+| 2026-04 | 15 | 0 | 15 | 0 |
+| 2026-05 | 31 | 16 | 15 | 0 |
+| 2026-06 | 15 | 0 | 15 | 0 |
+| **H1** | **136** | **32 (23.5%)** | **75** | **29** |
+
+Los 32 "conciliado" son enteramente `cve=14` (100% de ese grupo, en los
+meses en que de verdad se emite — enero y mayo). Los 75 "stub" y 29 "sin
+ninguna fila" son enteramente `cve=16` — y **el gasto detrás de esos 104 SÍ
+está bien capturado** en `Gasto_Registro` (verificado exacto: los 15 CFDI de
+febrero, el único mes con 0% de link, suman $254,305.39 contra
+`Gasto_Registro_Documento` — al centavo). El problema no es contable, es que
+`Comprobante_Digital` no siempre liga el CFDI al folio, por dos motivos
+reales y distintos (ver punto 28 completo):
+
+1. **Omisión pura** (febrero 2026): nunca se generó el link, ni el stub en
+   $0, para un lote de 15 CFDI — confirmado que el proceso de etiquetado sí
+   corría ese día para otros folios, así que es un paso puntual saltado, no
+   una caída general.
+2. **CFDI sustituido sin re-ligar** (un caso confirmado, enero 2026): el
+   CFDI trae `CfdiRetenRelacionados TipoRelacion="04"` (sustituye una
+   retención previa cancelada) — el link en `Comprobante_Digital` se quedó
+   apuntando al UUID viejo/cancelado, nunca se actualizó al nuevo. El gasto
+   ya estaba bien conciliado bajo el UUID anterior; solo la referencia
+   fiscal quedó desactualizada.
+
+**Pendientes reales, en orden de prioridad**:
+
+1. **Extender el método**: para `cve=16`, matchear por RFC receptor →
+   `Proveedor.Pv_R_F_C` → `Gasto_Registro_Documento` del mismo mes (comparar
+   `monto_total_operacion` contra `Grd_Precio_Descontado_Importe`) como
+   *fallback* cuando `Comprobante_Digital` no tenga ninguna fila para el
+   UUID — recuperaría el mecanismo 1 (omisión) sin depender del link.
+2. Para el mecanismo 2 (sustitución), seguir `CfdiRetenRelacionados` cuando
+   el UUID directo no aparezca en `Comprobante_Digital`, antes de reportar
+   "gasto no encontrado" — puede que ya esté conciliado bajo el UUID
+   sustituido.
+3. Nivel 3: trazar `folio_constancia`/`Gr_Folio` hasta `Poliza_Control` para
+   el cargo/abono contable real — ya no bloqueado (`Poliza_Control` volvió a
+   responder, punto 13), solo falta escribir el extractor (mismo patrón que
+   `extract_poliza_por_origen.py`).
+4. Preguntar directamente a alguien de Trivasa por qué el lote de febrero
+   (cve=16) nunca se etiquetó — para confirmar que es error humano puntual y
+   no un proceso paralelo sin documentar.
 
 ## Pendiente dentro de recibido — mejoras al alcance ya construido
 
