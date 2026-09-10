@@ -606,8 +606,8 @@ CFDI contabilizado dos veces también tiene su pago correcto). Queda como
 herramienta de investigación, no de cuadre.
 
 Resultado con las nueve vías, H1 2026 completo: **9,511 / 9,572 (99.36%)**.
-Detalle completo, evidencia por caso y clasificación del residual en
-[`investigacion_pendientes.md`](investigacion_pendientes.md).
+Detalle completo, evidencia por caso y clasificación del residual en el
+punto 34, más abajo.
 
 ## 26. Pasivo en moneda extranjera: mpro lo parte en dos cuentas (la de la divisa y una "complementaria" en pesos) que SUMAN la valuación en MXN
 
@@ -1135,3 +1135,94 @@ como el 21% que de verdad importa.
 
 `cruce_sat_retenciones.py` se retiró (superado). Referencias actualizadas
 en `README.md`/`PROGRESS.md`/`docs/emitidos_retenciones.md`.
+
+## 34. Resultado final H1 2026 y clasificación del residual (recibidos, sesión 2026-09-09/10)
+
+Cierre de la investigación folio por folio de los puntos 20-26: con las
+nueve vías de cuadre y los fixes de moneda/`Descuento`/IEPS/cuentas de
+orden/dedup ya aplicados, el resultado agregado subió de 90.1% (punto de
+partida) a:
+
+| Periodo | Universo | Conciliados | % | Pendientes |
+|---|---:|---:|---:|---:|
+| 2026-01 | 1,585 | 1,572 | 99.2% | 13 |
+| **2026-02** | **1,500** | **1,492** | **99.5%** | **8** |
+| 2026-03 | 1,736 | 1,722 | 99.2% | 14 |
+| 2026-04 | 1,775 | 1,771 | **99.8%** | 4 |
+| 2026-05 | 1,545 | 1,532 | 99.2% | 13 |
+| 2026-06 | 1,431 | 1,422 | 99.4% | 9 |
+| **H1 2026** | **9,572** | **9,511** | **99.36%** | **61** |
+
+Febrero pasó de **90.1% a 99.5%**. En dinero, lo que queda sin cuadrar en
+febrero son **$27,651.98 de $48,941,616.38 — el 0.056%**.
+
+### Cómo se llegó ahí (febrero, paso a paso)
+
+| # | Fix | Conciliados | % |
+|---|---|---:|---:|
+| 0 | Punto de partida | 1,351 | 90.1% |
+| 1 | Tipo de cambio + filtro estructural de cuentas de orden (puntos 20, 23) | 1,393 | 92.9% |
+| 2 | `Descuento` del CFDI (punto 21) | 1,426 | 95.1% |
+| 3 | IEPS a la base del gasto (punto 22) | 1,438 | 95.9% |
+| 4 | Nota de crédito contra total, IVA no acreditable, importe del documento, tolerancia por materialidad | 1,463 | 97.5% |
+| 5 | Arrendamiento financiero + gasto repartido entre folios | 1,478 | 98.5% |
+| 6 | Doble conteo por los dos formatos de `Cd_Documento` (punto 24) | 1,485 | 99.0% |
+| 7 | Folio completo, renglón del folio, cheque agrupado, importe del documento de origen | 1,492 | **99.5%** |
+
+### Por qué cuadra cada CFDI (semestre completo)
+
+| Vía de cuadre | CFDI |
+|---|---:|
+| cargo = base CFDI (el chequeo de siempre) | 9,160 |
+| arrendamiento financiero (interés + capital) | 106 |
+| capturado en un renglón del folio | 76 |
+| nota de crédito = total | 62 |
+| pago directo (Cheque = total) | 37 |
+| IVA no acreditable (cargo = total) | 31 |
+| capturado en el documento (gasto distribuido menor) | 19 |
+| capturado en el documento de origen | 8 |
+| gasto repartido entre folios hermanos | 6 |
+| el CFDI cubre el folio completo | 4 |
+| cheque que liquida varias facturas | 2 |
+
+**Tolerancia**: pasó de $1 fijo a `max($1, 0.005% de la base)` — el
+componente relativo cubre el redondeo de convertir moneda extranjera
+renglón por renglón (un CFDI de $70,000 puede diferir $1.02 solo por eso)
+sin volverse permisivo (en el CFDI más grande del periodo son ~$45).
+
+### Lo que queda sin cuadrar (61 CFDI del semestre)
+
+Ninguno es un misterio: los 61 caen en familias con mecanismo identificado.
+El barrido numérico final (13 combinaciones de subtotal/IVA/total contra el
+cargo) no encontró ninguna relación adicional que explote — el residual es
+estructural, no de fórmula.
+
+| Familia | CFDI | Monto | Qué pasa |
+|---|---:|---:|---|
+| **Nómina: IMSS** | 16 | $7,879,140 | El CFDI mezcla cuota **patronal** (gasto de la empresa) y cuota **obrera** (retención al trabajador, que ya se registró en la nómina). mpro solo lleva al gasto la parte patronal. Además la póliza de provisión (`config 0428`, "PROVISION GASTOS NAC (PREV SOCIAL)") **consolida varios CFDI** — en enero, 382 renglones y 5 referencias distintas para $2.06M. El ratio cargo/subtotal varía entre 0.14 y 0.48 según la composición de la nómina (y entre 0.50 y 0.94 en una muestra de 6 CFDI de febrero revisada 2026-09-10), así que no hay proporción fija que aplicar. **Confirmado con Esteban 2026-09-10: NO son un patrón estructural a modelar — son errores de captura reales. No se filtran del universo ni se les construye una vía de cuadre dedicada: se les aplica la misma Regla 1 (cargo=subtotal) que a cualquier otro CFDI, y quedan como no conciliados si no cuadra por ahí — eso es correcto, no un hueco del método.** |
+| **Nómina: INFONAVIT** | 4 | $2,456,263 | Mismo mecanismo y misma póliza consolidada — misma instrucción: no filtrar, no regla especial. |
+| **Crédito bancario** | 11 | $1,603,643 | CFDI de intereses de créditos simples (BBVA, Sabadell, Mifel, Ve por Más). La póliza de pago carga capital + interés a `2130.001.001.*` y abona el banco por la suma — pero, a diferencia del arrendamiento, el **capital no viene en el CFDI**, así que el abono al banco (ej. $815,171.67) no es comparable con el CFDI ($395,858.61). Además el interés posteado ($190,171.67) no coincide con el del CFDI: hay que revisar el contrato/tabla de amortización. |
+| **Cheque consolidado** | 15 | $58,331 | CFDI etiquetados a un cheque que liquida facturas de **otros periodos** (uno de ellos, `01-0060062`, con fecha 2024-01-15 y $626,916.82 contra CFDI de 2026 que suman $60,395). No se puede cerrar con datos del periodo; conviene revisar si la etiqueta apunta al cheque correcto. |
+| **Agencia aduanal** | 6 | $50,410 | El cargo es **mayor** que el CFDI (ratio 1.05 a 2.14): el folio de gasto agrupa el pedimento completo (impuestos, maniobras, honorarios) y el CFDI del agente es solo una parte. |
+| **Otros** | 3 | $44,941 | Casos sueltos: una COMPRA con -$79.20, un CFDI de MAQUINAS DIESEL cuyo folio de compra agrupa 17× su importe, y un arrendamiento de BANORTE con +$86.82. |
+| **SAT** | 2 | $43,499 | `Grc_Importe` = $0.01 simbólico: el pago de impuestos no se registra como gasto en Gasto_Registro. |
+| **CONAGUA (derechos)** | 4 | $12,187 | **Captura parcial real**: de un CFDI de $5,944.00, Gasto_Registro solo recoge la actualización ($22) y los recargos ($121). Los derechos de agua ($5,801) no están en el módulo — se pagan como contribución sin ligar el CFDI. Confirmado también del lado del pago: las dos aplicaciones en `Pago_CXP` son por $22.00 y $121.00. **Esto sí conviene reportarlo a Trivasa.** |
+
+Los pendientes accionables de esta tabla (créditos bancarios, cheque
+`01-0060062`, CONAGUA) están en `pendientes.md`, junto con el resto del
+trabajo pendiente del repo.
+
+### Archivos nuevos o modificados en esta sesión
+
+```
+src/extract_moneda.py         NUEVO  moneda y tipo de cambio por origen
+src/extract_vias_extra.py     NUEVO  arrendamiento, folios hermanos, folio completo,
+                                     cheque agrupado, importe del documento de origen
+src/cfdi_parser.py            base_mpro ahora resta Descuento y suma IEPS
+src/extract_gasto_registro.py devuelve también neto, descontado, folio y referencia
+src/extract_poliza_por_origen.py  filtro estructural de cuentas de orden
+baseline_universal.py         cascada de 11 reglas de cuadre + conversión a MXN +
+                                     parseo de XML de todo el universo (con caché)
+investigacion/dump_contexto.py NUEVO  vuelca el contexto de los pendientes a CSV
+investigacion/triage.py        NUEVO  batería de relaciones numéricas candidatas
+```

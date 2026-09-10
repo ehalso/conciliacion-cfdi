@@ -180,7 +180,6 @@ docs/
   hallazgos.md                  Bugs y patrones reales encontrados (con evidencia)
   resultados_2026-02.md         Resultados concretos, febrero 2026 recibidos
   pendientes.md                 Qué falta y por qué (emitido, retención, orígenes sin resolver)
-  investigacion_pendientes.md   Investigación folio por folio que llevó a 99.36%
   emitidos_retenciones.md       Conciliación de emitidos y retenciones (100%) + hallazgo SAT
 ```
 
@@ -203,7 +202,7 @@ docs/
   jun 99.4%. Febrero venía en 90.1% antes de la sesión de investigación folio
   por folio del 2026-09-09/10 — el detalle completo de qué lo subió, con la
   evidencia de cada hallazgo y la clasificación de los 61 pendientes que
-  quedan, está en [`docs/investigacion_pendientes.md`](docs/investigacion_pendientes.md).
+  quedan, está en [`docs/hallazgos.md`](docs/hallazgos.md) puntos 20-26 y 34.
   Lo que más pesó: convertir el CFDI a MXN con el tipo de cambio del documento,
   restar el `Descuento` (que `raw_sat` no guarda), sumar el IEPS a la base,
   identificar las cuentas de orden por la raíz de la cuenta, y una cascada de

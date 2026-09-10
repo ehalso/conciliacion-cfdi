@@ -64,8 +64,8 @@ python3 recibidos/nivel_poliza/baseline_universal.py --periodo 2026-02
 ```
 
 **Lo primero que hay que leer para retomar RECIBIDOS es
-[`docs/investigacion_pendientes.md`](docs/investigacion_pendientes.md)**: trae
-los hallazgos que subieron el porcentaje, las nueve vías de cuadre con su
+[`docs/hallazgos.md`](docs/hallazgos.md) puntos 20-26 y 34**: trae los
+hallazgos que subieron el porcentaje, las nueve vías de cuadre con su
 evidencia, y la clasificación de los 61 pendientes que quedan.
 
 Pendientes que quedan (61 en el semestre), por familia:
@@ -166,14 +166,13 @@ Ver `README.md` para la estructura completa del repo y quickstart. Los
 documentos de referencia que hay que mantener al día:
 
 - **`README.md`** — estado general, un párrafo por frente de trabajo.
-- **`docs/pendientes.md`** — historial de cómo se veía el problema de
-  recibidos antes de la investigación folio por folio (documento
-  superado, se conserva por contexto).
-- **`docs/investigacion_pendientes.md`** — el documento vigente sobre
-  recibidos: método, vías de cuadre, clasificación de pendientes.
+- **`docs/pendientes.md`** — qué falta hacer, por frente (recibidos,
+  emitidos, retención).
 - **`docs/hallazgos.md`** — bitácora numerada de bugs y patrones
   confirmados con evidencia (queries, ejemplos reales) — el historial
-  técnico completo, en orden cronológico.
+  técnico completo, en orden cronológico; puntos 20-26 y 34 traen el
+  método y el resultado final de la investigación folio por folio de
+  recibidos (99.36% H1 2026).
 - **`docs/emitidos_retenciones.md`** — conciliación de emitidos y
   retenciones, y el hallazgo del cruce contra el SAT.
 
@@ -245,5 +244,5 @@ cargo/abono real de lo que sí concilia.
    (c) nivel 3 — trazar hasta `Poliza_Control` para el cargo/abono real de
    lo que sí concilia.
 7. Tres hallazgos de estructura/calidad de dato de la sesión de recibidos
-   (2026-09-09/10) que valen para `trivasa-context` — ver la lista en
-   `docs/investigacion_pendientes.md`, Parte 4 (ya subidos ahí).
+   (2026-09-09/10) que valen para `trivasa-context` — ya subidos ahí (ver
+   `docs/hallazgos.md` puntos 16 y 26).
