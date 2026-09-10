@@ -31,8 +31,6 @@ def extract_origenes_por_uuids(uuids: list[str]) -> pd.DataFrame:
         rows.extend(rows_as_dicts(result))
 
     df = pd.DataFrame(rows, columns=COLUMNS)
-    if df.empty:
-        return df
     df = df.rename(columns={
         "Cd_Timbre_UUID": "uuid",
         "Cd_Tabla": "origen",
@@ -40,5 +38,7 @@ def extract_origenes_por_uuids(uuids: list[str]) -> pd.DataFrame:
         "Cd_Tipo_Comprobante_CFDI": "tipo_comprobante_mpro",
         "Cd_Monto": "cd_monto",
     })
+    if df.empty:
+        return df
     df["uuid"] = df["uuid"].str.upper()
     return df
