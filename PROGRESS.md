@@ -14,20 +14,16 @@ Management Pro / mpro (ERP en SQL Server). La pregunta de negocio: **¿qué
 documentos de mpro corresponden a cada CFDI, y el importe contabilizado
 cuadra con el importe fiscal del CFDI?**
 
-Conexión **directa** a las bases de datos (desde 2026-09-09, ver
-`docs/arquitectura.md`) — `src/bridge_client.py` habla SQLAlchemy contra
-`postgres_dw` y los dos SQL Server de mpro, con credenciales en un `.env`
-local (gitignored, ver `.env.example`). Antes de esa fecha, esta sesión no
-tenía ruta de red a la LAN de Trivasa y todo pasaba por una API puente
-HTTP mantenida en otra máquina — historia completa y fallback conocido en
-`docs/arquitectura.md`. En ambos casos la regla no cambia: **estrictamente
-de solo lectura** — nunca un write/DDL/DML contra ninguno de los tres
-targets (`bridge_client._guard_readonly()` lo hace cumplir del lado
-cliente).
+Arquitectura en dos partes (detalle en `docs/arquitectura.md`): una API
+puente de solo lectura (`https://reportesweb.frento.com.mx/query`,
+mantenida en otra máquina) expone las bases de datos; este repo hace toda
+la extracción, parseo y lógica de conciliación. El bridge es
+**estrictamente de solo lectura** — nunca se intenta un write/DDL/DML
+contra él.
 
 ## Estado actual (2026-09-10) — leer esto primero
 
-**El método vigente es `baseline_universal.py`, no `main.py` ni
+**El método vigente para RECIBIDOS es `baseline_universal.py`, no `main.py` ni
 `reconciliacion_por_origen.py`.** Para CFDI recibidos, suma el cargo de
 TODOS los documentos con los que un CFDI aparece etiquetado en
 `Comprobante_Digital` (sin importar el origen/módulo de mpro) y compara esa
@@ -35,7 +31,7 @@ suma contra la base fiscal del CFDI. Tras la sesión de investigación folio por
 folio del 2026-09-09/10, el chequeo ya no es una sola comparación sino una
 **cascada de vías de cuadre**, cada una con su etiqueta en el reporte.
 
-Resultado en vivo, **todo H1 2026**:
+Resultado en vivo, **todo H1 2026** (recibidos):
 
 | Periodo | Universo | Conciliados | % | Pendientes |
 |---|---:|---:|---:|---:|
@@ -53,7 +49,7 @@ Resultado en vivo, **todo H1 2026**:
 python3 baseline_universal.py --periodo 2026-02
 ```
 
-**Lo primero que hay que leer para retomar es
+**Lo primero que hay que leer para retomar RECIBIDOS es
 [`docs/investigacion_pendientes.md`](docs/investigacion_pendientes.md)**: trae
 los hallazgos que subieron el porcentaje, las nueve vías de cuadre con su
 evidencia, y la clasificación de los 61 pendientes que quedan.
@@ -71,9 +67,26 @@ Pendientes que quedan (61 en el semestre), por familia:
 | CONAGUA | 4 | $12K | **Captura parcial real** — solo entran actualización y recargos; los derechos no pasan por el módulo. Reportable al cliente |
 | Otros | 3 | $45K | Casos sueltos |
 
+## EMITIDOS y RETENCIONES (nuevo, 2026-09-10) — 100% de conciliación + hallazgo SAT
+
+Adaptado de una investigación previa de Claude Code (documentación subida
+por Esteban). **`reconciliacion_emitidos.py`** da 100.00% en los 6 meses de
+H1 2026 (14,554/14,554 CFDI de factura, nota de crédito y retenciones).
+Esto confirma que el lado emitido no tiene problema de importes por
+construcción.
+
+El hallazgo real está en **`cruce_sat_retenciones.py`** (cruce independiente
+contra `raw_sat.cfdi_retencion`, que no pasa por el ERP): **29 constancias
+de retención por $536,597.04 ($107,319.45 de ISR) que el SAT tiene timbradas
+y el ERP nunca registró** — 14 en enero (ya conocidas), 15 más en febrero
+(hallazgo nuevo). Ver [`docs/emitidos_retenciones.md`](docs/emitidos_retenciones.md).
+
+Pendiente en este frente: reporte de cobranza (REP, `Pago_CXC`/`DoctoRelacionado`)
+y correr el cruce SAT sobre meses posteriores a junio.
+
 ## Qué método usar para seguir — y por qué
 
-1. **`baseline_universal.py`** (el método actual, agregado, todos los
+1. **`baseline_universal.py`** (recibidos, el método actual, agregado, todos los
    orígenes) — usar esto para cualquier pregunta de "¿cuánto cuadra en
    total" o "¿qué le falta a este CFDI". Es un chequeo de **un solo
    lado**: cargo=subtotal. No exige que el abono/pago también cuadre.
@@ -86,6 +99,9 @@ Pendientes que quedan (61 en el semestre), por familia:
    trabajo nuevo, pero el código de extracción que usan
    (`extract_poliza_por_origen.py`, `extract_origen.py`) sigue siendo la
    base de `baseline_universal.py`.
+4. **`reconciliacion_emitidos.py`** (emitidos, factura/NC/retenciones) y
+   **`cruce_sat_retenciones.py`** (cruce independiente SAT vs ERP) — el
+   frente nuevo. Ver docs/emitidos_retenciones.md.
 
 **Patrón de trabajo que ha funcionado bien esta sesión** (drill-down
 dirigido por Esteban): para cada origen con pendientes, tomar 1-2 CFDI
@@ -100,16 +116,12 @@ intentar una regla general de entrada.
 
 ## Constricciones que hay que seguir respetando
 
-- **Solo lectura** — nunca escribir/DDL/DML contra `mssql_205`/`mssql_207`/
-  `postgres_dw`, sea por conexión directa o (si algún día hace falta el
-  fallback) por la bridge. `bridge_client._guard_readonly()` lo aplica en
-  código, no solo de palabra.
-- **Credenciales de conexión directa**: `.env` local (chmod 600,
-  gitignored, ver `.env.example`) con `PG_USER`/`PG_PASSWORD` y
-  `MSSQL_205_USER`/`PASSWORD`/`MSSQL_207_USER`/`PASSWORD` — nunca
-  hardcodeadas en código. Respaldo también en Infisical, proyecto
-  `Trivasa` (`b6567423-9986-448e-b2b8-dffe44fe1657`), entorno `dev`.
-- **`.gitignore`** excluye `output/`, `*.xlsx`, `*.parquet`, `.env`,
+- **Bridge de solo lectura** — nunca escribir/DDL/DML contra
+  `mssql_205`/`mssql_207`/`postgres_dw`.
+- **Token de la bridge API**: solo en `/home/claude/.query_api_token`
+  (chmod 600) o `QUERY_API_TOKEN` env var — nunca en memoria, nunca en el
+  repo (`.gitignore` ya lo excluye).
+- **`.gitignore`** excluye `output/`, `*.xlsx`, `*.parquet`,
   `.query_api_token`, `*.token` — no versionar salidas ni credenciales.
 - **Push**: usar el MCP de GitHub (`mcp__Repo_Privado__push_files` o
   equivalente) — `git push` crudo está bloqueado por una restricción de
@@ -132,28 +144,31 @@ intentar una regla general de entrada.
 ## Dónde está cada cosa
 
 Ver `README.md` para la estructura completa del repo y quickstart. Los
-tres documentos de referencia que hay que mantener al día:
+documentos de referencia que hay que mantener al día:
 
 - **`README.md`** — estado general, un párrafo por frente de trabajo.
-- **`docs/pendientes.md`** — el documento más detallado: qué falta y por
-  qué, con evidencia y ejemplos reales, organizado por origen/tema.
+- **`docs/pendientes.md`** — historial de cómo se veía el problema de
+  recibidos antes de la investigación folio por folio (documento
+  superado, se conserva por contexto).
+- **`docs/investigacion_pendientes.md`** — el documento vigente sobre
+  recibidos: método, vías de cuadre, clasificación de pendientes.
 - **`docs/hallazgos.md`** — bitácora numerada de bugs y patrones
   confirmados con evidencia (queries, ejemplos reales) — el historial
   técnico completo, en orden cronológico.
+- **`docs/emitidos_retenciones.md`** — conciliación de emitidos y
+  retenciones, y el hallazgo del cruce contra el SAT.
 
 ## Siguiente paso más obvio
 
-1. **Subir a GitHub el trabajo del 2026-09-09/10** (quedó pedido
-   explícitamente que NO se hiciera push esa noche): incluye la corrección del
-   punto 16 de `hallazgos.md`, que estaba mal, y tres hallazgos de
-   estructura/calidad de dato que valen para `trivasa-context` — ver la lista
-   en `docs/investigacion_pendientes.md`, Parte 4.
-2. **Familia nómina (IMSS/INFONAVIT: 20 CFDI, $10.3M)** — es el 85% del monto
-   pendiente. Para cuadrarla hay que separar cuota patronal de obrera y
+1. **Familia nómina (IMSS/INFONAVIT: 20 CFDI, $10.3M)** — es el 85% del monto
+   pendiente de recibidos. Para cuadrarla hay que separar cuota patronal de obrera y
    repartir la póliza consolidada de provisión entre los CFDI que la componen.
    Alternativa más barata: conciliarla **en agregado** (todos los CFDI del IMSS
    del mes contra el total provisionado).
-3. **Extender el chequeo al lado del abono/pago.** Todo lo de arriba sigue
+2. **Extender el chequeo al lado del abono/pago** (recibidos). Todo lo de arriba sigue
    siendo un chequeo de UN SOLO LADO (cargo). El doble chequeo existe solo para
    COMPRA (`baseline_conciliacion.py`).
-4. **Correr emitidos y retención** con el mismo método — ya está desbloqueado.
+3. **Reporte de cobranza para emitidos** (REP vs `Pago_CXC`/`DoctoRelacionado`),
+   siguiendo la metodología de la investigación de referencia.
+4. **Correr `cruce_sat_retenciones.py` sobre meses posteriores a junio** para
+   ver si el patrón de retenciones faltantes sigue.
