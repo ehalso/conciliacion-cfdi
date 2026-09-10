@@ -152,9 +152,17 @@ def construir(fi, ff):
     # documento un CFDI repartido en N documentos descuadraria contra cada
     # uno por separado. La comparacion valida es la del grupo.
     xg, mapa_doc = L.asignar_grupos(x)
+    # UUID sin match en raw_sat: mismo hueco que en el 02/03 (ver
+    # conciliacion_xml_lib.conciliar_importes) -- XML_GRUPO queda
+    # contaminado con ceros, no es un descuadre real.
+    xg["SIN_RAW_SAT"] = ~xg["EN_RAW_SAT"]
+    xg["SIN_RAW_SAT_VIGENTE"] = xg["SIN_RAW_SAT"] & (xg["CD_ESTADO"] != "CA")
     grupo_x = xg.drop_duplicates(["GRUPO", "UUID"]).groupby("GRUPO").agg(
         XML_GRUPO=("IMPORTE_XML", "sum"), N_XML_GRUPO=("UUID", "size"),
-        XML_COMPLEMENTO=("XML_VALES_DESPENSA", "sum")).reset_index()
+        XML_COMPLEMENTO=("XML_VALES_DESPENSA", "sum"),
+        N_SIN_RAW_SAT=("SIN_RAW_SAT", "sum"),
+        N_SIN_RAW_SAT_VIGENTE=("SIN_RAW_SAT_VIGENTE", "sum"),
+    ).reset_index()
 
     reg["DOC"] = reg.FOLIO + "|" + reg.DOC_ID
     reg["GRUPO"] = [mapa_doc.get((o, d), "") for o, d in zip(reg.ORIGEN, reg.DOC)]
@@ -175,6 +183,8 @@ def construir(fi, ff):
         grp, on="GRUPO", how="left")
     r["N_XML_GRUPO"] = r.N_XML_GRUPO.fillna(0).astype(int)
     r["N_DOC_GRUPO"] = r.N_DOC_GRUPO.fillna(0).astype(int)
+    r["N_SIN_RAW_SAT"] = r.N_SIN_RAW_SAT.fillna(0).astype(int)
+    r["N_SIN_RAW_SAT_VIGENTE"] = r.N_SIN_RAW_SAT_VIGENTE.fillna(0).astype(int)
     for c in ("XML_GRUPO", "MPRO_GRUPO", "DIF_GRUPO", "XML_COMPLEMENTO"):
         r[c] = r[c].fillna(0.0)
     r["FORMA"] = r.FORMA.fillna("")
@@ -210,6 +220,14 @@ def construir(fi, ff):
 
     def clase(f):
         if f.TIENE_XML:
+            # TODOS los UUID del grupo sin match en raw_sat: no hay nada que
+            # comparar. Si es parcial se sigue evaluando el DIF normal --
+            # ver el mismo razonamiento en
+            # conciliacion_xml_lib.conciliar_importes (N_SIN_RAW_SAT/
+            # N_SIN_RAW_SAT_VIGENTE quedan en el CSV para auditar el caso
+            # parcial, que no tiene una clase dedicada aqui).
+            if f.N_SIN_RAW_SAT > 0 and f.N_SIN_RAW_SAT >= f.N_XML_GRUPO:
+                return "SIN_RAW_SAT_PENDIENTE" if f.N_SIN_RAW_SAT_VIGENTE > 0 else "SIN_RAW_SAT_CANCELADO"
             # a nivel grupo: un CFDI repartido en N documentos solo cuadra
             # sumandolos, nunca contra un documento suelto
             d = abs(f.DIF_GRUPO)
@@ -243,6 +261,7 @@ def construir(fi, ff):
             "MONEDA", "TIPO_CAMBIO", "SUBTOTAL", "IMPUESTOS", "TOTAL",
             "CLASE", "GRUPO", "FORMA", "N_XML_GRUPO", "N_DOC_GRUPO",
             "XML_GRUPO", "MPRO_GRUPO", "DIF_GRUPO", "XML_COMPLEMENTO",
+            "N_SIN_RAW_SAT", "N_SIN_RAW_SAT_VIGENTE",
             "N_XML", "XML_TOTAL", "XML_IMPORTE", "XML_IVA", "DIF", "DIF_PCT",
             "XML_TIPOS", "XML_RFC_EMISOR", "XML_FECHA_MIN", "XML_FECHA_MAX",
             "XML_TIMBRADO_MIN", "XML_MISMO_MES", "ORIGEN_RESUELTO", "TIENE_XML_ORIGEN",

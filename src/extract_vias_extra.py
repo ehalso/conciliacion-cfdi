@@ -41,6 +41,7 @@ import pandas as pd
 
 from bridge_client import run_query, rows_as_dicts, sql_quote
 from config import MPRO_TARGET
+from extract_moneda import FUENTES
 
 BATCH_SIZE = 120
 # Cuentas de pasivo donde vive el capital del arrendamiento financiero
@@ -217,29 +218,53 @@ IMPORTE_DOCUMENTO = {
 }
 
 
-def extract_importe_documento(origen: str, documentos: list[str]) -> pd.DataFrame:
-    """Importe capturado del documento de origen, por folio (suma de sus
-    renglones). Devuelve documento / importe_documento."""
-    fuente = IMPORTE_DOCUMENTO.get(origen.upper())
-    if fuente is None:
-        return pd.DataFrame(columns=["documento", "importe_documento"])
-    tabla, col_folio, col_importe = fuente
+def extract_moneda_e_importe_documento(origen: str, documentos: list[str]) -> pd.DataFrame:
+    """Moneda + tipo de cambio + importe capturado del documento de origen,
+    en UNA sola consulta por lote. Devuelve documento / moneda / tipo_cambio
+    / importe_documento.
+
+    Fusión 2026-09-10 de `extract_moneda_documento()` (`FUENTES`, en
+    extract_moneda.py) y la vieja `extract_importe_documento()`: para los 5
+    orígenes de `IMPORTE_DOCUMENTO` las dos apuntaban a la MISMA tabla con
+    el MISMO folio (`Compra_Encabezado`, `Cuenta_X_Pagar`, etc.) -- eran dos
+    round-trips por lote donde bastaba uno. `baseline_universal.py` las
+    llamaba en dos loops separados ([3d/5] y [4b/5]) sobre los mismos
+    orígenes; ahora es un solo loop. Solo cubre los orígenes presentes en
+    AMBOS catálogos -- para el resto (`CHEQUE`, que no tiene importe de
+    documento propio aquí) se sigue usando `extract_moneda_documento()`."""
+    fuente_moneda = FUENTES.get(origen.upper())
+    fuente_importe = IMPORTE_DOCUMENTO.get(origen.upper())
+    if fuente_moneda is None or fuente_importe is None:
+        return pd.DataFrame(columns=["documento", "moneda", "tipo_cambio", "importe_documento"])
+    tabla, col_folio, col_tc, tiene_moneda = fuente_moneda
+    _, _, col_importe = fuente_importe
 
     documentos = sorted({d for d in documentos if d})
     filas: list[dict] = []
+    col_moneda = "Mn_Cve_Moneda AS moneda" if tiene_moneda else "'' AS moneda"
+    group_moneda = ", Mn_Cve_Moneda" if tiene_moneda else ""
     for i in range(0, len(documentos), BATCH_SIZE):
         in_list = ", ".join(sql_quote(d) for d in documentos[i:i + BATCH_SIZE])
         sql = (
-            f"SELECT {col_folio} AS documento, SUM({col_importe}) AS importe_documento "
-            f"FROM {tabla} WHERE {col_folio} IN ({in_list}) GROUP BY {col_folio}"
+            f"SELECT {col_folio} AS documento, {col_moneda}, {col_tc} AS tipo_cambio, "
+            f"SUM({col_importe}) AS importe_documento FROM {tabla} "
+            f"WHERE {col_folio} IN ({in_list}) GROUP BY {col_folio}{group_moneda}, {col_tc}"
         )
         filas.extend(rows_as_dicts(run_query(MPRO_TARGET, sql)))
 
-    df = pd.DataFrame(filas, columns=["documento", "importe_documento"])
+    df = pd.DataFrame(filas, columns=["documento", "moneda", "tipo_cambio", "importe_documento"])
     if df.empty:
         return df
+    df["tipo_cambio"] = pd.to_numeric(df["tipo_cambio"], errors="coerce").fillna(1.0)
+    df.loc[df["tipo_cambio"] <= 0, "tipo_cambio"] = 1.0
     df["importe_documento"] = pd.to_numeric(df["importe_documento"], errors="coerce").fillna(0.0)
-    return df
+    # Un folio puede traer varias líneas con distinto TC (mismo caso que
+    # extract_moneda_documento) -- un TC por documento, e importe SUMADO
+    # sobre todas (equivalente al SUM/GROUP BY único de la vieja
+    # extract_importe_documento()).
+    return df.groupby("documento", as_index=False).agg(
+        moneda=("moneda", "first"), tipo_cambio=("tipo_cambio", "max"),
+        importe_documento=("importe_documento", "sum"))
 
 
 def extract_referencia_cxp(folios: list[str]) -> pd.DataFrame:

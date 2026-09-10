@@ -142,14 +142,17 @@ def aplica_filtros(df: pd.DataFrame, origenes_sel: list[str], busca: str) -> pd.
 
 
 def calcular_universo(resumen: pd.DataFrame) -> pd.DataFrame:
-    """CFDI con valor monetario real Y con al menos una etiqueta en mpro —
-    el universo que compara `baseline_universal.calcular()` (conciliados +
-    pendientes)."""
+    """CFDI de tipo Ingreso o Egreso (`monetario` — ver
+    `baseline_universal.TIPOS_CON_VALOR`) Y con al menos una etiqueta en
+    mpro — el universo que compara `baseline_universal.calcular()`
+    (conciliados + pendientes). Traslado (Carta Porte) y Pago (REP) quedan
+    fuera: su SubTotal/Total es $0 por diseño del SAT, no por carecer de
+    valor real."""
     return resumen[resumen["monetario"] & resumen["en_mpro"]].copy()
 
 
 def calcular_no_en_mpro(resumen: pd.DataFrame) -> pd.DataFrame:
-    """CFDI con valor monetario real que NUNCA aparecen etiquetados en
+    """CFDI de tipo Ingreso o Egreso que NUNCA aparecen etiquetados en
     `Comprobante_Digital` — quedan fuera del universo de conciliados/
     pendientes, no porque no cuadren sino porque no hay nada contra qué
     compararlos."""
@@ -162,11 +165,12 @@ def render_kpis(universo: pd.DataFrame, universo_f: pd.DataFrame,
     """Fila de métricas: universo completo (sin filtrar) -> universo
     filtrado -> conciliados -> pendientes, y montos conciliado/pendiente.
 
-    "Universo completo" incluye TODAS las CFDI con valor monetario del/los
-    periodo(s) cargado(s), estén o no en mpro — `universo` (en_mpro) +
-    `no_en_mpro`. "Universo filtrado" y de ahí para abajo (conciliados/
-    pendientes) siguen siendo solo sobre las que sí están en mpro, que es
-    el universo que compara `calcular()`."""
+    "Universo completo" incluye TODOS los CFDI de tipo Ingreso o Egreso
+    del/los periodo(s) cargado(s), estén o no en mpro — `universo` (en_mpro)
+    + `no_en_mpro`. Traslado y Pago quedan fuera desde `calcular()` (ver
+    `baseline_universal.TIPOS_CON_VALOR`). "Universo filtrado" y de ahí para
+    abajo (conciliados/pendientes) siguen siendo solo sobre las que sí están
+    en mpro, que es el universo que compara `calcular()`."""
     total_completo = len(universo) + len(no_en_mpro)
     total_f = len(universo_f)
     n_conc = len(conciliados_f)
@@ -176,9 +180,9 @@ def render_kpis(universo: pd.DataFrame, universo_f: pd.DataFrame,
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Universo completo (sin filtrar)", f"{total_completo:,}",
-               help="Todas las CFDI con valor monetario del/los periodo(s) cargado(s) — estén o no "
-                    "etiquetadas en mpro (ver pestaña 'No encontrados en mpro') — antes de aplicar "
-                    "los filtros de la barra lateral.")
+               help="Todos los CFDI de tipo Ingreso o Egreso del/los periodo(s) cargado(s) — estén o no "
+                    "etiquetados en mpro (ver pestaña 'No encontrados en mpro') — antes de aplicar "
+                    "los filtros de la barra lateral. Traslado y Pago quedan fuera (ver Documentación).")
     k2.metric("Universo filtrado (en mpro)", f"{total_f:,}",
                f"{total_f/total_completo*100:.1f}% del completo" if total_completo else None)
     k3.metric("Conciliados", f"{n_conc:,}", f"{n_conc/total_f*100:.1f}%" if total_f else None)
@@ -193,11 +197,11 @@ def render_kpis(universo: pd.DataFrame, universo_f: pd.DataFrame,
 
 
 def render_tab_no_en_mpro(no_en_mpro_f: pd.DataFrame, periodos_sel: list[str]) -> None:
-    """Pestaña 'No encontrados en mpro': CFDI con valor monetario que jamás
-    se etiquetaron en Comprobante_Digital — no llegan ni a conciliados ni a
-    pendientes porque no hay nada de mpro contra qué compararlos."""
+    """Pestaña 'No encontrados en mpro': CFDI de tipo Ingreso/Egreso que
+    jamás se etiquetaron en Comprobante_Digital — no llegan ni a conciliados
+    ni a pendientes porque no hay nada de mpro contra qué compararlos."""
     st.caption(
-        f"{len(no_en_mpro_f):,} CFDI con valor monetario real que no tienen ninguna etiqueta en "
+        f"{len(no_en_mpro_f):,} CFDI de tipo Ingreso/Egreso que no tienen ninguna etiqueta en "
         "`Comprobante_Digital` — no se pudieron comparar contra mpro en absoluto (distinto de "
         "'Pendientes', que sí están en mpro pero no cuadran)."
     )

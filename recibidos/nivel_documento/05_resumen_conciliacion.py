@@ -65,7 +65,8 @@ def main():
 
     # ---- Reporte 2: impuestos
     comp = r2[~r2.ESTATUS_IMPUESTOS.isin(["NO_COMPARABLE_MODULO", "SIN_REGISTRO",
-                                          "MODULO_NO_CUBIERTO", "REPARTIDO_ENTRE_MODULOS"])]
+                                          "MODULO_NO_CUBIERTO", "REPARTIDO_ENTRE_MODULOS",
+                                          "SIN_RAW_SAT_CANCELADO", "SIN_RAW_SAT_PENDIENTE"])]
     ok2 = comp.ESTATUS_IMPUESTOS.isin(["CONCILIA", "SIN_IMPUESTOS"])
     okc2 = comp.ESTATUS_IMPUESTOS.isin(["CONCILIA", "SIN_IMPUESTOS", "DIF_CENTAVOS"])
     add("R2", "grupos_comparables_en_impuestos", len(comp), "excluye CHEQUE y ANTICIPO_CXP (MPro no lleva impuestos ahi)")

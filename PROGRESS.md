@@ -81,6 +81,30 @@ Pendientes que quedan (61 en el semestre), por familia:
 | CONAGUA | 4 | $12K | **Captura parcial real** — solo entran actualización y recargos; los derechos no pasan por el módulo. Reportable al cliente |
 | Otros | 3 | $45K | Casos sueltos |
 
+## Rendimiento (2026-09-10): `nivel_documento` sin XML, `baseline_universal.py` con menos consultas — paralelizar queda pendiente
+
+`recibidos/nivel_documento/conciliacion_xml_lib.py` (reportes `03_`/`04_`/
+`05_`) dejó de parsear `Cd_XML` — lee `raw_sat.cfdi_recibidos` (10 columnas
+nuevas pedidas al ELT el mismo día: `ret_iva`/`ret_isr`, complemento Pagos,
+ValesDeDespensa, etc.), validado idéntico contra el pipeline viejo salvo un
+gap de backfill real (18 UUID). Se agregó estatus dedicado `SIN_RAW_SAT_
+CANCELADO`/`SIN_RAW_SAT_PENDIENTE` para no confundir ese hueco con un
+descuadre — **ojo con la regla exacta** (solo aplica si TODOS los UUID del
+grupo faltan, no si falta uno solo — ver el detalle de por qué en el punto
+34 de abajo, casi se tapó un hallazgo real). De paso se encontró que
+`raw_sat.iva` es solo IVA (no el total de impuestos trasladados) —
+documentado en `trivasa-context/docs/schema/calidad-de-datos.md`.
+
+`baseline_universal.py` (nivel_poliza) bajó de 143 a 125 consultas por
+corrida fusionando dos pares de consultas redundantes (misma tabla, mismo
+folio, columnas distintas). Instrumentando `bridge_client.run_query` se
+confirmó que el ~95% del tiempo de una corrida (118s) es esperar
+respuestas secuenciales de `mssql_205` (~900ms/consulta) — **paralelizar
+los lotes de consulta (son independientes entre sí) es el siguiente paso
+obvio de rendimiento y NO está hecho todavía**; medir primero cuántas
+conexiones concurrentes tolera `.205`. Detalle completo, números exactos y
+qué se descartó en `docs/hallazgos.md` puntos 34-35.
+
 ## EMITIDOS y RETENCIONES (nuevo, 2026-09-10) — 100% de conciliación + hallazgo SAT
 
 Portado del proyecto hermano `~/proyectos/conciliacion-master/
@@ -236,13 +260,38 @@ cargo/abono real de lo que sí concilia.
    referencia el documento en esa póliza, o probar un chequeo agregado por
    sucursal/día en vez de por CFDI). Distinto de los puntos 3-4 arriba
    (pregunta "¿cuadra la póliza contable?", no "¿cuadra el documento?").
-6. **Retención (nivel 1 ya construido y corrido, ver sección dedicada
-   arriba)**: (a) fallback por RFC+proveedor+mes+monto contra
-   `Gasto_Registro_Documento` para recuperar el mecanismo de omisión de
-   `cve=16` sin depender del link; (b) seguir `CfdiRetenRelacionados` para
-   el mecanismo de sustitución antes de reportar un CFDI como huérfano;
-   (c) nivel 3 — trazar hasta `Poliza_Control` para el cargo/abono real de
-   lo que sí concilia.
+6. **Retención**: nivel 1 y nivel 3 (`retencion/nivel_poliza/baseline_retencion.py`,
+   2026-09-10) ya construidos y corridos — nivel 3 es granular por CFDI
+   (mismo método que `baseline_universal.py`: ubicar cada UUID en
+   `Comprobante_Digital`, sumar su cargo real vía `Gasto_Registro_Control`,
+   comparar contra `monto_total_operacion`), deliberadamente NO al 100%
+   (35.6% en los 3 periodos probados: nov-2025 6.7%, ene-2026 100%,
+   feb-2026 0%) — sirve para exponer errores reales, no para promediarlos.
+   Pendiente:
+   (a) fallback por RFC+proveedor+mes+monto contra `Gasto_Registro_Documento`
+   para recuperar el mecanismo de omisión de `cve=16` sin depender del link;
+   (b) **pedirle al ELT que agregue `CfdiRetenRelacionados` (UUID
+   relacionado + `TipoRelacion`) como columna nueva de
+   `raw_sat.cfdi_retencion`**, en vez de parsear el XML en vivo por cada
+   pendiente — confirmado en vivo 2026-09-10 que el mecanismo de sustitución
+   es sistemático (13 de 15 CFDI de retención de intereses de noviembre 2025
+   se re-timbraron en bloque el 22-ene-2026, y `Comprobante_Digital` se
+   quedó apuntando al UUID viejo/invalidado en cada caso). Con esa columna
+   ya ingerida, `baseline_retencion.py` podría reintentar cada pendiente
+   `SIN_MAPEO` contra el UUID relacionado antes de reportarlo como error, y
+   el mismo campo serviría para el hub de Streamlit (`retencion_cruce_sat.py`
+   del PR #1) para mostrar "sustituido, ver UUID X" en vez de "no encontrado".
 7. Tres hallazgos de estructura/calidad de dato de la sesión de recibidos
    (2026-09-09/10) que valen para `trivasa-context` — ya subidos ahí (ver
    `docs/hallazgos.md` puntos 16 y 26).
+8. **Paralelizar las consultas batched de `baseline_universal.py`** (y de
+   los extractores que llama) — hoy son secuenciales y ~900ms/consulta ×
+   125 consultas es prácticamente todo el tiempo de una corrida (ver
+   `docs/hallazgos.md` punto 36). Medir antes cuántas conexiones
+   concurrentes tolera `mssql_205` sin degradarse; probable candidato:
+   `ThreadPoolExecutor` sobre `bridge_client.run_query`, o paralelizar cada
+   loop de lotes por origen dentro de cada extractor.
+9. Backfill en `raw_sat.cfdi_recibidos` de los 15 UUID de enero 2026 que
+   siguen vigentes (`AC`) en mpro pero no tienen match ahí — no son
+   cancelados, es un gap real de cobertura del ELT/mount (ver
+   `docs/hallazgos.md` punto 35).

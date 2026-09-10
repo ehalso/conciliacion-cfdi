@@ -87,9 +87,16 @@ def extract_gasto_registro_granular(documentos_completos: list[str]) -> pd.DataF
             f"FROM Gasto_Registro_Control WHERE Gr_Folio IN ({in_list})"
         )
         rows.extend(rows_as_dicts(run_query(MPRO_TARGET, sql)))
+        # Moneda/tipo de cambio fusionados aqui (2026-09-10): antes
+        # `extract_moneda_gasto_registro()` volvia a consultar esta MISMA
+        # tabla con el mismo `Gr_Folio IN (...)` solo para traer
+        # Mn_Cve_Moneda/Grd_Tipo_Cambio -- una consulta redundante por lote
+        # a la tabla de mayor volumen del pipeline (GASTO_REGISTRO). Se
+        # retiro esa funcion; baseline_universal.py ya no la llama.
         sql_doc = (
             "SELECT Gr_Folio, Grd_ID, Grd_Precio_Neto_Importe, "
-            "Grd_Precio_Descontado_Importe, Grd_Referencia "
+            "Grd_Precio_Descontado_Importe, Grd_Referencia, "
+            "Mn_Cve_Moneda, Grd_Tipo_Cambio "
             f"FROM Gasto_Registro_Documento WHERE Gr_Folio IN ({in_list})"
         )
         doc_rows.extend(rows_as_dicts(run_query(MPRO_TARGET, sql_doc)))
@@ -97,6 +104,8 @@ def extract_gasto_registro_granular(documentos_completos: list[str]) -> pd.DataF
     neto_map: dict[tuple[str, str], float] = {}
     desc_map: dict[tuple[str, str], float] = {}
     ref_map: dict[tuple[str, str], str] = {}
+    moneda_map: dict[tuple[str, str], str] = {}
+    tc_map: dict[tuple[str, str], float] = {}
     for r in doc_rows:
         key = (r["Gr_Folio"], str(r["Grd_ID"]).zfill(4))
         try:
@@ -110,6 +119,15 @@ def extract_gasto_registro_granular(documentos_completos: list[str]) -> pd.DataF
         ref = (r.get("Grd_Referencia") or "").strip()
         if ref:
             ref_map[key] = ref
+        moneda = (r.get("Mn_Cve_Moneda") or "").strip()
+        if moneda:
+            moneda_map[key] = moneda
+        try:
+            tc = float(r["Grd_Tipo_Cambio"])
+            if tc > 0:
+                tc_map[key] = tc
+        except (TypeError, ValueError):
+            pass
 
     grc_map: dict[tuple[str, str], float] = {}
     for r in rows:
@@ -125,11 +143,13 @@ def extract_gasto_registro_granular(documentos_completos: list[str]) -> pd.DataF
         p = parsed[d]
         if p is None:
             out.append({"documento": d, "cargo": None, "neto": None,
-                        "descontado": None, "folio": None, "referencia": ""})
+                        "descontado": None, "folio": None, "referencia": "",
+                        "moneda": "", "tipo_cambio": 1.0})
             continue
         key = (p[0], str(p[1]).zfill(4))
         out.append({"documento": d, "cargo": grc_map.get(key, 0.0),
                     "neto": neto_map.get(key, 0.0), "descontado": desc_map.get(key, 0.0),
-                    "folio": p[0], "referencia": ref_map.get(key, "")})
+                    "folio": p[0], "referencia": ref_map.get(key, ""),
+                    "moneda": moneda_map.get(key, ""), "tipo_cambio": tc_map.get(key, 1.0)})
     return pd.DataFrame(out, columns=["documento", "cargo", "neto", "descontado",
-                                      "folio", "referencia"])
+                                      "folio", "referencia", "moneda", "tipo_cambio"])
