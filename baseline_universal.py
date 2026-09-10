@@ -58,6 +58,7 @@ from extract_sat import extract_sat_recibidos  # noqa: E402
 from extract_origen import extract_origenes_por_uuids  # noqa: E402
 from extract_poliza_por_origen import extract_poliza_por_origen, extract_poliza_cheque  # noqa: E402
 from extract_gasto_registro import extract_gasto_registro_granular  # noqa: E402
+from extract_detalle_lineas import extract_lineas_poliza, extract_lineas_gasto_registro, DETALLE_COLS  # noqa: E402
 from extract_moneda import extract_moneda_documento, extract_moneda_gasto_registro  # noqa: E402
 from extract_vias_extra import (cuadre_arrendamiento_financiero, cuadre_repartido_por_referencia,  # noqa: E402
                                 resumen_folios_gasto, cuadre_cheque_agrupado,
@@ -579,6 +580,68 @@ def calcular(periodo: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     pendientes = universo[~universo["cuadra_agregado"]][cols_base + ["motivo_pendiente"]].copy()
 
     return conciliados, pendientes, resumen
+
+
+def detalle_regla1(uuids: list[str]) -> pd.DataFrame:
+    """Detalle a nivel línea de póliza / control de gasto para un conjunto
+    de CFDI que cuadran por regla 1 ("cargo = base CFDI") — para la vista
+    de drill-down. Independiente del periodo: `Comprobante_Digital` se
+    consulta directo por UUID, así que sirve igual para un solo CFDI (modo
+    perezoso) que para todos los de un periodo (modo carga completa).
+
+    Validado en vivo (2026-09-09): sumar el `importe` devuelto aquí por
+    `uuid` reproduce exactamente `cargo_agregado` de `calcular()` para el
+    100% de las CFDI de regla 1 en febrero 2026 (1,442/1,442) — ver
+    `docs/hallazgos.md` punto 27 (o el que corresponda tras reordenar).
+
+    Alcance: solo orígenes "normales" (vía `Poliza_Detalle.Pd_Referencia`) y
+    GASTO_REGISTRO (vía `Gasto_Registro_Control`). Excluye CHEQUE (monto por
+    match, no por referencia) y los complementos sin valor — igual que
+    `calcular()`. Las vías especiales (2-11) no están cubiertas: sus líneas
+    viven en documentos que no son propios del CFDI (folios hermanos,
+    póliza de banco, cheque agrupado) — ver docs/pendientes.md.
+    """
+    if not uuids:
+        return pd.DataFrame(columns=["uuid"] + DETALLE_COLS)
+
+    origenes = extract_origenes_por_uuids(list(uuids))
+    origenes = origenes.dropna(subset=["documento"]).copy()
+    if origenes.empty:
+        return pd.DataFrame(columns=["uuid"] + DETALLE_COLS)
+    origenes["documento_real"] = origenes["documento"].str.slice(0, 10)
+    origenes["origen_up"] = origenes["origen"].str.upper()
+    origenes["_dedup_doc"] = origenes["documento_real"].where(
+        ~origenes["origen_up"].isin(ORIGEN_GRANULAR), origenes["documento"].str.slice(0, 14))
+    origenes = origenes.drop_duplicates(subset=["uuid", "origen_up", "_dedup_doc"]).drop(columns=["_dedup_doc"])
+
+    partes = []
+
+    origenes_normales = sorted(o for o in origenes["origen"].unique()
+                                if o.upper() not in ORIGEN_MONTO_ESPECIAL | ORIGEN_SIN_VALOR | ORIGEN_GRANULAR)
+    for origen in origenes_normales:
+        docs = origenes.loc[origenes["origen"] == origen, "documento_real"].dropna().unique().tolist()
+        if not docs:
+            continue
+        lineas = extract_lineas_poliza(origen, docs)
+        if lineas.empty:
+            continue
+        mapa = origenes.loc[origenes["origen"] == origen, ["uuid", "documento_real"]].rename(
+            columns={"documento_real": "documento"})
+        partes.append(lineas.merge(mapa, on="documento", how="inner"))
+
+    docs_gasto = origenes.loc[origenes["origen_up"] == "GASTO_REGISTRO", "documento"].dropna().unique().tolist()
+    if docs_gasto:
+        lineas_gasto = extract_lineas_gasto_registro(docs_gasto)
+        if not lineas_gasto.empty:
+            mapa = origenes.loc[origenes["origen_up"] == "GASTO_REGISTRO", ["uuid", "documento"]]
+            partes.append(lineas_gasto.merge(mapa, on="documento", how="inner"))
+
+    if not partes:
+        return pd.DataFrame(columns=["uuid"] + DETALLE_COLS)
+    detalle = pd.concat(partes, ignore_index=True)
+    # Solo el lado que efectivamente suma cargo_agregado (regla 1 es cargo).
+    detalle = detalle[detalle["tipo"] == "Cargo"].reset_index(drop=True)
+    return detalle[["uuid"] + DETALLE_COLS]
 
 
 def escribe_hoja(ws, df, cols, fill_status=None):

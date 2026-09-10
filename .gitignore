@@ -10,6 +10,13 @@ venv/
 *.token
 .env
 
+# Credenciales de conexión directa a BD (Postgres/SQL Server) — ver
+# docs/arquitectura.md y .env.example. Nunca se versiona.
+.env
+
+# venv del reporte Streamlit
+streamlit_venv/
+
 # Salidas de datos: contienen cifras contables/fiscales reales de Trivasa
 # (montos, RFC, folios). Se regeneran corriendo los scripts — no se versionan.
 output/

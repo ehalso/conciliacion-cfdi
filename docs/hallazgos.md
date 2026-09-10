@@ -650,16 +650,60 @@ del pasivo. Esto todavía **no** está implementado en el baseline: el chequeo
 actual es de un solo lado (cargo), así que no lo toca; hay que incorporarlo
 cuando se extienda el doble chequeo cargo+abono a los orígenes en USD/EUR.
 
-## 27. Retención: el XML de mpro NO es un CFDI normal — y el hueco de cobertura es estacional (ene/may/sep), no aleatorio
+## 27. Migración de la bridge HTTP a conexión directa a BD, y primer reporte Streamlit
 
-**Corrección 2026-09-10 (ver punto 28): la lectura "estacional (ene/may/sep),
+2026-09-09. Esta sesión, que hasta ahora no tenía ruta de red hacia
+la LAN de Trivasa (de ahí la bridge HTTP documentada en `docs/arquitectura.md`
+y usada por `src/bridge_client.py` desde el inicio del proyecto), pasó a
+correr con acceso directo — confirmado con una conexión TCP real a los tres
+targets (`192.168.117.205:1433`, `192.168.117.207:1433`,
+`192.168.117.14:5433`, esta última con `ping` mostrando ~98ms de latencia vía
+VPN).
+
+`src/bridge_client.py` se reescribió para conectar directo por SQLAlchemy
+(`psycopg2` para `postgres_dw`, `pymssql` para `mssql_205`/`mssql_207`) en vez
+de HTTP, **conservando el mismo contrato** (`run_query(target, sql) ->
+{"columns", "rows", "row_count", "truncated"}`) — los ~10 extractores que lo
+importan no cambiaron una sola línea. Se agregó un guard de solo lectura del
+lado cliente (`_guard_readonly`: un único `SELECT`/`WITH`, sin palabras clave
+de escritura), espejo del `sql_guard.py` que antes vivía del lado servidor de
+la bridge. Credenciales: `.env` local (gitignored, ver `.env.example`) con
+`PG_USER`/`PG_PASSWORD` y `MSSQL_205_USER`/`PASSWORD`/`MSSQL_207_USER`/
+`PASSWORD` — las de SQL Server no estaban en Infisical (solo las de Postgres,
+proyecto `Trivasa`, rol `ealcocer_ro`), Esteban las dio directo en el chat y
+se guardaron tanto en el `.env` local como en Infisical (mismo proyecto,
+claves `MSSQL_205_USER/PASSWORD`, `MSSQL_207_USER/PASSWORD`) para no perderlas.
+
+**Validado, no solo asumido**: correr `baseline_universal.py --periodo
+2026-02` completo contra la conexión directa dio exactamente el mismo
+resultado ya documentado (1,492/1,500 CFDI, 99.5%) que contra la bridge — el
+cambio de transporte no alteró ningún número. El guard de solo lectura se
+probó rechazando un `DELETE` y un `SELECT 1; DROP TABLE foo` (multi-statement).
+
+De la misma sesión: primer reporte Streamlit del proyecto,
+`streamlit_app_conciliacion.py` — envuelve `baseline_universal.calcular()` en
+una UI con selector de periodo(s), filtros, KPIs y descarga a Excel, sin
+duplicar la lógica de conciliación. Validado con `streamlit.testing.v1.AppTest`
+contra datos en vivo (multi-periodo, filtro por origen, búsqueda de texto,
+las tres sin excepción) antes de considerarlo listo para `streamlit run`.
+
+**Nota 2026-09-10**: esta migración se descubrió en paralelo, por dos
+sesiones distintas trabajando el mismo día/día siguiente — ambas
+coincidieron en el mismo hallazgo (conexión directa disponible) por
+caminos separados. Ver `docs/arquitectura.md` para el estado final,
+unificado, de esta transición (bridge HTTP documentada ahí como fallback
+histórico, ya no como el camino primario).
+
+## 28. Retención: el XML de mpro NO es un CFDI normal — y el hueco de cobertura es estacional (ene/may/sep), no aleatorio
+
+**Corrección 2026-09-10 (ver punto 29): la lectura "estacional (ene/may/sep),
 no aleatorio" de este punto mezclaba dos conceptos distintos de retención sin
 darse cuenta.** El patrón trimestral SÍ es real, pero solo aplica al grupo de
 `cve_retenc=14` (arrendamiento/honorarios) — el grupo recurrente de 15
 CFDI/mes (`cve_retenc=16`, intereses a prestamista) **nunca** usa
 `CONSTANCIA_RETENCION`, en ningún mes, así que no tiene sentido hablar de
 "estacionalidad" para ese grupo. Sección conservada tal cual se escribió esa
-noche; ver punto 28 para el diagnóstico correcto y completo.
+noche; ver punto 29 para el diagnóstico correcto y completo.
 
 Arranque del frente de retención (2026-09-09/10). Dos hallazgos, uno de
 método y uno de negocio:
@@ -725,9 +769,9 @@ tercer punto de datos; (3) nivel 3 (trazar `folio_constancia` hasta
 emitidos — no se ha escrito el extractor todavía (ahora si desbloqueado
 por la vuelta de `Poliza_Control`, ver punto 13).
 
-## 28. Retención: dos conceptos distintos (`cve_retenc` 14 vs 16), y dos mecanismos reales — no uno — detrás de un CFDI huérfano
+## 29. Retención: dos conceptos distintos (`cve_retenc` 14 vs 16), y dos mecanismos reales — no uno — detrás de un CFDI huérfano
 
-Diagnóstico completo 2026-09-10, corrigiendo el punto 27, hecho con acceso
+Diagnóstico completo 2026-09-10, corrigiendo el punto 28, hecho con acceso
 **directo** a las bases (ver nota de acceso al final) en vez del bridge —
 más rápido para el volumen de queries exploratorias que hicieron falta.
 
@@ -740,7 +784,7 @@ más rápido para el volumen de queries exploratorias que hicieron falta.
 | `14` | 10% exacto | Arrendamiento/honorarios | Cada ~4 meses (visto: emitido ene-2026 cubriendo sep-dic 2025; emitido may-2026 cubriendo may-ago 2026 — `Cr_Fecha_Inicial`/`Cr_Fecha_Final` de `Constancia_Retencion` lo confirman) | `Comprobante_Digital.Cd_Tabla='CONSTANCIA_RETENCION'`, **100%** cuando se busca en el mes correcto |
 | `16` | 20% exacto | Intereses a prestamista/inversionista (`Gr_Comentario` literal: `INTERES PRESTAMISTA <NOMBRE> <MES> <AÑO>`) | Mensual, ~15 CFDI/mes (mismo RFC puede repetir por varios contratos/proveedores-código) | `Comprobante_Digital.Cd_Tabla='GASTO_REGISTRO'` (stub `Cd_Monto=0`, patrón ya conocido) — **`CONSTANCIA_RETENCION` NUNCA aparece para este tipo, en ningún mes de H1 2026** |
 
-El punto 27 trataba el "hueco" de `cve=16` como si fuera el mismo fenómeno
+El punto 28 trataba el "hueco" de `cve=16` como si fuera el mismo fenómeno
 estacional que `cve=14` (carga trimestral). Es un error de lectura: `cve=14`
 de verdad solo se emite cada 4 meses (no hay hueco, no le tocaba); `cve=16`
 se emite cada mes y **nunca** pasa por `CONSTANCIA_RETENCION` — su universo
