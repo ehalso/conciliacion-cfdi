@@ -134,10 +134,17 @@ de resumen y detalle, semaforeado por color.
 - **Streamlit interno** (`reportes_streamlit/`): UIs en vivo sobre los
   métodos de arriba, sin duplicar lógica — candidatas a promoverse a
   `streamlit-reportes` (el deployment de producción real, Docker +
-  Cloudflare Tunnel en `reportes.frento.com.mx`) cuando maduren. Correr con
-  `streamlit run reportes_streamlit/streamlit_app.py` (recibidos) o
-  `streamlit run reportes_streamlit/layout_gastos_poliza/streamlit_app.py`
-  (CECO).
+  Cloudflare Tunnel en `reportes.frento.com.mx`) cuando maduren. Un hub por
+  frente, cada uno junto al código que envuelve (evita colisión de nombre
+  entre `streamlit_app.py`):
+  - `streamlit run reportes_streamlit/streamlit_app.py` — recibidos, nivel
+    póliza (TEMP-1/TEMP-2).
+  - `streamlit run reportes_streamlit/layout_gastos_poliza/streamlit_app.py`
+    — CECO (CONT-1/2/4/5).
+  - `streamlit run reportes_streamlit/recibidos_nivel_documento/streamlit_app.py`
+    — recibidos, nivel documento con XML (CONT-6).
+  - RPTRV79 (auditoría de compras) vive en su propio repo,
+    `github.com/ehalso/reportes-mpro`, `reportes_streamlit/` ahí.
 
 ## Estructura de código compartido
 

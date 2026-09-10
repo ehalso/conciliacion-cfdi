@@ -6,10 +6,14 @@ Punto de entrada de la app multipagina. La UI real vive en `pages/`:
   CONT-2 -- 7 origenes, incluye GASTO_REGISTRO_NOMINA.
   CONT-4 -- exploratorio: grano documento, reconciliado 1:1 contra XML.
   CONT-5 -- exploratorio: grano cuenta contable, XML agregado.
-  CONT-6 -- grano documento (7 modulos que reciben CFDI de proveedor),
-    XML adjunto -- promocion de adjuntar-xml/04_conciliacion_mpro_vs_xml.py.
-  RPTRV79-01/02/05 -- recreaciones del reporte de auditoria de compras de
-    mpro (Agrupar=01/02/05), promovidas desde ../funcionales-auditoria/.
+
+Consolidación 2026-09-10: este hub antes también traía CONT-6 (promoción de
+`recibidos/nivel_documento/04_conciliacion_mpro_vs_xml.py`) y las 3 páginas
+de RPTRV79 (auditoría de compras) en el mismo Streamlit. Se separaron a sus
+propios hubs, cada uno junto al código que envuelve:
+  CONT-6      -> reportes_streamlit/recibidos_nivel_documento/ (puerto 8509 sugerido)
+  RPTRV79-0X  -> repo separado github.com/ehalso/reportes-mpro,
+                 reportes_streamlit/ ahí (puerto 8508 sugerido)
 
 Corre con:
   streamlit run streamlit_app.py --server.port 8506
@@ -61,33 +65,3 @@ with col4:
         "colapsado; XML agregado. Para comparar los dos granos lado a lado."
     )
     st.page_link("pages/4_CONT-5_Layout_Gastos_por_Cuenta_Contable_XML.py", label="Abrir CONT-5", icon="🧾")
-
-st.subheader("CONT-6")
-st.markdown(
-    "Grano **documento** `(ORIGEN, FOLIO, DOC_ID)` -- 7 módulos de MPro que reciben CFDI de "
-    "proveedor (no solo `Gasto_Registro`), cuadre a nivel **grupo** (componente conexa). "
-    "Promoción de `adjuntar-xml/04_conciliacion_mpro_vs_xml.py`, metodología más madura que "
-    "CONT-4/CONT-5."
-)
-st.page_link("pages/8_CONT-6_Layout_Gastos_por_Documento_con_XML.py", label="Abrir CONT-6", icon="🧾")
-
-st.divider()
-st.header("RPTRV79 · Auditoria de Compras (mpro)")
-st.caption(
-    "Recreaciones del selector RPTRV79.asp (reporte de auditoria de compras nativo "
-    "de mpro) -- 3 de las 11 variantes de 'Agrupar', ver `funcionales-auditoria/README.md`."
-)
-
-col5, col6, col7 = st.columns(3)
-with col5:
-    st.subheader("RPTRV79-01")
-    st.markdown("Compras -- tabla `Compra`.")
-    st.page_link("pages/5_Auditoria_Compras_RPTRV79-01.py", label="Abrir RPTRV79-01", icon="🧮")
-with col6:
-    st.subheader("RPTRV79-02")
-    st.markdown("Compra Indirecto -- tabla `Compra_Indirecto`.")
-    st.page_link("pages/6_Auditoria_Compra_Indirectos_RPTRV79-02.py", label="Abrir RPTRV79-02", icon="🧮")
-with col7:
-    st.subheader("RPTRV79-05")
-    st.markdown("CXP Libre -- tabla `Cuenta_X_Pagar`.")
-    st.page_link("pages/7_Auditoria_CXP_Libre_RPTRV79-05.py", label="Abrir RPTRV79-05", icon="🧮")

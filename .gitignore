@@ -17,6 +17,10 @@ venv/
 # venv del reporte Streamlit
 streamlit_venv/
 
+# Worktrees de git para trabajar varias ramas en paralelo (uno por rama,
+# ver `git worktree list`) — checkouts locales, no se versionan.
+.worktrees/
+
 # Salidas de datos: contienen cifras contables/fiscales reales de Trivasa
 # (montos, RFC, folios). Se regeneran corriendo los scripts — no se versionan.
 output/
