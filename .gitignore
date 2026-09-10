@@ -8,6 +8,7 @@ venv/
 # QUERY_API_TOKEN), y así se queda.
 .query_api_token
 *.token
+.env
 
 # Salidas de datos: contienen cifras contables/fiscales reales de Trivasa
 # (montos, RFC, folios). Se regeneran corriendo los scripts — no se versionan.

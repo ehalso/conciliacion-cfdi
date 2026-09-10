@@ -261,8 +261,8 @@ estructural, no de fórmula.
 
 | Familia | CFDI | Monto | Qué pasa |
 |---|---:|---:|---|
-| **Nómina: IMSS** | 16 | $7,879,140 | El CFDI mezcla cuota **patronal** (gasto de la empresa) y cuota **obrera** (retención al trabajador, que ya se registró en la nómina). mpro solo lleva al gasto la parte patronal. Además la póliza de provisión (`config 0428`, "PROVISION GASTOS NAC (PREV SOCIAL)") **consolida varios CFDI** — en enero, 382 renglones y 5 referencias distintas para $2.06M. El ratio cargo/subtotal varía entre 0.14 y 0.48 según la composición de la nómina, así que no hay proporción fija que aplicar. |
-| **Nómina: INFONAVIT** | 4 | $2,456,263 | Mismo mecanismo y misma póliza consolidada. |
+| **Nómina: IMSS** | 16 | $7,879,140 | El CFDI mezcla cuota **patronal** (gasto de la empresa) y cuota **obrera** (retención al trabajador, que ya se registró en la nómina). mpro solo lleva al gasto la parte patronal. Además la póliza de provisión (`config 0428`, "PROVISION GASTOS NAC (PREV SOCIAL)") **consolida varios CFDI** — en enero, 382 renglones y 5 referencias distintas para $2.06M. El ratio cargo/subtotal varía entre 0.14 y 0.48 según la composición de la nómina (y entre 0.50 y 0.94 en una muestra de 6 CFDI de febrero revisada 2026-09-10), así que no hay proporción fija que aplicar. **Confirmado con Esteban 2026-09-10: NO son un patrón estructural a modelar — son errores de captura reales. No se filtran del universo ni se les construye una vía de cuadre dedicada: se les aplica la misma Regla 1 (cargo=subtotal) que a cualquier otro CFDI, y quedan como no conciliados si no cuadra por ahí — eso es correcto, no un hueco del método.** |
+| **Nómina: INFONAVIT** | 4 | $2,456,263 | Mismo mecanismo y misma póliza consolidada — misma instrucción: no filtrar, no regla especial. |
 | **Crédito bancario** | 11 | $1,603,643 | CFDI de intereses de créditos simples (BBVA, Sabadell, Mifel, Ve por Más). La póliza de pago carga capital + interés a `2130.001.001.*` y abona el banco por la suma — pero, a diferencia del arrendamiento, el **capital no viene en el CFDI**, así que el abono al banco (ej. $815,171.67) no es comparable con el CFDI ($395,858.61). Además el interés posteado ($190,171.67) no coincide con el del CFDI: hay que revisar el contrato/tabla de amortización. |
 | **Cheque consolidado** | 15 | $58,331 | CFDI etiquetados a un cheque que liquida facturas de **otros periodos** (uno de ellos, `01-0060062`, con fecha 2024-01-15 y $626,916.82 contra CFDI de 2026 que suman $60,395). No se puede cerrar con datos del periodo; conviene revisar si la etiqueta apunta al cheque correcto. |
 | **Agencia aduanal** | 6 | $50,410 | El cargo es **mayor** que el CFDI (ratio 1.05 a 2.14): el folio de gasto agrupa el pedimento completo (impuestos, maniobras, honorarios) y el CFDI del agente es solo una parte. |
@@ -312,11 +312,15 @@ Ya está subido, tanto aquí como en el repo de contexto compartido:
 
 ## Trabajo técnico que quedó identificado
 
-- **Familia nómina (IMSS/INFONAVIT, 20 CFDI, $10.3M)**: para cuadrarla hace
-  falta modelar la provisión de nómina (separar cuota patronal de obrera y
-  repartir la póliza consolidada entre los CFDI que la componen). Es un
-  proyecto en sí mismo; alternativa más barata: conciliar esta familia **en
-  agregado** (todos los CFDI del IMSS del mes contra el total provisionado).
+- **Familia nómina (IMSS/INFONAVIT, 20 CFDI, $10.3M)**: **corrección
+  2026-09-10 (confirmado con Esteban) — no conciliar en agregado, no
+  modelar la separación patronal/obrera, y no filtrarlos del universo.** La
+  idea original de esta sección (modelar la provisión de nómina, o
+  conciliar en agregado como alternativa barata) queda descartada por
+  completo: son errores de captura reales. Se les aplica la misma Regla 1
+  (cargo=subtotal) que a cualquier otro CFDI, sin ninguna vía de cuadre
+  dedicada — que queden como no conciliados es el comportamiento correcto
+  del método, no algo que haya que suavizar.
 - **Créditos bancarios (11 CFDI, $1.6M)**: requiere la tabla de amortización
   del contrato para separar interés devengado de interés facturado.
 - El chequeo sigue siendo de **un solo lado** (cargo). Extender el doble

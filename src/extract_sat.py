@@ -22,6 +22,12 @@ PAGE_SIZE = 2000
 COLUMNS = [
     "uuid", "fecha_emision", "rfc_emisor", "nombre_emisor", "tipo_comprobante",
     "subtotal", "iva", "total", "periodo", "rfc_receptor",
+    # Agregados 2026-09-10: parseados ya en la ingesta (raw_sat_xml, ctunlinux)
+    # a partir del mismo XML que antes había que volver a bajar y parsear de
+    # Comprobante_Digital.Cd_XML en cada corrida de baseline_universal.py — ver
+    # docstring de cfdi_parser.py para el detalle de cada campo.
+    "descuento", "ieps_trasladado", "impuestos_locales_trasladados",
+    "impuestos_locales_retenidos", "total_impuestos_retenidos",
 ]
 
 TABLAS_VALIDAS = {"cfdi_recibidos", "cfdi_emitidos"}
@@ -68,7 +74,9 @@ def extract_sat_cfdi(tabla: str = "cfdi_recibidos", periodo=None, periodos=None)
         return df
 
     df["uuid"] = df["uuid"].str.upper()
-    for f in ("subtotal", "iva", "total"):
+    for f in ("subtotal", "iva", "total", "descuento", "ieps_trasladado",
+              "impuestos_locales_trasladados", "impuestos_locales_retenidos",
+              "total_impuestos_retenidos"):
         df[f] = pd.to_numeric(df[f], errors="coerce").fillna(0)
     df = df.rename(columns={"fecha_emision": "fecha"})
     return df

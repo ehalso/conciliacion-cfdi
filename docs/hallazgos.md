@@ -649,3 +649,189 @@ dos renglones como duplicados —el error del punto 16 original— borra la mita
 del pasivo. Esto todavía **no** está implementado en el baseline: el chequeo
 actual es de un solo lado (cargo), así que no lo toca; hay que incorporarlo
 cuando se extienda el doble chequeo cargo+abono a los orígenes en USD/EUR.
+
+## 27. Retención: el XML de mpro NO es un CFDI normal — y el hueco de cobertura es estacional (ene/may/sep), no aleatorio
+
+**Corrección 2026-09-10 (ver punto 28): la lectura "estacional (ene/may/sep),
+no aleatorio" de este punto mezclaba dos conceptos distintos de retención sin
+darse cuenta.** El patrón trimestral SÍ es real, pero solo aplica al grupo de
+`cve_retenc=14` (arrendamiento/honorarios) — el grupo recurrente de 15
+CFDI/mes (`cve_retenc=16`, intereses a prestamista) **nunca** usa
+`CONSTANCIA_RETENCION`, en ningún mes, así que no tiene sentido hablar de
+"estacionalidad" para ese grupo. Sección conservada tal cual se escribió esa
+noche; ver punto 28 para el diagnóstico correcto y completo.
+
+Arranque del frente de retención (2026-09-09/10). Dos hallazgos, uno de
+método y uno de negocio:
+
+**El `Cd_XML` de una fila `CONSTANCIA_RETENCION` es un "Comprobante de
+Retenciones e Información de Pagos"** (root `retenciones:Retenciones`,
+namespace `.../esquemas/retencionpago/2`), un schema totalmente distinto al
+de un CFDI normal — sin los atributos `SubTotal`/`Total`/
+`TipoDeComprobante` que `cfdi_parser.parse_cfdi` busca. **`parse_cfdi` no
+lo rechaza**: como no encuentra el nodo `Comprobante` cae de vuelta al
+root (pensado para tolerar el caso normal en que el root ya ES el
+Comprobante) y los atributos que busca simplemente no existen ahí —
+regresa `subtotal=0`/`total=0` en silencio en vez de lanzar `ValueError`.
+Por eso `extract_mpro_por_uuids`/`parse_cfdi` (el camino que usan
+recibido/emitido) **no sirve para retención**. En su lugar, la columna
+nativa `Cd_Monto` de `Comprobante_Digital` ya trae el importe correcto sin
+parsear nada — confirmado exacto contra `monto_total_operacion` del SAT en
+2 UUID de enero 2026 (51,574.00 y 20,000.00 exactos). Implementado en
+`src/extract_retencion.py` / `retencion_reconciliation.py` (nuevos,
+nivel 1: existencia + cuadre de `monto_total_operacion`, sin trazar
+todavía hasta `Poliza_Control`).
+
+**El hueco de cobertura reportado en el punto 12 (36%, solo enero 2026) no
+es representativo del semestre — es estacional.** Corriendo el nuevo
+script para los 6 meses de H1 2026:
+
+| Periodo | Total SAT | Conciliado | Stub Gasto_Registro ($0) | Sin ninguna fila |
+|---|---:|---:|---:|---:|
+| 2026-01 | 45 | 16 ($812,237.00) | 15 ($254,305.39) | 14 ($282,291.65) |
+| 2026-02 | 15 | 0 | 0 | 15 ($254,305.39) |
+| 2026-03 | 15 | 0 | 15 ($254,305.39) | 0 |
+| 2026-04 | 15 | 0 | 15 ($254,305.39) | 0 |
+| 2026-05 | 31 | 16 ($992,799.00) | 15 ($254,305.39) | 0 |
+| 2026-06 | 15 | 0 | 15 ($254,305.39) | 0 |
+| **H1** | **136** | **32 (23.5%)** | **75** | **29** |
+
+Dos patrones separados, no uno:
+
+- **Un grupo recurrente de 15 CFDI/mes, siempre por el mismo monto total
+  exacto ($254,305.39)** — casi seguro una renta fija mensual con 15
+  arrendadores. Este grupo **nunca** llega a `CONSTANCIA_RETENCION` en
+  ningún mes del semestre, ni siquiera en enero/mayo — solo alterna entre
+  "stub en `GASTO_REGISTRO` con `Cd_Monto=0`" (mar/abr/may/jun) y "ninguna
+  fila en absoluto" (feb). Candidato fuerte a ser el pendiente real,
+  estructural, de retención — vale la pena la misma pregunta directa a
+  Trivasa que ya sugería `PROGRESS.md`.
+- **Un grupo adicional, solo en enero (30 CFDI) y mayo (16 CFDI)**, que
+  coincide exactamente con el patrón ya documentado en el punto 10 de que
+  la tabla `Constancia_Retencion` de mpro solo carga datos en
+  **ene/may/sep** (confirmado ahí para 2026, dato histórico). De este
+  grupo adicional, en enero 16/30 sí mapean bien (los 14 restantes quedan
+  `SIN_MAPEO_MPRO`) y en mayo los 16 mapean 100%. Confirma que la carga de
+  `Constancia_Retencion`/`Comprobante_Digital` para retención es
+  **trimestral por diseño**, no un hueco aleatorio del 64% — el % real de
+  cualquier mes individual depende de si cae en un mes de carga o no.
+
+**Pendiente**: (1) preguntar a Trivasa por qué el grupo recurrente de 15
+nunca llega a `Constancia_Retencion`; (2) para julio-septiembre (fuera del
+rango H1 vigente, ver nota de alcance temporal), septiembre debería ser el
+próximo mes de carga trimestral — útil para confirmar el patrón con un
+tercer punto de datos; (3) nivel 3 (trazar `folio_constancia` hasta
+`Poliza_Control` para el cargo/abono real) sigue bloqueado por lo mismo que
+emitidos — no se ha escrito el extractor todavía (ahora si desbloqueado
+por la vuelta de `Poliza_Control`, ver punto 13).
+
+## 28. Retención: dos conceptos distintos (`cve_retenc` 14 vs 16), y dos mecanismos reales — no uno — detrás de un CFDI huérfano
+
+Diagnóstico completo 2026-09-10, corrigiendo el punto 27, hecho con acceso
+**directo** a las bases (ver nota de acceso al final) en vez del bridge —
+más rápido para el volumen de queries exploratorias que hicieron falta.
+
+**Hay dos tipos de retención de ISR completamente distintos mezclados bajo
+`raw_sat.cfdi_retencion`, confirmados por tasa de retención y por
+`Gasto_Registro.Gr_Comentario`:**
+
+| `cve_retenc` | Tasa (`retenido/gravado`) | Concepto real | Frecuencia | Camino de conciliación |
+|---|---:|---|---|---|
+| `14` | 10% exacto | Arrendamiento/honorarios | Cada ~4 meses (visto: emitido ene-2026 cubriendo sep-dic 2025; emitido may-2026 cubriendo may-ago 2026 — `Cr_Fecha_Inicial`/`Cr_Fecha_Final` de `Constancia_Retencion` lo confirman) | `Comprobante_Digital.Cd_Tabla='CONSTANCIA_RETENCION'`, **100%** cuando se busca en el mes correcto |
+| `16` | 20% exacto | Intereses a prestamista/inversionista (`Gr_Comentario` literal: `INTERES PRESTAMISTA <NOMBRE> <MES> <AÑO>`) | Mensual, ~15 CFDI/mes (mismo RFC puede repetir por varios contratos/proveedores-código) | `Comprobante_Digital.Cd_Tabla='GASTO_REGISTRO'` (stub `Cd_Monto=0`, patrón ya conocido) — **`CONSTANCIA_RETENCION` NUNCA aparece para este tipo, en ningún mes de H1 2026** |
+
+El punto 27 trataba el "hueco" de `cve=16` como si fuera el mismo fenómeno
+estacional que `cve=14` (carga trimestral). Es un error de lectura: `cve=14`
+de verdad solo se emite cada 4 meses (no hay hueco, no le tocaba); `cve=16`
+se emite cada mes y **nunca** pasa por `CONSTANCIA_RETENCION` — su universo
+de conciliación es enteramente distinto (`Gasto_Registro`, no
+`Constancia_Retencion`).
+
+### El gasto de `cve=16` SÍ está bien capturado — el problema es solo el link
+
+Verificado en vivo, folio por folio, para los 15 CFDI de febrero 2026 (el
+único mes de H1 con 0% de link en `Comprobante_Digital` para este grupo):
+sumando `Gasto_Registro_Documento.Grd_Precio_Descontado_Importe` de los 15
+proveedores correspondientes (mismo RFC receptor del CFDI → `Proveedor.Pv_R_F_C`
+→ `Gasto_Registro_Documento.Pv_Cve_Proveedor`, mismo mes), el total da
+**exacto $254,305.39** — el mismo monto, al centavo, que los 15 CFDI del
+SAT. Referencias correlativas (`Grd_Referencia` `B1430`-`B1444`), mismo
+comentario `INTERES PRESTAMISTA FEBRERO 2026`, capturadas el mismo día
+(2026-02-05). El dinero está bien contabilizado; lo que falta es la
+etiqueta digital.
+
+### Mecanismo 1 — omisión pura (febrero 2026)
+
+Los 15 CFDI de febrero (timbrados 26-feb) tienen **cero filas** en
+`Comprobante_Digital`, ni siquiera el stub en `$0`. No es una caída general
+del proceso de etiquetado: ese mismo día se etiquetaron 72 filas
+`GASTO_REGISTRO` de otros folios (y 463 filas en total, de todos los
+orígenes). Comparado contra el resto de H1 (marzo/abril/mayo etiquetan el
+mismo día; junio 4 días después; enero unos días después), febrero es la
+única anomalía del semestre — parece un paso puntual que alguien se saltó
+para este lote específico, no un proceso roto.
+
+### Mecanismo 2 — CFDI sustituido sin re-ligar (enero 2026)
+
+Enero trae 29 CFDI de `cve=16` en vez de los 15 recurrentes — a primera
+vista parecía un "duplicado" (mismos RFC, mismos montos, timbrados 22-ene y
+26-ene). **No lo es.** Bajando el XML real de uno de los "huérfanos"
+(UUID `5608781C-B297-47BB-B241-845A9916CFE7`, timbrado 22-ene):
+
+```xml
+<retenciones:Periodo Ejercicio="2025" MesFin="11" MesIni="11"/>
+...
+<retenciones:CfdiRetenRelacionados TipoRelacion="04" UUID="95df3fd5-79f6-453d-9c68-3e59a9600d6c"/>
+```
+
+Es la retención de **noviembre 2025**, timbrada tarde (2 meses después), y
+`TipoRelacion="04"` (sustitución de una retención previa) apunta al CFDI
+original que reemplaza. Ese UUID original (`95DF3FD5-...`):
+
+- **No está en `raw_sat.cfdi_retencion`** — ya no es válido ante el SAT.
+- **SÍ está en `Comprobante_Digital`**, ligado al mismo folio de gasto
+  (`01-0033848`, "INTERES PRESTAMISTA... NOVIEMBRE 2025"), etiquetado en
+  diciembre 2025.
+
+Es decir: el CFDI original se emitió y se ligó bien en su momento; después
+se **canceló y se sustituyó** por uno nuevo (probablemente una corrección),
+pero el link contable **nunca se actualizó al UUID nuevo** — se quedó
+apuntando al viejo. El otro CFDI "huérfano" de enero (`FA01CC3A`, 26-ene) es
+un CFDI normal de enero 2026, sin relación con nada — el que sí quedó
+ligado. **Antes de tratar un CFDI de retención huérfano como "gasto no
+encontrado", hay que revisar `CfdiRetenRelacionados`/`TipoRelacion` en el
+XML — puede que el gasto ya esté conciliado bajo el UUID que este CFDI
+sustituyó.**
+
+### Nota de acceso: bases y XML crudos, directo (sin bridge)
+
+Confirmado 2026-09-10 que, desde una sesión con red al segmento
+`192.168.117.0/24` (VPN mesh), se puede conectar **directo** a las bases —
+sin pasar por la bridge API de `ctunlinux` — con `psycopg2` (`192.168.117.14:5433`,
+postgres_dw) y `pymssql`/`pyodbc` (`192.168.117.205`/`.207:1433`,
+mssql_205/207). Credenciales vía Infisical (proyecto `secret-management`,
+`workspaceId 2aefdbd1-389c-4fd0-bdb8-a5621af8aac1`) o el `.env` local del
+repo. Mucho más rápido para exploración iterativa que el bridge (sin
+límite de 502 en queries de tabla completa, sin relanzar el token cada
+vez). El XML crudo de retención se navega vía SMB directo
+(`smbclient //192.168.117.211/SincronizarXml`, credenciales
+`SAMBA_SINCRONIZARXML_*` del mismo proyecto Infisical, env `prod`) —
+`TRI970922TL2/XML RETENCIONES/{año}/{año}_{mes}/{ACCIONISTAS|INVERSIONISTAS}/`.
+**Un CFDI que sustituye un periodo anterior se archiva bajo la carpeta del
+periodo ORIGINAL, no la del mes en que se timbró** (el ejemplo de arriba,
+timbrado enero 2026, vive en `2025/11 Noviembre 2025/INVERSIONISTAS/`) — usar
+siempre el nombre exacto de `raw_sat.cfdi_retencion.archivo_origen` para
+localizar el archivo, no adivinar la carpeta por fecha de timbrado.
+Documentado también en `trivasa-context`
+(`docs/schema/calidad-de-datos.md`, `docs/proyectos/consulta-xmls/index.md`)
+para que el resto del ecosistema se beneficie.
+
+**Pendiente**: (1) construir el matcheo por RFC+proveedor+mes+monto contra
+`Gasto_Registro_Documento` como *fallback* — solo cuando `Comprobante_Digital`
+no tenga ninguna fila para el UUID — para recuperar casos tipo "mecanismo 1"
+sin depender del link; (2) para casos tipo "mecanismo 2", seguir la cadena
+`CfdiRetenRelacionados` cuando el UUID directo no aparezca, en vez de
+asumir que no hay gasto; (3) confirmar si el mecanismo 2 (sustitución sin
+re-ligar) explica también los "sin constancia ligada" de `cve=14` que
+reportó el punto 12 (residual de `layout-gastos`, ver
+`trivasa-context/docs/schema/calidad-de-datos.md`).

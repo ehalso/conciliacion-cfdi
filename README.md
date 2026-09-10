@@ -8,7 +8,8 @@ póliza) cuadra con el importe fiscal del CFDI?**
 
 Alcance actual: **CFDI recibidos** (primer semestre 2026, nivel 1 a nivel
 3) con avances en **emitidos** (nivel 1 validado para enero 2026) y
-**retención** (mapeo a mpro ya encontrado) — ver
+**retención** (nivel 1 construido y corrido para H1 2026, 23.5% conciliado
+— hueco estacional confirmado, no aleatorio) — ver
 [`docs/pendientes.md`](docs/pendientes.md).
 
 ## Arquitectura en dos partes
@@ -58,6 +59,10 @@ python3 baseline_conciliacion.py --periodo 2026-02 --origen COMPRA
 # solo lado: cargo=subtotal, sumando TODOS los documentos con los que un
 # CFDI aparece etiquetado en mpro, sin importar el origen)
 python3 baseline_universal.py --periodo 2026-02
+
+# Conciliación de retención (nivel 1: SAT cfdi_retencion vs Cd_Monto de
+# Comprobante_Digital, sin parsear XML — ver docs/hallazgos.md punto 27)
+python3 retencion_reconciliation.py --periodo 2026-01
 ```
 
 Cada script imprime su avance y termina escribiendo un `.xlsx` en `output/`
@@ -89,12 +94,15 @@ src/
   extract_poliza.py            Piloto: CFDI → póliza vía Poliza_Detalle_Comprobante (agnóstico de origen)
   extract_poliza_por_origen.py Cargo/abono por documento, YA distinguido por origen,
                                vía Poliza_Control → Poliza → Poliza_Detalle
+  extract_retencion.py         Lado SAT (cfdi_retencion, columnas propias) + lado mpro
+                               (Cd_Monto nativo, SIN parsear XML — schema distinto, ver hallazgos.md #27)
   reconcile.py                  Cruce SAT vs mpro a nivel CFDI + clasificación
   report.py                     Reporte .xlsx (colores por estatus)
 
 main.py                        CLI: conciliación base (nivel CFDI)
 poliza_reconciliation.py       CLI: conciliación a nivel póliza (piloto, origen-agnóstico)
 reconciliacion_por_origen.py   CLI: conciliación por origen de documento (el más completo)
+retencion_reconciliation.py    CLI: conciliación de CFDI de retención (nivel 1)
 
 docs/
   arquitectura.md              Bridge API, split Cowork/Claude Code, mssql_205 vs mssql_207

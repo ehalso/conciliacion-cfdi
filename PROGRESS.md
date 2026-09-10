@@ -58,8 +58,8 @@ Pendientes que quedan (61 en el semestre), por familia:
 
 | Familia | CFDI | Monto | Estado |
 |---|---:|---:|---|
-| Nómina: IMSS | 16 | $7.88M | Estructural: el CFDI mezcla cuota patronal (gasto) y obrera (retención), y la póliza de provisión consolida varios CFDI. Requiere modelar la provisión de nómina |
-| Nómina: INFONAVIT | 4 | $2.46M | Mismo mecanismo |
+| Nómina: IMSS | 16 | $7.88M | **No filtrar del universo, no crear una vía de cuadre dedicada — confirmado con Esteban 2026-09-10: son errores de captura reales, no un patrón estructural a modelar.** Se les aplica exactamente la misma Regla 1 (cargo=subtotal) que a cualquier otro CFDI del universo, sin excepción ni regla especial — si no cuadra por ahí, se queda como no conciliado, y eso es correcto. El ratio cargo/subtotal no es una proporción fija (0.14-0.48 en el análisis original de H1; 0.88-0.94 en una muestra de 5/6 de febrero, un sexto en ~0.50) — esa variabilidad es la señal de que es error de captura, no una fórmula patronal/obrera consistente que valga la pena modelar como regla propia |
+| Nómina: INFONAVIT | 4 | $2.46M | Mismo mecanismo — misma instrucción: no filtrar, no regla especial |
 | Crédito bancario | 11 | $1.60M | El CFDI de intereses no coincide con el interés posteado; requiere la tabla de amortización del contrato |
 | Cheque consolidado | 15 | $58K | Cheques que liquidan facturas de otros periodos (uno de 2024) — revisar si la etiqueta apunta al cheque correcto |
 | Agencia aduanal | 6 | $50K | El folio agrupa el pedimento completo; el CFDI del agente es solo una parte |
@@ -133,6 +133,32 @@ tres documentos de referencia que hay que mantener al día:
   confirmados con evidencia (queries, ejemplos reales) — el historial
   técnico completo, en orden cronológico.
 
+## Retención — nivel 1 construido y corrido para H1 2026, dos conceptos distintos identificados (2026-09-09/10)
+
+**Nuevo**: `src/extract_retencion.py` + `retencion_reconciliation.py` —
+nivel 1 (existencia + cuadre de `monto_total_operacion` SAT vs `Cd_Monto`
+mpro, sin parsear XML: el XML de retención en mpro NO es un CFDI normal,
+ver `docs/hallazgos.md` punto 27). Corrido para los 6 meses de H1 2026:
+**32/136 = 23.5%** conciliado vía `CONSTANCIA_RETENCION`.
+
+**Corrección 2026-09-10 (`hallazgos.md` punto 28)**: ese 23.5% mezclaba dos
+tipos de retención sin darse cuenta — `cve_retenc=14` (arrendamiento/
+honorarios, 10%, se emite cada ~4 meses, concilia 100% vía
+`CONSTANCIA_RETENCION`) y `cve_retenc=16` (intereses a prestamista, 20%,
+mensual, **nunca** pasa por `CONSTANCIA_RETENCION`). Para `cve=16` el gasto
+SÍ está bien capturado en `Gasto_Registro` (verificado exacto, folio por
+folio) — lo que falta es solo el *link* en `Comprobante_Digital`, por dos
+mecanismos reales y distintos: omisión pura (un lote de 15 CFDI de febrero
+nunca se etiquetó) y CFDI sustituido sin re-ligar (`CfdiRetenRelacionados`
+apuntando a un UUID viejo/cancelado). Detalle completo en `docs/pendientes.md`
+(sección Retención) y `docs/hallazgos.md` punto 28.
+
+Siguiente paso natural para retención: (1) construir el fallback por RFC+
+proveedor+mes+monto contra `Gasto_Registro_Documento` para `cve=16` (recupera
+el mecanismo de omisión sin depender del link), (2) seguir
+`CfdiRetenRelacionados` para el mecanismo de sustitución, (3) nivel 3 — trazar hasta `Poliza_Control` para el
+cargo/abono real de lo que sí concilia.
+
 ## Siguiente paso más obvio
 
 1. **Subir a GitHub el trabajo del 2026-09-09/10** (quedó pedido
@@ -141,11 +167,21 @@ tres documentos de referencia que hay que mantener al día:
    estructura/calidad de dato que valen para `trivasa-context` — ver la lista
    en `docs/investigacion_pendientes.md`, Parte 4.
 2. **Familia nómina (IMSS/INFONAVIT: 20 CFDI, $10.3M)** — es el 85% del monto
-   pendiente. Para cuadrarla hay que separar cuota patronal de obrera y
-   repartir la póliza consolidada de provisión entre los CFDI que la componen.
-   Alternativa más barata: conciliarla **en agregado** (todos los CFDI del IMSS
-   del mes contra el total provisionado).
+   pendiente. **Corrección 2026-09-10 (confirmado con Esteban): NO conciliar
+   en agregado, NO modelar la separación patronal/obrera, y NO filtrarlos del
+   universo — se les aplica la misma Regla 1 (cargo=subtotal) que a
+   cualquier otro CFDI, sin ninguna vía de cuadre dedicada.** Son errores de
+   captura reales; que la lógica estándar los deje como no conciliados es el
+   comportamiento correcto, no un hueco del método. La variabilidad del
+   ratio cargo/subtotal entre distintos CFDI de la misma familia (0.14-0.48
+   en el análisis original de H1; 0.88-0.94 en una muestra de febrero) es
+   justo la señal de que no hay una proporción fija que valga la pena
+   modelar como regla propia.
 3. **Extender el chequeo al lado del abono/pago.** Todo lo de arriba sigue
    siendo un chequeo de UN SOLO LADO (cargo). El doble chequeo existe solo para
    COMPRA (`baseline_conciliacion.py`).
-4. **Correr emitidos y retención** con el mismo método — ya está desbloqueado.
+4. **Emitidos**: sigue pendiente correr con el mismo método que recibidos
+   (nivel 1 ya validado para enero 2026, 99.8%) — falta el resto del rango y
+   nivel 3. **Retención**: nivel 1 ya construido y corrido (ver sección
+   dedicada arriba) — el pendiente ahora es la pregunta de negocio (grupo
+   recurrente sin registrar) y nivel 3.
