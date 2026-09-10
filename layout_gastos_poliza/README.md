@@ -23,6 +23,18 @@ específica. `07_reconciliacion_completa_ceco.py` es el más completo
 (agrega los pasos anteriores); los scripts de más adelante (09, 12, 13)
 extienden a consumo interno y nómina.
 
+**`14`-`17` (2026-09-10, consolidado junto con el resto)** — exploratorio,
+reemplaza el rank-pairing de `01`-`13` por reconstrucción real vía
+`Poliza_Configuracion` (`14`/`15`, solo cubre la config `0450`) y extiende
+la conciliación XML a un panorama completo sin pasar por esa config
+(`16`/`17`). Su UI (CONT-4/CONT-5) vive en
+`reportes_streamlit/layout_gastos_poliza/`. Ver
+`docs/proyectos/layout-gastos/index.md` de `trivasa-context` para el
+detalle completo de método y resultados de estos 4 scripts — no repetido
+aquí. `NOTAS_REF_EXPLORACION.md` documenta 3 métodos de cruce alternativos
+que se probaron antes de `03`, conservado por el conocimiento aunque el
+código quedó superado.
+
 ## Conexión
 
 `connection_205_trivasadb3.py` — adaptado para leer `MSSQL_205_USER`/
