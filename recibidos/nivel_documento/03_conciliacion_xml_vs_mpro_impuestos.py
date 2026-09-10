@@ -121,6 +121,11 @@ def construir(fi, ff):
         # descuadre que no existe.
         if r_.ESTATUS == "REPARTIDO_ENTRE_MODULOS":
             return "REPARTIDO_ENTRE_MODULOS"
+        # Mismo hueco que a nivel importe (ver conciliar_importes): sin
+        # match en raw_sat, los campos fiscales del XML son 0 -- no es un
+        # descuadre de impuestos real, es que no hay con qué comparar.
+        if r_.ESTATUS in ("SIN_RAW_SAT_CANCELADO", "SIN_RAW_SAT_PENDIENTE"):
+            return r_.ESTATUS
         hay = (abs(r_.XML_IMPUESTOS_NETO) > L.TOL_CENTAVOS
                or abs(r_.MPRO_IMPUESTOS_NETO) > L.TOL_CENTAVOS)
         if not hay:
@@ -173,7 +178,7 @@ def construir(fi, ff):
 
 def reportar(g, det):
     fuera = ["NO_COMPARABLE_MODULO", "SIN_REGISTRO", "MODULO_NO_CUBIERTO",
-             "REPARTIDO_ENTRE_MODULOS"]
+             "REPARTIDO_ENTRE_MODULOS", "SIN_RAW_SAT_CANCELADO", "SIN_RAW_SAT_PENDIENTE"]
     comparables = g[~g.ESTATUS_IMPUESTOS.isin(fuera)]
     ok = comparables.ESTATUS_IMPUESTOS.isin(["CONCILIA", "SIN_IMPUESTOS"])
     okc = comparables.ESTATUS_IMPUESTOS.isin(["CONCILIA", "SIN_IMPUESTOS", "DIF_CENTAVOS"])

@@ -5,8 +5,10 @@ Libreria compartida de los reportes 02/03/04 de conciliacion XML recibido
 Tres piezas:
 
 1. `xml_recibidos()`  -- universo de CFDI RECIBIDOS desde `Comprobante_Digital`,
-   con el XML crudo (`Cd_XML`) parseado: subtotal / descuento / total /
-   impuestos trasladados y retenidos a nivel COMPROBANTE.
+   con sus campos fiscales a nivel COMPROBANTE (subtotal / descuento / total /
+   impuestos trasladados y retenidos) leídos de `raw_sat.cfdi_recibidos`
+   (Postgres) -- ya no se baja ni se parsea `Cd_XML` de SQL Server, ver
+   `_agregar_campos_sat()` y la nota de arquitectura más abajo.
 2. `registros_mpro()` -- cabeceras de los modulos de MPro que reciben CFDI
    (gasto, compra, cxp, cheque, anticipo, compra indirecta, nota de credito
    de proveedor, factura), normalizadas a un shape unico
@@ -48,15 +50,35 @@ de documentacion previa):
   la comparacion, contandolas aparte.
 
 Uso: los tres scripts (`02_`, `03_`, `04_`) importan de aqui.
+
+Nota de arquitectura (2026-09-10): hasta esta fecha, `xml_recibidos()` y
+`xml_por_folios()` bajaban `Cd_XML` (nvarchar(max)) de `Comprobante_Digital`
+para TODO el universo del periodo y lo parseaban en Python fila por fila
+(`parsear_cfdi()`, stdlib `xml.etree.ElementTree`) -- el paso mas caro del
+pipeline, sin cache entre corridas (ver `baseline_universal.py` en
+`recibidos/nivel_poliza/`, que dejo el mismo patron el mismo dia para el
+metodo de conciliacion por poliza). Ahora esos campos se leen ya parseados
+de `raw_sat.cfdi_recibidos` (Postgres, alimentada por el ELT `raw_sat_xml`
+de ctunlinux) via `_agregar_campos_sat()`. Las columnas de retenciones
+partidas (IVA/ISR), el complemento de Pagos (REP) y el de ValesDeDespensa
+se agregaron a `raw_sat.cfdi_recibidos` puntualmente para este cambio --
+antes solo estaban en el ELT los campos que ya usaba `baseline_universal.py`
+(descuento, IEPS, impuestos locales). `XML_MONEDA` sigue viniendo de
+`Comprobante_Digital.Cd_Moneda` (columna nativa de mpro, no del XML) porque
+`raw_sat` no la expone y no hacia falta pedirla.
 """
 import re
-import xml.etree.ElementTree as ET
+import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from sqlalchemy import text
 
 from connection_205_trivasadb3 import engine
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
+from extract_sat import extract_sat_por_uuid, COLUMNS_XML_EXTRA  # noqa: E402
 
 RFC_TRIVASA = "TRI970922TL2"
 
@@ -98,8 +120,7 @@ SELECT
     cd.Cd_Moneda                       AS CD_MONEDA,
     cd.Cd_Tipo_CFDI                    AS CD_TIPO_CFDI,
     cd.Cd_Serie_Folio                  AS CD_SERIE_FOLIO,
-    cd.Es_Cve_Estado                   AS CD_ESTADO,
-    CAST(cd.Cd_XML AS nvarchar(MAX))   AS XML
+    cd.Es_Cve_Estado                   AS CD_ESTADO
 FROM Comprobante_Digital cd
 WHERE cd.Cd_Timbre_Fecha >= :fi AND cd.Cd_Timbre_Fecha < :ff
   AND LTRIM(RTRIM(cd.Cd_RFC_Receptor)) = :rfc
@@ -138,146 +159,91 @@ GROUP BY cd.Cd_Tabla
 """
 
 
-def _f(v):
-    """float() tolerante: '' / None / basura -> 0.0"""
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return 0.0
+# raw_sat.cfdi_recibidos -> nombre XML_* que ya usa el resto del archivo
+# (mismo shape que producia `parsear_cfdi()`, para no tocar 03_/04_/05_).
+# CD_MONEDA no esta aqui: viene de Comprobante_Digital (columna nativa de
+# mpro), raw_sat no la expone y no hacia falta pedirla para este cambio.
+_SAT_A_XML = {
+    "fecha": "XML_FECHA",
+    "nombre_emisor": "XML_EMISOR_NOMBRE",
+    "tipo_comprobante": "XML_TIPO",
+    "subtotal": "XML_SUBTOTAL",
+    "total": "XML_TOTAL",
+    "ieps_trasladado": "XML_IEPS_TRASLADADO",
+    "ret_iva": "XML_RET_IVA",
+    "ret_isr": "XML_RET_ISR",
+    "base_exenta": "XML_BASE_EXENTA",
+    "pagos_monto_total": "XML_PAGOS_MONTO",
+    "pagos_iva_total": "XML_PAGOS_IVA",
+    "pagos_dr_uuids": "XML_DR_UUIDS",
+    "pagos_dr_pagado": "XML_DR_PAGADO",
+    "vales_despensa_total": "XML_VALES_DESPENSA",
+    "vales_despensa_n_trab": "XML_VALES_N_TRAB",
+    "complementos": "XML_COMPLEMENTOS",
+    "impuestos_locales_trasladados": "XML_IMP_LOCAL_TRAS",
+    "impuestos_locales_retenidos": "XML_IMP_LOCAL_RET",
+}
+_SAT_NUM = ["XML_SUBTOTAL", "XML_TOTAL", "XML_IEPS_TRASLADADO", "XML_RET_IVA", "XML_RET_ISR",
+            "XML_BASE_EXENTA", "XML_PAGOS_MONTO", "XML_PAGOS_IVA", "XML_DR_PAGADO",
+            "XML_VALES_DESPENSA", "XML_VALES_N_TRAB", "XML_IMP_LOCAL_TRAS", "XML_IMP_LOCAL_RET",
+            "XML_IVA_TRASLADADO"]
+_SAT_TXT = ["XML_DR_UUIDS", "XML_COMPLEMENTOS"]
 
 
-def parsear_cfdi(xml_str):
-    """Extrae del CFDI los campos fiscales a nivel COMPROBANTE.
+def _agregar_campos_sat(df):
+    """Reemplaza `parsear_cfdi()`: junta los campos fiscales del CFDI desde
+    `raw_sat.cfdi_recibidos` (Postgres, ya parseados por el ELT) en vez de
+    bajar y parsear `Cd_XML` de SQL Server. Ver nota de arquitectura al
+    inicio del modulo. `df` debe traer una columna UUID."""
+    uuids = df["UUID"].unique().tolist()
+    sat = extract_sat_por_uuid("cfdi_recibidos", uuids, extra_columns=COLUMNS_XML_EXTRA)
 
-    Namespace-agnostico (`{*}`) porque conviven CFDI 3.3 y 4.0. Los impuestos
-    se leen del nodo `Impuestos` hijo DIRECTO de la raiz -- nunca de los
-    `Impuestos` que cuelgan de cada `Concepto` (sumarlos duplica el IVA).
-    """
-    vacio = {
-        "XML_OK": False, "XML_ERROR": "", "XML_VERSION": "", "XML_FECHA": pd.NaT,
-        "XML_SERIE": "", "XML_FOLIO": "", "XML_TIPO": "", "XML_MONEDA": "",
-        "XML_TIPO_CAMBIO": 1.0, "XML_METODO_PAGO": "", "XML_FORMA_PAGO": "",
-        "XML_EMISOR_NOMBRE": "", "XML_USO_CFDI": "",
-        "XML_SUBTOTAL": 0.0, "XML_DESCUENTO": 0.0, "XML_TOTAL": 0.0,
-        "XML_IVA_TRASLADADO": 0.0, "XML_IEPS_TRASLADADO": 0.0,
-        "XML_RET_IVA": 0.0, "XML_RET_ISR": 0.0,
-        "XML_TRASLADOS_TOTAL": 0.0, "XML_RETENIDOS_TOTAL": 0.0,
-        "XML_BASE_EXENTA": 0.0, "XML_PAGOS_MONTO": 0.0, "XML_PAGOS_IVA": 0.0,
-        "XML_N_CONCEPTOS": 0,
-        # Importe que NO viaja en el Total del comprobante sino en un
-        # complemento -- ver `parsear_cfdi` y COMPLEMENTOS_CON_IMPORTE.
-        "XML_COMPLEMENTOS": "", "XML_VALES_DESPENSA": 0.0, "XML_VALES_N_TRAB": 0,
-        "XML_IMP_LOCAL_TRAS": 0.0, "XML_IMP_LOCAL_RET": 0.0,
-        "XML_DR_UUIDS": "", "XML_DR_PAGADO": 0.0,
-    }
-    if not xml_str or not xml_str.strip():
-        return {**vacio, "XML_ERROR": "Cd_XML vacio"}
-    try:
-        root = ET.fromstring(xml_str.encode("utf-8", "ignore"))
-    except Exception as e:  # XML corrupto / pagina HTML guardada como .xml
-        return {**vacio, "XML_ERROR": f"{type(e).__name__}: {e}"[:120]}
+    encontrados = set(sat["uuid"]) if len(sat) else set()
+    faltan = len(set(uuids) - encontrados)
+    if faltan:
+        print(f"[aviso] {faltan} UUID de Comprobante_Digital sin match en "
+              f"raw_sat.cfdi_recibidos -- ver ESTATUS SIN_RAW_SAT_* en vez de "
+              f"tratarlos como descuadre de negocio.")
+    # Marca explicita para que el semaforo (conciliar_importes/clase) no
+    # confunda "no hay match en raw_sat" con un descuadre real -- sin esto
+    # el merge de abajo deja XML_TOTAL=0 y el grupo cae en DIF_MATERIAL
+    # como si el CFDI de verdad no cuadrara. Verificado 2026-09-10: de 18
+    # UUID sin match en enero 2026, solo 3 estaban CA (cancelados) en mpro;
+    # los otros 15 seguian AC (vigentes) -- no asumir que "sin raw_sat" es
+    # sinonimo de "cancelado".
+    df["EN_RAW_SAT"] = df["UUID"].isin(encontrados)
 
-    a = root.attrib
-    r = dict(vacio)
-    r["XML_OK"] = True
-    r["XML_VERSION"] = a.get("Version") or a.get("version") or ""
-    r["XML_FECHA"] = pd.to_datetime(a.get("Fecha") or a.get("fecha"), errors="coerce")
-    r["XML_SERIE"] = a.get("Serie", "")
-    r["XML_FOLIO"] = a.get("Folio", "")
-    r["XML_TIPO"] = a.get("TipoDeComprobante", "")
-    r["XML_MONEDA"] = a.get("Moneda", "")
-    r["XML_TIPO_CAMBIO"] = _f(a.get("TipoCambio")) or 1.0
-    r["XML_METODO_PAGO"] = a.get("MetodoPago", "")
-    r["XML_FORMA_PAGO"] = a.get("FormaPago", "")
-    r["XML_SUBTOTAL"] = _f(a.get("SubTotal"))
-    r["XML_DESCUENTO"] = _f(a.get("Descuento"))
-    r["XML_TOTAL"] = _f(a.get("Total"))
+    # `raw_sat.iva` YA es el IVA trasladado puro (codigo SAT 002) -- NO
+    # `TotalImpuestosTrasladados` como decia el docstring de extract_sat.py
+    # (ese dato viejo no distinguia porque casi ningun CFDI trae IEPS).
+    # Verificado 2026-09-10: `iva + ieps_trasladado == total - subtotal`
+    # exacto en la muestra de combustible de enero 2026. Restar
+    # ieps_trasladado aqui daba negativos. Ver aviso a ELT en el hallazgo.
+    sat = sat.rename(columns=_SAT_A_XML)
+    sat["XML_IVA_TRASLADADO"] = sat["iva"].round(2) if len(sat) else pd.Series(dtype=float)
 
-    em = root.find("{*}Emisor")
-    if em is not None:
-        r["XML_EMISOR_NOMBRE"] = em.get("Nombre", "")
-    rec = root.find("{*}Receptor")
-    if rec is not None:
-        r["XML_USO_CFDI"] = rec.get("UsoCFDI", "")
-    conceptos = root.find("{*}Conceptos")
-    if conceptos is not None:
-        r["XML_N_CONCEPTOS"] = len(conceptos.findall("{*}Concepto"))
+    cols_xml = list(_SAT_A_XML.values()) + ["XML_IVA_TRASLADADO"]
+    sat = sat.reindex(columns=["uuid"] + cols_xml).rename(columns={"uuid": "UUID"})
 
-    imp = root.find("{*}Impuestos")  # hijo DIRECTO -- no el de los conceptos
-    if imp is not None:
-        r["XML_TRASLADOS_TOTAL"] = _f(imp.get("TotalImpuestosTrasladados"))
-        r["XML_RETENIDOS_TOTAL"] = _f(imp.get("TotalImpuestosRetenidos"))
-        tr = imp.find("{*}Traslados")
-        if tr is not None:
-            for t in tr.findall("{*}Traslado"):
-                cod, tf, importe = t.get("Impuesto", ""), t.get("TipoFactor", ""), _f(t.get("Importe"))
-                if tf == "Exento":
-                    r["XML_BASE_EXENTA"] += _f(t.get("Base"))
-                elif cod == "002":
-                    r["XML_IVA_TRASLADADO"] += importe
-                elif cod == "003":
-                    r["XML_IEPS_TRASLADADO"] += importe
-        re_ = imp.find("{*}Retenciones")
-        if re_ is not None:
-            for t in re_.findall("{*}Retencion"):
-                cod, importe = t.get("Impuesto", ""), _f(t.get("Importe"))
-                if cod == "002":
-                    r["XML_RET_IVA"] += importe
-                elif cod == "001":
-                    r["XML_RET_ISR"] += importe
-
-    # El Total del comprobante NO siempre es el importe de la operacion:
-    # hay complementos del SAT que lo llevan por dentro. Censados en el
-    # universo de enero 2026: Pagos (416), ValesDeDespensa (19),
-    # ImpuestosLocales (12). EstadoDeCuentaCombustible (436) y CartaPorte
-    # (290) NO mueven el importe -- su Total del comprobante ya es el bueno,
-    # verificado contra los 436 CFDI de combustible del mes.
-    comp = root.find("{*}Complemento")
-    if comp is not None:
-        r["XML_COMPLEMENTOS"] = ";".join(sorted({c.tag.split("}")[-1] for c in comp
-                                                 if c.tag.split("}")[-1] != "TimbreFiscalDigital"}))
-        # CFDI de Pago (tipo P): Total/SubTotal son 0 por diseno del SAT.
-        pagos = comp.find("{*}Pagos")
-        if pagos is not None:
-            tot = pagos.find("{*}Totales")
-            if tot is not None:
-                r["XML_PAGOS_MONTO"] = _f(tot.get("MontoTotalPagos"))
-                r["XML_PAGOS_IVA"] = (
-                    _f(tot.get("TotalTrasladosImpuestoIVA16"))
-                    + _f(tot.get("TotalTrasladosImpuestoIVA8"))
-                )
-            drs = []
-            for p in pagos.findall("{*}Pago"):
-                # `tot is None`, no `not tot`: <Totales/> es un elemento sin
-                # hijos y su valor de verdad es False -- eso duplicaba el monto.
-                if tot is None:
-                    r["XML_PAGOS_MONTO"] += _f(p.get("Monto"))
-                for dr in p.findall("{*}DoctoRelacionado"):
-                    u = (dr.get("IdDocumento") or "").upper().strip()
-                    if u:
-                        drs.append(u)
-                    r["XML_DR_PAGADO"] += _f(dr.get("ImpPagado"))
-            r["XML_DR_UUIDS"] = ";".join(sorted(set(drs)))
-        # Vales de despensa: el comprobante se timbra por la COMISION (a
-        # veces $0.01) y la dispersion real -- desglosada por trabajador --
-        # vive en el atributo `total` del complemento. Enero 2026: 19 CFDI
-        # con Total $0.01 cada uno y $792,344.95 en el complemento.
-        vales = comp.find("{*}ValesDeDespensa")
-        if vales is not None:
-            r["XML_VALES_DESPENSA"] = _f(vales.get("total"))
-            cs = vales.find("{*}Conceptos")
-            r["XML_VALES_N_TRAB"] = len(cs) if cs is not None else 0
-        # Impuestos locales (ISH y similares): MPro los suma dentro de su
-        # columna de impuestos, asi que hay que leerlos o el IVA descuadra.
-        iloc = comp.find("{*}ImpuestosLocales")
-        if iloc is not None:
-            r["XML_IMP_LOCAL_TRAS"] = _f(iloc.get("TotaldeTraslados"))
-            r["XML_IMP_LOCAL_RET"] = _f(iloc.get("TotaldeRetenciones"))
-    return r
+    df = df.merge(sat, on="UUID", how="left")
+    df["XML_MONEDA"] = df["CD_MONEDA"]
+    df["XML_FECHA"] = pd.to_datetime(df["XML_FECHA"], errors="coerce")
+    for c in _SAT_NUM:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+    df["XML_VALES_N_TRAB"] = df["XML_VALES_N_TRAB"].astype(int)
+    for c in _SAT_TXT:
+        df[c] = df[c].fillna("").astype(str)
+    for c in ("XML_EMISOR_NOMBRE", "XML_TIPO"):
+        df[c] = df[c].fillna("").astype(str)
+    return df
 
 
 def xml_recibidos(fi, ff, con_xml=True):
-    """CFDI recibidos timbrados en [fi, ff). Grano: (ORIGEN, CD_DOCUMENTO)."""
+    """CFDI recibidos timbrados en [fi, ff). Grano: (ORIGEN, CD_DOCUMENTO).
+
+    `con_xml` da nombre historico al parametro (cuando de verdad bajaba y
+    parseaba `Cd_XML`); hoy controla si se agregan los campos fiscales
+    -- ahora leidos de `raw_sat.cfdi_recibidos`, ver `_agregar_campos_sat()`."""
     sql = CD_SQL if con_xml else CD_LIGERO_SQL
     params = {"rfc": RFC_TRIVASA}
     if con_xml:
@@ -293,8 +259,7 @@ def xml_recibidos(fi, ff, con_xml=True):
     df.loc[m, "DOC_ID"] = df.loc[m, "CD_DOCUMENTO"].str[10:14]
 
     if con_xml:
-        parsed = pd.DataFrame([parsear_cfdi(x) for x in df["XML"]], index=df.index)
-        df = pd.concat([df.drop(columns=["XML"]), parsed], axis=1)
+        df = _agregar_campos_sat(df)
     return df
 
 
@@ -668,9 +633,12 @@ TOL_MENOR = 1.00      # diferencia < 1 peso: no material
 
 # Estatus que NO son descuadre: los dos primeros porque cuadran, el tercero
 # porque el importe del CFDI vive en un complemento y MPro registra -- bien --
-# el Total del comprobante.
+# el Total del comprobante. Los dos de SIN_RAW_SAT tampoco son descuadre de
+# negocio: son un hueco de datos (raw_sat sin ese UUID todavia) -- no se
+# puede evaluar si cuadra o no, asi que no cuenta como grupo descuadrado.
 ESTATUS_CUADRA = {"CONCILIA", "DIF_CENTAVOS"}
-ESTATUS_EXPLICADO = ESTATUS_CUADRA | {"IMPORTE_EN_COMPLEMENTO", "REPARTIDO_ENTRE_MODULOS"}
+ESTATUS_EXPLICADO = ESTATUS_CUADRA | {"IMPORTE_EN_COMPLEMENTO", "REPARTIDO_ENTRE_MODULOS",
+                                       "SIN_RAW_SAT_CANCELADO", "SIN_RAW_SAT_PENDIENTE"}
 
 
 def clasificar_dif(dif, comparable=True, motivo=""):
@@ -715,8 +683,7 @@ SELECT
     cd.Cd_Moneda                       AS CD_MONEDA,
     cd.Cd_Tipo_CFDI                    AS CD_TIPO_CFDI,
     cd.Cd_Serie_Folio                  AS CD_SERIE_FOLIO,
-    cd.Es_Cve_Estado                   AS CD_ESTADO,
-    CAST(cd.Cd_XML AS nvarchar(MAX))   AS XML
+    cd.Es_Cve_Estado                   AS CD_ESTADO
 FROM Comprobante_Digital cd
 WHERE cd.Cd_Tabla = '{origen}'
   AND LEFT(cd.Cd_Documento, 10) IN ({lista})
@@ -747,10 +714,7 @@ def xml_por_folios(folios_por_origen, con_xml=True):
     m = df["ORIGEN"] == "GASTO_REGISTRO"
     df.loc[m, "DOC_ID"] = df.loc[m, "CD_DOCUMENTO"].str[10:14]
     if con_xml:
-        parsed = pd.DataFrame([parsear_cfdi(v) for v in df["XML"]], index=df.index)
-        df = pd.concat([df.drop(columns=["XML"]), parsed], axis=1)
-    else:
-        df = df.drop(columns=["XML"])
+        df = _agregar_campos_sat(df)
     return df
 
 
@@ -897,6 +861,11 @@ def conciliar_importes(fi, ff, console=None):
     #     el importe del CFDI se cuenta UNA vez por grupo)
     xu = x.drop_duplicates(["GRUPO", "UUID"]).copy()
     xu["IMPORTE_XML"] = np.where(xu.XML_TIPO == "P", xu.XML_PAGOS_MONTO, xu.XML_TOTAL)
+    # UUID sin match en raw_sat: sus campos fiscales quedaron en 0 en
+    # _agregar_campos_sat(), asi que el grupo no es comparable -- se marca
+    # aparte (ver estatus()) en vez de dejar que caiga en DIF_MATERIAL.
+    xu["SIN_RAW_SAT"] = ~xu["EN_RAW_SAT"]
+    xu["SIN_RAW_SAT_VIGENTE"] = xu["SIN_RAW_SAT"] & (xu["CD_ESTADO"] != "CA")
     lado_x = xu.groupby(["ORIGEN", "GRUPO"]).agg(
         N_XML=("UUID", "size"),
         N_XML_PERIODO=("EN_PERIODO", "sum"),
@@ -918,6 +887,8 @@ def conciliar_importes(fi, ff, console=None):
         INTERCOMPANIA=("INTERCOMPANIA", "any"),
         EMPRESA_GRUPO=("EMPRESA_GRUPO", lambda s: _txt(s, maxn=2)),
         XML_CANCELADOS=("CD_ESTADO", lambda s: int((s == "CA").sum())),
+        N_SIN_RAW_SAT=("SIN_RAW_SAT", "sum"),
+        N_SIN_RAW_SAT_VIGENTE=("SIN_RAW_SAT_VIGENTE", "sum"),
     ).reset_index()
 
     # --- lado MPro
@@ -952,6 +923,17 @@ def conciliar_importes(fi, ff, console=None):
             if r.ORIGEN not in REG_SQL:
                 return "MODULO_NO_CUBIERTO"
             return "SIN_REGISTRO"
+        # TODOS los UUID del grupo sin match en raw_sat: XML_IMPORTE es 0 de
+        # cabo a rabo, no hay nada que comparar -- no evaluar como descuadre
+        # de negocio (ver _agregar_campos_sat()). Si el hueco es PARCIAL (el
+        # grupo tiene otros CFDI si presentes en raw_sat), se sigue evaluando
+        # el DIF normal -- un grupo real puede descuadrar por una razon de
+        # negocio distinta al hueco de datos (caso real enero 2026:
+        # CHEQUE:01-0060062, 8 UUID, 3 sin match, DIF_MATERIAL genuino por
+        # ARRASTRA_CFDI_DE_OTRO_PERIODO -- taparlo con SIN_RAW_SAT hubiera
+        # escondido un hallazgo real). Ese caso parcial se marca en motivo().
+        if r.N_SIN_RAW_SAT > 0 and r.N_SIN_RAW_SAT >= r.N_XML:
+            return "SIN_RAW_SAT_PENDIENTE" if r.N_SIN_RAW_SAT_VIGENTE > 0 else "SIN_RAW_SAT_CANCELADO"
         d = abs(r.DIF)
         if d <= TOL_CENTAVOS:
             return "CONCILIA"
@@ -983,6 +965,8 @@ def conciliar_importes(fi, ff, console=None):
             m.append("CFDI_CANCELADO_EN_MPRO")
         if "CA" in str(r.ESTADOS_MPRO).split(";"):
             m.append("REGISTRO_CANCELADO")
+        if 0 < r.N_SIN_RAW_SAT < r.N_XML:
+            m.append(f"PARCIAL_SIN_RAW_SAT_{int(r.N_SIN_RAW_SAT)}")
         if r.ESTATUS == "DIF_MATERIAL":
             m.append("MPRO_REGISTRA_MENOS" if r.DIF > 0 else "MPRO_REGISTRA_MAS")
         return "|".join(m)
@@ -1029,7 +1013,8 @@ def conciliar_importes(fi, ff, console=None):
             "TIPOS_CFDI", "MONEDAS", "RFC_EMISOR", "EMISOR", "INTERCOMPANIA", "EMPRESA_GRUPO",
             "PROVEEDOR", "SUBORIGEN", "CONCEPTO",
             "FECHA_XML_MIN", "FECHA_XML_MAX", "FECHA_MPRO_MIN", "FECHA_MPRO_MAX",
-            "ESTADOS_MPRO", "XML_CANCELADOS", "CFDI_REPARTIDO", "FOLIOS", "UUIDS"]
+            "ESTADOS_MPRO", "XML_CANCELADOS", "CFDI_REPARTIDO",
+            "N_SIN_RAW_SAT", "N_SIN_RAW_SAT_VIGENTE", "FOLIOS", "UUIDS"]
     for c in ("XML_SUBTOTAL", "XML_TOTAL", "XML_PAGOS_MONTO", "XML_IMPORTE",
               "XML_COMPLEMENTO_IMPORTE", "MPRO_SUBTOTAL", "MPRO_IMPUESTOS", "MPRO_TOTAL"):
         g[c] = g[c].astype(float).round(2)

@@ -81,6 +81,30 @@ Pendientes que quedan (61 en el semestre), por familia:
 | CONAGUA | 4 | $12K | **Captura parcial real** — solo entran actualización y recargos; los derechos no pasan por el módulo. Reportable al cliente |
 | Otros | 3 | $45K | Casos sueltos |
 
+## Rendimiento (2026-09-10): `nivel_documento` sin XML, `baseline_universal.py` con menos consultas — paralelizar queda pendiente
+
+`recibidos/nivel_documento/conciliacion_xml_lib.py` (reportes `03_`/`04_`/
+`05_`) dejó de parsear `Cd_XML` — lee `raw_sat.cfdi_recibidos` (10 columnas
+nuevas pedidas al ELT el mismo día: `ret_iva`/`ret_isr`, complemento Pagos,
+ValesDeDespensa, etc.), validado idéntico contra el pipeline viejo salvo un
+gap de backfill real (18 UUID). Se agregó estatus dedicado `SIN_RAW_SAT_
+CANCELADO`/`SIN_RAW_SAT_PENDIENTE` para no confundir ese hueco con un
+descuadre — **ojo con la regla exacta** (solo aplica si TODOS los UUID del
+grupo faltan, no si falta uno solo — ver el detalle de por qué en el punto
+34 de abajo, casi se tapó un hallazgo real). De paso se encontró que
+`raw_sat.iva` es solo IVA (no el total de impuestos trasladados) —
+documentado en `trivasa-context/docs/schema/calidad-de-datos.md`.
+
+`baseline_universal.py` (nivel_poliza) bajó de 143 a 125 consultas por
+corrida fusionando dos pares de consultas redundantes (misma tabla, mismo
+folio, columnas distintas). Instrumentando `bridge_client.run_query` se
+confirmó que el ~95% del tiempo de una corrida (118s) es esperar
+respuestas secuenciales de `mssql_205` (~900ms/consulta) — **paralelizar
+los lotes de consulta (son independientes entre sí) es el siguiente paso
+obvio de rendimiento y NO está hecho todavía**; medir primero cuántas
+conexiones concurrentes tolera `.205`. Detalle completo, números exactos y
+qué se descartó en `docs/hallazgos.md` puntos 34-35.
+
 ## EMITIDOS y RETENCIONES (nuevo, 2026-09-10) — 100% de conciliación + hallazgo SAT
 
 Portado del proyecto hermano `~/proyectos/conciliacion-master/
@@ -247,3 +271,14 @@ cargo/abono real de lo que sí concilia.
 7. Tres hallazgos de estructura/calidad de dato de la sesión de recibidos
    (2026-09-09/10) que valen para `trivasa-context` — ver la lista en
    `docs/investigacion_pendientes.md`, Parte 4 (ya subidos ahí).
+8. **Paralelizar las consultas batched de `baseline_universal.py`** (y de
+   los extractores que llama) — hoy son secuenciales y ~900ms/consulta ×
+   125 consultas es prácticamente todo el tiempo de una corrida (ver
+   `docs/hallazgos.md` punto 35). Medir antes cuántas conexiones
+   concurrentes tolera `mssql_205` sin degradarse; probable candidato:
+   `ThreadPoolExecutor` sobre `bridge_client.run_query`, o paralelizar cada
+   loop de lotes por origen dentro de cada extractor.
+9. Backfill en `raw_sat.cfdi_recibidos` de los 15 UUID de enero 2026 que
+   siguen vigentes (`AC`) en mpro pero no tienen match ahí — no son
+   cancelados, es un gap real de cobertura del ELT/mount (ver
+   `docs/hallazgos.md` punto 34).

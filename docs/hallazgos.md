@@ -1135,3 +1135,124 @@ como el 21% que de verdad importa.
 
 `cruce_sat_retenciones.py` se retiró (superado). Referencias actualizadas
 en `README.md`/`PROGRESS.md`/`docs/emitidos_retenciones.md`.
+
+## 34. `recibidos/nivel_documento` deja de parsear XML — lee `raw_sat`, con estatus dedicado para el hueco de backfill
+
+2026-09-10. `baseline_universal.py` (nivel_poliza) dejó de parsear `Cd_XML`
+el mismo día (punto sobre `ajustes_desde_sat()`, ver arriba); `recibidos/
+nivel_documento/conciliacion_xml_lib.py` (reportes `03_`/`04_`/`05_`,
+heredado de `adjuntar-xml`) era el único lugar que seguía bajando y
+parseando `Cd_XML` de **todo** el universo del mes en cada corrida —
+`xml_recibidos()`/`xml_por_folios()` con `parsear_cfdi()` (stdlib
+`xml.etree.ElementTree`), el paso más caro de ese pipeline.
+
+Se retiró `parsear_cfdi()` por completo. Los campos fiscales ahora se leen
+de `raw_sat.cfdi_recibidos` vía una función nueva, `extract_sat_por_uuid()`
+(`src/extract_sat.py`) — por lista de UUID en vez de por periodo, porque
+`cerrar_universo()` arrastra CFDI de otros meses y no se puede acotar por
+`periodo` de antemano como sí hace `baseline_universal.py`.
+
+**Columnas nuevas pedidas al ELT y agregadas el mismo día** a
+`raw_sat.cfdi_recibidos` (Trivasa es también el equipo del ELT — se
+coordinó en la misma sesión): `ret_iva`, `ret_isr` (retención IVA/ISR
+partida — antes solo existía el agregado `total_impuestos_retenidos`),
+`pagos_monto_total`, `pagos_iva_total`, `pagos_dr_uuids`, `pagos_dr_pagado`
+(complemento Pagos, CFDI tipo `P`), `vales_despensa_total`,
+`vales_despensa_n_trab` (complemento ValesDeDespensa), `complementos`,
+`base_exenta`. Sin estas columnas el swap NO era seguro — ver el bug de
+diseño que se evitó más abajo.
+
+**Bug de diseño evitado antes de escribir código**: un primer borrador
+hacía el swap completo a `raw_sat` sin pedir estas columnas, asumiendo que
+bastaba con lo que ya usaba `baseline_universal.py` (descuento/IEPS/locales).
+Eso rompía silenciosamente la detección de `IMPORTE_EN_COMPLEMENTO` (CFDI
+tipo `P` y vales de despensa, ~450 CFDI/mes en enero 2026) y la separación
+IVA/ISR retenido — casos ya validados y documentados en el propio código
+viejo. Se optó por pedir las columnas al ELT en vez de aceptar esa pérdida
+de fidelidad.
+
+**Validado contra el pipeline viejo** (comparación fila por fila, enero
+2026, reportes 03 y 04): salida **idéntica** salvo 18 UUID que no tienen
+match en `raw_sat.cfdi_recibidos` (backfill incompleto del ELT). Verificado
+contra `Comprobante_Digital` en vivo: de esos 18, **15 siguen `AC` (vigentes)
+en mpro y solo 3 son `CA` (cancelados)** — no asumir que "sin match en
+raw_sat" es sinónimo de "cancelado".
+
+**Estatus dedicado agregado** (`SIN_RAW_SAT_CANCELADO`/`SIN_RAW_SAT_
+PENDIENTE`, en `conciliacion_xml_lib.conciliar_importes()` y en `04_
+conciliacion_mpro_vs_xml.py::clase()`) para que ese hueco de datos no se
+confunda con un descuadre real: sin la marca, un UUID sin match cae con
+todos sus campos fiscales en 0 y el grupo sale como `DIF_MATERIAL` (parece
+que mpro registró algo sin CFDI, cuando el CFDI sí existe). **Ojo con la
+regla exacta**: el estatus dedicado solo aplica cuando **TODOS** los UUID
+de un grupo de conciliación faltan en `raw_sat` — un primer intento lo
+aplicaba con que faltara **uno solo**, y eso tapó 3 hallazgos reales
+(`CHEQUE:01-0060062`/`0085507`/`0081761`, grupos de varios UUID donde solo
+1-3 faltan, con `DIF_MATERIAL` genuino por `ARRASTRA_CFDI_DE_OTRO_PERIODO`
+sin relación con el hueco). El caso parcial se sigue evaluando con el `DIF`
+real y se marca con `PARCIAL_SIN_RAW_SAT_N` en el motivo, sin ocultar el
+hallazgo.
+
+**Hallazgo colateral, documentado en `trivasa-context`** (`docs/schema/
+calidad-de-datos.md`): `raw_sat.iva` es **solo** el IVA trasladado (código
+SAT `002`), nunca `TotalImpuestosTrasladados` — el docstring de `extract_
+sat.py` decía lo segundo desde 2026-09-07 (validado entonces sin CFDI de
+combustible, donde `ieps_trasladado` es 0 y la distinción no se nota).
+Restarle `ieps_trasladado` a `iva` para "sacar el IVA puro" da negativo en
+cualquier CFDI con IEPS. Corregido el docstring en el mismo cambio.
+
+**Pendiente**: backfill en `raw_sat.cfdi_recibidos` de los 15 UUID vigentes
+en mpro que faltan (enero 2026) — no cancelados, gap real de cobertura del
+mount/ELT.
+
+## 35. `baseline_universal.py`: dos pares de consultas redundantes fusionados — el cuello real es la latencia por consulta (900ms/query), paralelizar queda pendiente
+
+2026-09-10. Instrumentando `bridge_client.run_query` (conteo + tiempo por
+llamada) sobre una corrida real de enero 2026: **125 consultas, 113.7s en
+consultas, ~900ms promedio por consulta contra `mssql_205`** — de ~118s de
+reloj total, prácticamente todo es esperar respuestas secuenciales, no
+cómputo (4s de CPU en la misma corrida). El pipeline ya no parsea XML
+(punto 34/`ajustes_desde_sat`); lo único que queda por exprimir es el
+**número de round-trips**.
+
+Se encontraron y fusionaron dos pares de consultas que pegaban a las
+MISMAS tablas, con el MISMO folio, pidiendo columnas distintas:
+
+1. `extract_moneda_documento()` (`extract_moneda.py`, dict `FUENTES`) y la
+   vieja `extract_importe_documento()` (`extract_vias_extra.py`, dict
+   `IMPORTE_DOCUMENTO`) — ambas consultaban `Compra_Encabezado`/`Compra_
+   Indirecto`/`Cuenta_X_Pagar`/`Nota_Credito_Proveedor`/`Factura_Encabezado`
+   por el mismo folio, una por moneda/tipo de cambio y otra por
+   `SUM(Precio_Neto_Importe)`, en dos loops separados de `baseline_
+   universal.py` (antes `[3d/5]` y `[4b/5]`). Fusionadas en
+   `extract_moneda_e_importe_documento()`; se retiró `extract_importe_
+   documento()` (sin otro llamador).
+2. La consulta a `Gasto_Registro_Documento` dentro de `extract_gasto_
+   registro_granular()` (cargo/neto/referencia) y la de `extract_moneda_
+   gasto_registro()` (moneda/tipo de cambio) — MISMA tabla, mismo `Gr_Folio
+   IN (...)`. Se agregaron `Mn_Cve_Moneda`/`Grd_Tipo_Cambio` al `SELECT` que
+   ya existía y se retiró `extract_moneda_gasto_registro()` por completo.
+   GASTO_REGISTRO es el origen de mayor volumen (1,466 documentos en enero,
+   ~10 lotes de 150) — era la fusión de mayor impacto en número de queries.
+
+**Medido** (mismo periodo, misma instrumentación, antes/después): **143 →
+125 consultas (-18)**, **124.0s → 113.7s de tiempo en consultas (-10.3s)**.
+Validado sin cambios de resultado: 0 diferencias celda por celda en las
+hojas Conciliados/Pendientes del `.xlsx` de enero 2026. El ahorro en reloj
+real fue más modesto de lo que sugiere el conteo de queries (~3s en
+corridas cronometradas con `time`) — hay suficiente variancia de red entre
+corridas como para que ese número puntual no sea representativo; el
+conteo de consultas y el tiempo-en-consultas medidos dentro del mismo
+proceso son la comparación confiable.
+
+**Recomendación pendiente, no implementada — el lever grande**: paralelizar
+los lotes de consultas (son independientes entre sí: cada lote de hasta
+150-200 documentos no depende del resultado de otro). Con ~900ms/consulta
+×125 consultas **secuenciales** ≈ 113s, correr lotes en paralelo (ej.
+`ThreadPoolExecutor` sobre `bridge_client.run_query`, ya que el cuello es
+I/O de red y no CPU) podría bajar el tiempo total a una fracción, limitado
+por cuántas conexiones concurrentes tolere `mssql_205` sin degradarse. No
+se implementó esta sesión porque cambia el patrón de conexión de
+`bridge_client.py` (manejo de pool/excepciones concurrentes) y merece su
+propia sesión de prueba — medir primero cuántas conexiones simultáneas
+soporta `.205` antes de lanzar N hilos a lo loco.

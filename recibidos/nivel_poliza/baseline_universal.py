@@ -59,10 +59,11 @@ from extract_origen import extract_origenes_por_uuids  # noqa: E402
 from extract_poliza_por_origen import extract_poliza_por_origen, extract_poliza_cheque  # noqa: E402
 from extract_gasto_registro import extract_gasto_registro_granular  # noqa: E402
 from extract_detalle_lineas import extract_lineas_poliza, extract_lineas_gasto_registro, DETALLE_COLS  # noqa: E402
-from extract_moneda import extract_moneda_documento, extract_moneda_gasto_registro  # noqa: E402
+from extract_moneda import extract_moneda_documento  # noqa: E402
 from extract_vias_extra import (cuadre_arrendamiento_financiero, cuadre_repartido_por_referencia,  # noqa: E402
                                 resumen_folios_gasto, cuadre_cheque_agrupado,
-                                extract_importe_documento, extract_referencia_cxp)
+                                extract_moneda_e_importe_documento, extract_referencia_cxp,
+                                IMPORTE_DOCUMENTO)
 
 TOL = 1.00
 TOL_RELATIVA = 0.00005  # 0.005% de la base: materialidad para redondeo de tipo de cambio
@@ -227,11 +228,20 @@ def calcular(periodo: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
               f"{gasto_cargo['cargo'].notna().sum()} con cargo encontrado, "
               f"{n_dif} CFDI donde el gasto distribuido != importe del documento")
         total_cargo = total_cargo.add(gasto_total, fill_value=0.0).rename("cargo_agregado")
+        # Moneda/tipo de cambio de GASTO_REGISTRO ya vienen en gasto_map --
+        # misma consulta que cargo/neto (fusionadas 2026-09-10 en
+        # extract_gasto_registro_granular(); antes era una consulta aparte
+        # a la MISMA tabla Gasto_Registro_Documento, ver [3d/5] anterior).
+        gasto_map["tipo_cambio"] = pd.to_numeric(gasto_map.get("tipo_cambio"), errors="coerce").fillna(1.0)
+        gasto_map.loc[gasto_map["tipo_cambio"] <= 0, "tipo_cambio"] = 1.0
+        gasto_map["moneda"] = gasto_map.get("moneda", "").fillna("")
+        gasto_tc = gasto_map[["uuid", "moneda", "tipo_cambio"]].copy()
     else:
         gasto_neto = pd.Series(dtype=float, name="gasto_neto")
         gasto_refs = pd.Series(dtype=object, name="gasto_referencias")
         gasto_folios = pd.Series(dtype=object, name="gasto_folios")
         gasto_renglones = pd.Series(dtype=object, name="gasto_renglones")
+        gasto_tc = pd.DataFrame(columns=["uuid", "moneda", "tipo_cambio"])
 
     print("[3c/5] Descuento + IEPS + impuestos locales (ya parseados en raw_sat, sin volver a bajar XML)")
     # Antes: se parseaba el XML de TODOS los CFDI con etiqueta en mpro (no solo
@@ -246,23 +256,40 @@ def calcular(periodo: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     print(f"     {len(ajuste_xml)} CFDI — {n_desc} con Descuento, "
           f"{n_ieps} con IEPS, {n_local} con impuesto local")
 
-    print("[3d/5] Moneda: el CFDI viene en su moneda original, la póliza en MXN")
-    tc_partes = []
+    print("[3d/5] Moneda + importe del documento (fusionadas: misma tabla/folio que antes eran 2 consultas)")
+    # GASTO_REGISTRO ya se resolvió en [3b/5] (gasto_tc, misma consulta que
+    # cargo/neto). Para los orígenes con columna de importe propia
+    # (IMPORTE_DOCUMENTO: COMPRA, COMPRA_INDIRECTO, CUENTA_X_PAGAR,
+    # NOTA_CREDITO_PROVEEDOR, FACTURA) se trae moneda+tipo_cambio+importe en
+    # una sola consulta por lote en vez de dos loops separados ([3d/5] viejo
+    # + el de importe_documento que vivía en [4b/5]). El resto (ej. CHEQUE,
+    # que no tiene columna de importe de documento aquí) sigue con
+    # extract_moneda_documento().
+    tc_partes = [gasto_tc] if len(gasto_tc) else []
+    imp_partes = []
     for origen in sorted(origenes["origen"].unique()):
-        docs_or = origenes[origenes["origen"] == origen]
         if origen.upper() == "GASTO_REGISTRO":
-            m = extract_moneda_gasto_registro(docs_or["documento"].dropna().tolist())
+            continue
+        docs_or = origenes[origenes["origen"] == origen]
+        docs_list = docs_or["documento_real"].dropna().unique().tolist()
+        if origen.upper() in IMPORTE_DOCUMENTO:
+            m = extract_moneda_e_importe_documento(origen, docs_list)
             if m.empty:
                 continue
-            m = m.rename(columns={"documento": "_llave"})
-            docs_or = docs_or.assign(_llave=docs_or["documento"].str.slice(0, 14))
+            merged_or = docs_or.merge(m.rename(columns={"documento": "documento_real"}),
+                                       on="documento_real", how="left")
+            tc_partes.append(merged_or[["uuid", "moneda", "tipo_cambio"]])
+            imp_partes.append(merged_or.dropna(subset=["importe_documento"])[["uuid", "importe_documento"]])
         else:
-            m = extract_moneda_documento(origen, docs_or["documento_real"].dropna().tolist())
+            m = extract_moneda_documento(origen, docs_list)
             if m.empty:
                 continue
-            m = m.rename(columns={"documento": "_llave"})
-            docs_or = docs_or.assign(_llave=docs_or["documento_real"])
-        tc_partes.append(docs_or.merge(m, on="_llave", how="left")[["uuid", "moneda", "tipo_cambio"]])
+            merged_or = docs_or.merge(m.rename(columns={"documento": "documento_real"}),
+                                       on="documento_real", how="left")
+            tc_partes.append(merged_or[["uuid", "moneda", "tipo_cambio"]])
+    importe_doc = (pd.concat(imp_partes, ignore_index=True).groupby("uuid")["importe_documento"].sum()
+                   .rename("importe_documento") if imp_partes
+                   else pd.Series(dtype=float, name="importe_documento"))
 
     if tc_partes:
         tc_df = pd.concat(tc_partes, ignore_index=True)
@@ -310,21 +337,6 @@ def calcular(periodo: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     print(f"     {len(refs_todas)} referencias de proveedor -> "
           f"{leasing['referencia'].nunique() if not leasing.empty else 0} con póliza de pago de arrendamiento, "
           f"{repartido['referencia'].nunique() if not repartido.empty else 0} con grupo de folios hermanos")
-
-    imp_partes = []
-    for origen in sorted(origenes["origen"].unique()):
-        if origen.upper() in ORIGEN_GRANULAR | ORIGEN_SIN_VALOR:
-            continue
-        docs_or = origenes.loc[origenes["origen"] == origen, "documento_real"].dropna().unique().tolist()
-        imp = extract_importe_documento(origen, docs_or)
-        if imp.empty:
-            continue
-        sub = origenes[origenes["origen"] == origen][["uuid", "documento_real"]].merge(
-            imp.rename(columns={"documento": "documento_real"}), on="documento_real", how="inner")
-        imp_partes.append(sub[["uuid", "importe_documento"]])
-    importe_doc = (pd.concat(imp_partes, ignore_index=True).groupby("uuid")["importe_documento"].sum()
-                   .rename("importe_documento") if imp_partes
-                   else pd.Series(dtype=float, name="importe_documento"))
 
     folios_gasto_todos = sorted({f for lista in (gasto_folios.tolist() if len(gasto_folios) else [])
                                  for f in (lista or [])})
