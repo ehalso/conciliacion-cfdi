@@ -19,6 +19,8 @@ import sys
 from decimal import Decimal
 from pathlib import Path
 
+import pandas as pd
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from extract_retencion import (  # noqa: E402
@@ -30,29 +32,36 @@ from extract_retencion import (  # noqa: E402
 from report import write_report  # noqa: E402
 
 
+def calcular(periodos: list[str], tolerancia: str = "1.00") -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Extrae y concilia, sin tocar el filesystem -- lo que reusa tanto
+    `run()` (CLI, escribe .xlsx) como el reporte Streamlit (solo necesita
+    los DataFrames en memoria, cacheados)."""
+    sat_df = extract_sat_retencion(periodos=periodos)
+    if sat_df.empty:
+        return sat_df, pd.DataFrame(columns=["estatus", "conteo", "monto_total_operacion"])
+
+    mpro_df = extract_mpro_retencion(sat_df["uuid"].tolist())
+    detalle = reconcile_retencion(sat_df, mpro_df, Decimal(tolerancia))
+    return detalle, resumen(detalle)
+
+
 def run(periodos: list[str], tolerancia: str = "1.00", salida: str | None = None):
     label = "-".join(periodos)
     salida = salida or f"output/retencion_{label}.xlsx"
     Path(salida).parent.mkdir(parents=True, exist_ok=True)
 
-    print(f"[1/4] Extrayendo SAT retención periodos={periodos} (raw_sat.cfdi_retencion) ...")
-    sat_df = extract_sat_retencion(periodos=periodos)
-    print(f"      {len(sat_df)} filas de raw_sat.cfdi_retencion")
+    print(f"[1/3] Extrayendo y conciliando periodos={periodos} (raw_sat.cfdi_retencion vs MPRO) ...")
+    detalle, resumen_df = calcular(periodos, tolerancia)
 
-    if sat_df.empty:
+    if detalle.empty:
         print("Sin datos SAT para ese/esos periodo(s), nada que conciliar.")
         return None, None
 
-    print(f"[2/4] Buscando {sat_df['uuid'].nunique()} UUIDs en Comprobante_Digital (MPRO) ...")
-    mpro_df = extract_mpro_retencion(sat_df["uuid"].tolist())
-    print(f"      {len(mpro_df)} UUIDs con alguna fila en MPRO")
-
-    print("[3/4] Conciliando ...")
-    detalle = reconcile_retencion(sat_df, mpro_df, Decimal(tolerancia))
-    resumen_df = resumen(detalle)
+    print(f"      {len(detalle)} CFDI de retención conciliados")
+    print("[2/3] Resumen:")
     print(resumen_df.to_string(index=False))
 
-    print(f"[4/4] Escribiendo reporte en {salida} ...")
+    print(f"[3/3] Escribiendo reporte en {salida} ...")
     write_report(detalle, resumen_df, salida)
     print("Listo.")
     return detalle, resumen_df

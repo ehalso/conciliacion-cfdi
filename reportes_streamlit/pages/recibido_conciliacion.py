@@ -1,26 +1,22 @@
 """
-TEMP-2 · Conciliación CFDI <-> mpro - con detalle de línea (baseline universal)
+Recibido · Conciliación (nivel póliza) - reporte Streamlit
 
-Misma conciliación que streamlit_app_conciliacion.py (TEMP-1), más la vista
-de detalle de línea: para las CFDI que cuadran por la vía "cargo = base
-CFDI", muestra las líneas reales de Poliza_Detalle / Gasto_Registro_Control
-que suman el cargo agregado ya validado. Logica de negocio en
-baseline_universal.calcular() / detalle_regla1() - este script solo la
-envuelve en UI, no la duplica.
+Interfaz interactiva sobre el método vigente de conciliación de CFDI
+recibidos: para cada CFDI se suma el cargo de TODOS los documentos con los
+que aparece etiquetado en mpro (Comprobante_Digital), sin importar el
+origen, y se compara contra la base fiscal del CFDI vía una cascada de
+once vías de cuadre. Lógica de negocio en baseline_universal.calcular() -
+este script solo la envuelve en UI, no la duplica.
 
-Orden de pestañas: Detalle primero, Conciliacion segunda (a diferencia de
-TEMP-1) — pedido explícito para comparar ambos layouts. Se navega junto con
-TEMP-1 desde streamlit_app.py (barra lateral, pages/).
+Consolida lo que antes eran dos páginas separadas (TEMP-1 sin detalle de
+línea, TEMP-2 con detalle) -- TEMP-2 era un superconjunto estricto de
+TEMP-1, así que se colapsan en una sola página con todas las pestañas.
 
-Metodologia completa: docs/investigacion_pendientes.md, docs/pendientes.md,
-docs/hallazgos.md (punto 27), PROGRESS.md.
+Metodología completa: docs/investigacion_pendientes.md, docs/pendientes.md,
+PROGRESS.md.
 
 Corre standalone con:
-  streamlit run streamlit_app_conciliacion_detalle.py --server.port 8508
-
-Requiere credenciales de conexión directa a BD (igual que main.py /
-baseline_universal.py) en un .env local — ver .env.example y
-src/bridge_client.py para el detalle.
+  streamlit run pages/recibido_conciliacion.py --server.port 8507
 """
 import os
 import sys
@@ -28,34 +24,31 @@ import sys
 import pandas as pd
 import streamlit as st
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+PAGES_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(PAGES_DIR))  # reportes_streamlit/ -> streamlit_common
 
 from streamlit_common import (  # noqa: E402
     PERIODOS_DISPONIBLES, VIA_CON_DETALLE, COLS_DISPLAY, DETALLE_COLS_DISPLAY, COLS_BASE,
     cargar_periodos, cargar_detalle_periodo, cargar_detalle_uuid, descarga_excel, aplica_filtros,
     calcular_universo, calcular_no_en_mpro, render_kpis, render_tab_no_en_mpro)
 
-VERSION = "v2"
+VERSION = "v1"
 
 COLS_DETALLE = ["uuid", "periodo", "rfc_emisor", "nombre_emisor", "origen", "documento",
                 "tipo", "importe", "cuenta", "cuenta_descripcion", "concepto", "centro_costo",
                 "subtotal", "cargo_agregado"]
 
 
-def _is_standalone():
-    return not hasattr(st, "_reconciliacion_embedded")
-
-
 def render():
-    st.title("TEMP-2 · Conciliacion CFDI <-> mpro")
-    st.caption(f"Version {VERSION} · Baseline universal + detalle de línea (regla 1)")
+    st.title("Recibido · Conciliación (nivel póliza)")
+    st.caption(f"Versión {VERSION} · Baseline universal, todos los orígenes")
     st.markdown(
         "Para cada CFDI se suma el cargo de **todos** los documentos de mpro con los que "
-        "aparece etiquetado (sin importar el origen/modulo) y se compara contra su base "
+        "aparece etiquetado (sin importar el origen/módulo) y se compara contra su base "
         "fiscal `(SubTotal - Descuento + IEPS + impuestos locales) x tipo de cambio` "
-        "mediante una cascada de once vias de cuadre. Chequeo de **un solo lado** (cargo) "
-        "— no exige que el abono/pago tambien cuadre. Detalle en la pestaña "
-        "**Documentacion**."
+        "mediante una cascada de once vías de cuadre. Chequeo de **un solo lado** (cargo) "
+        "— no exige que el abono/pago también cuadre. Detalle en la pestaña "
+        "**Documentación**."
     )
 
     with st.sidebar:
@@ -100,9 +93,9 @@ def render():
     conciliados_f = universo_f[universo_f["cuadra_agregado"]]
     pendientes_f = universo_f[~universo_f["cuadra_agregado"]]
 
-    # Detalle (regla 1): se carga aqui, antes de las pestañas, para poder
-    # ofrecer filtros de cuenta/centro de costo en la barra lateral con
-    # los valores reales ya en mano.
+    # Detalle (regla 1): se carga aquí, antes de las pestañas, para poder
+    # ofrecer filtros de cuenta/centro de costo en la barra lateral con los
+    # valores reales ya en mano.
     regla1_f = conciliados_f[conciliados_f["cuadra_via"] == VIA_CON_DETALLE]
     with st.spinner("Cargando detalle de línea del periodo..."):
         detalle_partes = [cargar_detalle_periodo(p) for p in periodos_sel]
@@ -130,46 +123,9 @@ def render():
 
     render_kpis(universo, universo_f, conciliados_f, pendientes_f, no_en_mpro)
 
-    # Orden pedido: Detalle primero, Conciliacion segunda.
-    tab_detalle, tab_conc, tab_pend, tab_no_mpro, tab_vias, tab_docs = st.tabs(
-        ["Detalle (regla 1)", "Conciliados", "Pendientes", "No encontrados en mpro",
-         "Por via / motivo", "Documentacion"])
-
-    with tab_detalle:
-        n_conciliados_total = len(conciliados_f)
-        pct_cubierto = f"{len(regla1_f)/n_conciliados_total*100:.1f}%" if n_conciliados_total else "—"
-        st.caption(
-            f"Líneas de póliza / control de gasto que suman el cargo de cada CFDI, solo para "
-            f"la vía **{VIA_CON_DETALLE}** ({len(regla1_f):,} de {n_conciliados_total:,} conciliados "
-            f"filtrados, {pct_cubierto}) — las diez vías especiales quedan pendientes "
-            f"(ver pestaña Documentación)."
-        )
-
-        if regla1_f.empty:
-            st.info("Ningún CFDI conciliado por esta vía con los filtros actuales.")
-        elif detalle_f.empty:
-            st.info("Ninguna línea con los filtros de cuenta/centro de costo actuales.")
-        else:
-            # Sanity en vivo (sobre detalle_base, sin los filtros de cuenta/
-            # centro de costo, que son solo de visualización): la suma de
-            # líneas debe reproducir cargo_agregado (validado 2026-09-09,
-            # ver docs/hallazgos.md #27).
-            suma_por_uuid = detalle_base.groupby("uuid")["importe"].sum()
-            referencia = regla1_f.set_index("uuid")["cargo_agregado"]
-            diff = (suma_por_uuid - referencia.reindex(suma_por_uuid.index)).abs()
-            n_mal = int((diff > 0.01).sum())
-            if n_mal:
-                st.warning(f"{n_mal} CFDI donde la suma de líneas no reproduce el cargo agregado — revisar.")
-            else:
-                st.success(f"Suma de líneas verificada contra el cargo agregado: {len(suma_por_uuid):,} CFDI OK.")
-
-            st.dataframe(detalle_f[COLS_DETALLE].rename(columns=DETALLE_COLS_DISPLAY),
-                         width="stretch", height=520, hide_index=True)
-            st.download_button(
-                "Descargar Excel (detalle de línea, filtrado)",
-                data=descarga_excel(detalle_f, COLS_DETALLE, "detalle", cols_display=DETALLE_COLS_DISPLAY),
-                file_name=f"detalle_regla1_{'-'.join(periodos_sel)}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    tab_conc, tab_pend, tab_no_mpro, tab_detalle, tab_vias, tab_docs = st.tabs(
+        ["Conciliados", "Pendientes", "No encontrados en mpro", "Detalle (regla 1)",
+         "Por vía / motivo", "Documentación"])
 
     with tab_conc:
         cols = COLS_BASE + ["cuadra_via"]
@@ -218,10 +174,42 @@ def render():
     with tab_no_mpro:
         render_tab_no_en_mpro(no_en_mpro_f, periodos_sel)
 
+    with tab_detalle:
+        n_conciliados_total = len(conciliados_f)
+        pct_cubierto = f"{len(regla1_f)/n_conciliados_total*100:.1f}%" if n_conciliados_total else "—"
+        st.caption(
+            f"Líneas de póliza / control de gasto que suman el cargo de cada CFDI, solo para "
+            f"la vía **{VIA_CON_DETALLE}** ({len(regla1_f):,} de {n_conciliados_total:,} conciliados "
+            f"filtrados, {pct_cubierto}) — las diez vías especiales quedan pendientes "
+            f"(ver pestaña Documentación)."
+        )
+
+        if regla1_f.empty:
+            st.info("Ningún CFDI conciliado por esta vía con los filtros actuales.")
+        elif detalle_f.empty:
+            st.info("Ninguna línea con los filtros de cuenta/centro de costo actuales.")
+        else:
+            suma_por_uuid = detalle_base.groupby("uuid")["importe"].sum()
+            referencia = regla1_f.set_index("uuid")["cargo_agregado"]
+            diff = (suma_por_uuid - referencia.reindex(suma_por_uuid.index)).abs()
+            n_mal = int((diff > 0.01).sum())
+            if n_mal:
+                st.warning(f"{n_mal} CFDI donde la suma de líneas no reproduce el cargo agregado — revisar.")
+            else:
+                st.success(f"Suma de líneas verificada contra el cargo agregado: {len(suma_por_uuid):,} CFDI OK.")
+
+            st.dataframe(detalle_f[COLS_DETALLE].rename(columns=DETALLE_COLS_DISPLAY),
+                         width="stretch", height=520, hide_index=True)
+            st.download_button(
+                "Descargar Excel (detalle de línea, filtrado)",
+                data=descarga_excel(detalle_f, COLS_DETALLE, "detalle", cols_display=DETALLE_COLS_DISPLAY),
+                file_name=f"detalle_regla1_{'-'.join(periodos_sel)}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
     with tab_vias:
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown("**Conciliados por via de cuadre**")
+            st.markdown("**Conciliados por vía de cuadre**")
             vias = conciliados_f["cuadra_via"].value_counts()
             if not vias.empty:
                 st.bar_chart(vias)
@@ -241,32 +229,37 @@ def render():
 
     with tab_docs:
         st.markdown(
-            "Metodologia completa, con evidencia caso por caso y la cascada de once vias "
+            "Metodología completa, con evidencia caso por caso y la cascada de once vías "
             "de cuadre, en:\n\n"
             "- `docs/investigacion_pendientes.md` — hallazgos que subieron el % de cuadre y "
-            "clasificacion de los pendientes que quedan.\n"
-            "- `docs/pendientes.md` — que falta y por que, por origen/tema.\n"
-            "- `docs/hallazgos.md` — bitacora numerada de bugs y patrones confirmados.\n"
-            "- `PROGRESS.md` — estado actual y como retomar el trabajo.\n\n"
+            "clasificación de los pendientes que quedan.\n"
+            "- `docs/pendientes.md` — qué falta y por qué, por origen/tema.\n"
+            "- `docs/hallazgos.md` — bitácora numerada de bugs y patrones confirmados.\n"
+            "- `PROGRESS.md` — estado actual y cómo retomar el trabajo.\n\n"
             "Este reporte solo envuelve en UI el resultado de "
-            "`baseline_universal.calcular()` — la logica de conciliacion vive ahi, no aqui.\n\n"
-            "**Detalle de linea** (pestaña *Detalle (regla 1)*, y el drill-down al seleccionar "
-            "una fila en *Conciliados*): muestra las lineas reales de `Poliza_Detalle` / "
+            "`baseline_universal.calcular()` — la lógica de conciliación vive ahí, no aquí.\n\n"
+            "**Detalle de línea** (pestaña *Detalle (regla 1)*, y el drill-down al seleccionar "
+            "una fila en *Conciliados*): muestra las líneas reales de `Poliza_Detalle` / "
             "`Gasto_Registro_Control` que suman el cargo agregado de cada CFDI. Cubre solo la "
             "vía *cargo = base CFDI* (~96% de los conciliados) — las diez vías especiales "
-            "(arrendamiento, folios hermanos, cheque agrupado, etc.) jalan lineas de documentos "
-            "que no son propios del CFDI y quedan pendientes. Logica en "
+            "(arrendamiento, folios hermanos, cheque agrupado, etc.) jalan líneas de documentos "
+            "que no son propios del CFDI y quedan pendientes. Lógica en "
             "`baseline_universal.detalle_regla1()` / `src/extract_detalle_lineas.py`; validado "
             "en vivo contra `cargo_agregado` con 100% de coincidencia — ver "
             "`docs/hallazgos.md` punto 27. Los filtros de Cuenta contable / Centro de costo de "
             "la barra lateral solo afectan la pestaña Detalle.\n\n"
-            "**No encontrados en mpro**: CFDI con valor monetario real que jamas se etiquetaron "
+            "**No encontrados en mpro**: CFDI de tipo Ingreso/Egreso que jamás se etiquetaron "
             "en `Comprobante_Digital` — no entran ni a Conciliados ni a Pendientes porque no hay "
-            "nada de mpro contra que compararlos."
+            "nada de mpro contra qué compararlos. Ver también la sección **Cruce SAT** para el "
+            "chequeo simétrico (independiente del ERP).\n\n"
+            "**Universo**: solo CFDI tipo Ingreso (I) o Egreso (E). Traslado (Carta Porte) y Pago "
+            "(REP) quedan fuera porque su `SubTotal`/`Total` viene en $0 por diseño del SAT — el "
+            "monto real de un Pago vive en su complemento, no en estos campos. Antes se usaba un "
+            "proxy (`Subtotal > $1`) que dejaba fuera del universo, y \"cuadraba\" por accidente "
+            "(dentro de la tolerancia de $1), a un puñado de CFDI I/E de valor simbólico (ej. "
+            "$0.01) — el filtro por tipo de comprobante es la regla real."
         )
 
 
-if _is_standalone():
-    st.set_page_config(page_title="TEMP-2 · Conciliacion CFDI (detalle)", layout="wide")
-
+st.set_page_config(page_title="Recibido · Conciliación", layout="wide")
 render()

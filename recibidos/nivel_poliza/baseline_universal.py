@@ -67,7 +67,16 @@ from extract_vias_extra import (cuadre_arrendamiento_financiero, cuadre_repartid
 
 TOL = 1.00
 TOL_RELATIVA = 0.00005  # 0.005% de la base: materialidad para redondeo de tipo de cambio
-SUBTOTAL_MIN = 1.00  # bajo esto se considera CFDI sin valor monetario (TRASLADO/COMPROBANTE_PAGO)
+
+# Universo comparado: solo Ingreso y Egreso -- Traslado (Carta Porte) y Pago
+# (REP) traen SubTotal/Total en $0 por diseño del SAT (el monto real de un
+# Pago vive en el complemento, no en estos campos; ver conciliacion_xml_lib.py
+# si se quiere incorporar ese universo más adelante). Antes se aproximaba
+# este filtro con `subtotal > $1`, que fallaba en 30 CFDI I/E de valor
+# simbólico (ej. $0.01) del periodo 2026-02: quedaban excluidos del universo
+# y además "cuadraban" por accidente contra cualquier cargo (la tolerancia de
+# $1 los cubre completos). Filtrar por tipo es la regla real, no un proxy.
+TIPOS_CON_VALOR = {"I", "E"}
 
 # Orígenes cuyo Pd_Referencia no liga de forma confiable al folio del
 # documento (ver poliza-explor/index.md) — se manejan aparte, no con el
@@ -375,7 +384,7 @@ def calcular(periodo: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     resumen["subtotal_ajustado"] = (resumen["subtotal"] + resumen["ajuste_local"]) * resumen["tipo_cambio"]
     resumen["total_mxn"] = resumen["total"] * resumen["tipo_cambio"]
     resumen["en_mpro"] = resumen["uuid"].isin(set(origenes["uuid"]))
-    resumen["monetario"] = resumen["subtotal"].abs() > SUBTOTAL_MIN
+    resumen["monetario"] = resumen["tipo_comprobante"].isin(TIPOS_CON_VALOR)
 
     # Tolerancia por materialidad: $1 fijo, o 0.005% de la base si es mayor.
     # El componente relativo cubre el redondeo de convertir moneda extranjera
@@ -739,7 +748,8 @@ def hoja_portada(ws, periodo, conciliados, pendientes, resumen):
         "",
         "Tolerancia: $1.00, o 0.005% de la base si es mayor (cubre el redondeo de convertir moneda extranjera).",
         "Se excluyen de la búsqueda de cargo TRASLADO y COMPROBANTE_PAGO (complementos SAT — Carta Porte y REP —",
-        "sin valor propio) y, del universo comparado, cualquier CFDI con Subtotal ≤ $1.",
+        "sin valor propio) y, del universo comparado, cualquier CFDI que no sea tipo Ingreso o Egreso (Traslado y",
+        "Pago traen SubTotal/Total en $0 por diseño del SAT, no por carecer de valor real).",
         "",
         "IMPORTANTE — esto es un chequeo de UN SOLO LADO (cargo = reconocimiento de inventario/gasto). NO exige",
         "que el abono (pago) también cuadre, a diferencia de baseline_conciliacion.py (COMPRA, doble chequeo).",
@@ -747,8 +757,8 @@ def hoja_portada(ws, periodo, conciliados, pendientes, resumen):
         "UNIVERSO",
         f"  • {n_total_cfdi} CFDI recibidos en el periodo.",
         f"  • {n_en_mpro} encontrados en mpro (al menos 1 etiqueta en Comprobante_Digital).",
-        f"  • {n_sin_valor} de esos son complementos sin valor monetario (Subtotal ≤ $1) — se excluyen del cuadre.",
-        f"  • {total_universo} CFDI con valor monetario real, encontrados en mpro — este es el universo comparado.",
+        f"  • {n_sin_valor} de esos son Traslado o Pago (no Ingreso/Egreso) — se excluyen del cuadre.",
+        f"  • {total_universo} CFDI tipo Ingreso/Egreso, encontrados en mpro — este es el universo comparado.",
         "",
         "RESULTADO",
         f"  • Conciliados: {len(conciliados)} CFDI  ({len(conciliados)/total_universo*100:.1f}%)" if total_universo else "  • Sin datos",
