@@ -10,7 +10,7 @@ póliza × cuenta contable × CECO).
 
 Es también la fuente de desarrollo de las páginas CONT-1/CONT-2 ("Layout de
 Gastos por CECO") que se copian a mano a `streamlit-reportes/contabilidad/`
-para producción — ver `reportes_streamlit/layout_gastos_ceco/` en este
+para producción — ver `reportes_streamlit/layout_gastos_poliza/` en este
 mismo repo para esa parte (UI), separada de la reconciliación (aquí).
 
 Ver `PROGRESS.md` y `RESUMEN_CASOS.md` para el detalle completo de método y

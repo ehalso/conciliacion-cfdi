@@ -136,7 +136,7 @@ de resumen y detalle, semaforeado por color.
   `streamlit-reportes` (el deployment de producción real, Docker +
   Cloudflare Tunnel en `reportes.frento.com.mx`) cuando maduren. Correr con
   `streamlit run reportes_streamlit/streamlit_app.py` (recibidos) o
-  `streamlit run reportes_streamlit/layout_gastos_ceco/streamlit_app.py`
+  `streamlit run reportes_streamlit/layout_gastos_poliza/streamlit_app.py`
   (CECO).
 
 ## Estructura de código compartido
