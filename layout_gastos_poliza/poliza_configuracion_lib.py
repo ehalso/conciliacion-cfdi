@@ -66,6 +66,12 @@ def reconstruir_config(cve: str, empresa: str, fecha_ini: str, fecha_fin: str) -
 
     partes = []
     for _, r in cargos.iterrows():
+        # Pcd_Condicion puede venir vacio (renglon sin condicion extra, valido)
+        # -- envolverlo tal cual como "()" es SQL invalido. Confirmado
+        # 2026-09-11 generalizando reconstruir_config() a las ~40 configs
+        # del universo de layout_gastos_60col/ (antes solo se habia probado
+        # con 0450, que no tiene ningun renglon con condicion vacia).
+        cond_sql = r.cond if r.cond and r.cond.strip() else "1=1"
         partes.append(f"""
         SELECT '{r.Pcd_ID}' AS RENGLON,
                Gasto_Registro.Gr_Folio AS FOLIO,
@@ -76,7 +82,7 @@ def reconstruir_config(cve: str, empresa: str, fecha_ini: str, fecha_fin: str) -
                Gasto_Registro_Control.Grd_ID AS GRD_ID
         FROM {rel_cab}
         {r.rel}
-        WHERE {where_glob} AND ({r.cond})
+        WHERE {where_glob} AND ({cond_sql})
           AND Gasto_Registro.Gr_Fecha >= '{fecha_ini}' AND Gasto_Registro.Gr_Fecha < '{fecha_fin}'
           AND Gasto_Registro.Es_Cve_Estado <> 'CA'
         """)
