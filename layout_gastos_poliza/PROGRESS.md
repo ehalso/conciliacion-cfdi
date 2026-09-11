@@ -849,3 +849,211 @@ de prueba (REP de JJ Remolques) tras el cambio de universo.
 `0.0.0.0:8506` (PID persistente desde 2026-09-04); como los archivos son
 leídos directo del disco (no hay build/Docker de por medio), los cambios
 quedan disponibles de inmediato para sesiones nuevas del navegador.
+
+## 2026-09-11 -- HITO: construido el layout de 60 columnas del Word (requerimiento original de Contabilidad), scripts `18`-`25`
+
+Hasta ahora este directorio resolvía la reconciliación Cargo/Abono por
+CECO (base de CONT-1/CONT-2). Esta sesión retomó el objetivo original que
+le da nombre al proyecto padre (`layout-gastos`): el requerimiento real de
+Contabilidad para la auditoría externa trimestral (Bates y Asociados),
+transcrito en `layout_gastos_60col/legado/layout-gastos-streamlit-claude/
+docs/00_requerimiento.md` (rescatado de `~/backups/`, nunca antes leído
+completo por ninguna sesión de este repo). Alcance del Word: solo
+`GASTO_REGISTRO`, excluye `CONSUMO_INTERNO`/`GASTO_REGISTRO_NOMINA`
+explícitamente (después ampliado, ver más abajo) -- dos vistas (detalle N
+filas/folio, agrupada 1 fila/folio salvo 2+ cuentas), criterio de
+aceptación cuantitativo: **suma de Cargo/Abono == reporte nativo de
+gastos**.
+
+### Hallazgo central: `reconstruir_config()` resuelve un problema que este entregable no necesita
+
+El script `18_generalizar_reconstruccion_configs.py` (nuevo) generalizó
+`reconstruir_config()` (14/15/`poliza_configuracion_lib.py`) de la config
+`0450` a las 44 configs reales de los 5 orígenes del Word -- **99.74%/
+99.39% de cobertura (folios/Cargo $)**, **100.00% exacto** aplicando la
+regla de reversión ya conocida. En el camino se corrigió un bug real en
+`poliza_configuracion_lib.reconstruir_config()`: `Pcd_Condicion` vacío
+(renglón sin condición extra, caso válido) se envolvía como `()`, SQL
+inválido -- fix de una línea (`cond_sql = r.cond if r.cond.strip() else
+"1=1"`), aditivo, sin riesgo para `0450`. Con eso, cruzado contra
+rank-pairing (`layout_gastos_lib.py`, producción de CONT-1/2): **100%
+coincide** donde ambas técnicas tienen dato.
+
+Pero al revisar el requerimiento completo, **`reconstruir_config()`
+resuelve un problema que el Word no pide**: atribuir cada línea de póliza
+a su `Tipo_Gasto` de origen (algo que sí necesita CONT-1/2 para poder
+reportar esa columna, pero el Word nunca la pide). Sin esa necesidad, el
+**JOIN DIRECTO** a `Poliza_Detalle` por `Pd_Referencia = Gr_Folio`
+(idéntico a `layout_gastos_60col/legado/layout-gastos-pasos/docs/queries/
+gastos/v03_detalle_cuenta_centro_costo.sql`, ya "100% reconciliado" según
+`RESUMEN_CASOS.md`) da Cargo/Abono exactos, sin ambigüedad, leyendo
+`Pd_Tipo` directo -- **sin rank-pairing y sin la regla de reversión**
+(esa regla existía solo para compensar que `reconstruir_config()` no lee
+`Pd_Tipo`). Confirmado con un folio de reversión real (`01-0035793`,
+$100,000): 2 líneas reales en `Poliza_Detalle`, una Cargo (Provisión, sin
+CECO) y una Abono (Honorarios, con CECO) -- el propio `CONCEPTO_POLIZA`
+dice "PROVISION HONORARIO C.E. **NEGATIVO**", dato que no teníamos antes.
+
+**Además, `reconstruir_config()` no podía cubrir `GASTO_RECLASIFICACION`
+completo** -- solo reconstruye renglones tipo Cargo de la config `0371`,
+nunca el lado Abono del par espejo. El join directo captura ambos lados
+sin ningún caso especial (confirmado: Cargo-Abono da $0.00 exacto para
+los 44 folios de este origen).
+
+`reconstruir_config()`/script `18` **no se descarta** -- queda como
+cross-check independiente ya hecho, no como fuente. Nuevo script:
+`24_bloque_poliza_directo.py`.
+
+### Los 4 bloques del layout, cada uno un script nuevo
+
+- **`19_bloque_impuestos.py`** (columnas 19-40) -- adaptado de
+  `layout-gastos-pasos/docs/queries/gastos/v5_impuestos_layout.sql`.
+  Hallazgo: comparar contra `TOTAL` (`Grd_Precio_Neto_Importe`, YA
+  incluye IVA) da **0% de cuadre** en `CONTROL_COMBUSTIBLE`/`VIAJE`/
+  `ORDEN_COMPRA` -- el Cargo real se postea NETO de IVA (el IVA
+  acreditable va a su propia cuenta). Corregido comparando contra
+  `SUBTOTAL_NETO` (`Grd_Precio_Descontado_Importe`, mismo campo que
+  `IMPORTE_FOLIO_SQL`): **99.98%** (4,258/4,259, ene-mar), el único
+  residual es el ya conocido límite de rank-pairing en `COMPROBACION_
+  GASTO` (fondo fijo/82 CECOs). **Validado contra el reporte NATIVO de
+  MPro** (no algo que derivamos nosotros): enero 2026, 5 orígenes del
+  Word, coincide exacto ($0.00 de diferencia) contra
+  `gastos_por_documento_enero_26.xlsx` documentado en
+  `layout-gastos-pasos/README.md` (Paso 1/2) -- 1,425 folios,
+  SUBTOTAL_NETO $22,283,791.24, IMPUESTO $1,084,277.23, TOTAL
+  $23,368,068.46. Flag `--verificar-baseline-enero2026` para re-correr
+  este chequeo como prueba de regresión.
+- **`21_impuestos_por_ceco.py`** -- baja el bloque impuestos de grano
+  FOLIO a grano FOLIO×CECO usando `Gasto_Registro_Control.Grc_Factor`
+  (campo NATIVO de peso, confirmado que suma 1.0 exacto por documento,
+  desde 1 centro hasta 79) en vez de repetir el total de folio en cada
+  línea de CECO -- necesario para poder sumar impuestos a cualquier
+  nivel de agregación sin inflar (19.3% de los documentos, 1,033 de
+  5,340, se reparten en 2+ centros).
+- **`22_bloque_proveedor_pago.py`** (columnas 1-18) -- adaptado de
+  `etapa6_columnas_1_18.sql`. 91.8%-100% de cobertura, consistente con
+  agosto. **Hallazgo real, sin corregir todavía**: `MONTO_COBRADO`
+  infla **41.6%** ($8.73M de $21M, enero-marzo) cuando un `Cxp_Folio`
+  se comparte entre varios folios (factura consolidada, hasta 31
+  folios bajo el mismo pago -- mismo patrón de `CONTROL_COMBUSTIBLE`/
+  `GASTO_DIRECTO` ya documentado en otro contexto) -- sumar por folio
+  cuenta el mismo pago real una vez por cada folio que lo comparte.
+  Decisión explícita: dejarlo así por ahora (no prorratear ni marcar),
+  documentado como pendiente.
+- **`23_bloque_xml_concepto.py`** (columnas 41-52, 44-46) -- adaptado
+  de `uuid_factura.sql`/`xml_detalle.sql`/`concepto_y_uso_cfdi.sql`.
+  Match `Cd_Documento LIKE folio+'%'` (comodín amplio, sin filtrar por
+  `LEN`) -- **no hereda el bug de formato 14/18** que sí afectaba a
+  `poliza_configuracion_lib.xml_gasto_registro()`.
+- **`25_consolidado_final.py`** -- une los 4 bloques por `FOLIO`
+  (impuestos también por `CECO`) sobre el grano de detalle real
+  (`FOLIO x POLIZA x CUENTA x CECO`). 52 columnas. Confirmado con el
+  usuario: **un solo reporte basta**, no hace falta partir en dos por
+  grano distinto, siempre que cada bloque se pueda atribuir
+  correctamente al grano más fino (que es justo lo que se logró con
+  `Grc_Factor`).
+
+### Ampliación de alcance: `GASTO_REGISTRO_NOMINA` + `CONSUMO_INTERNO`
+
+Después de cerrar el alcance original del Word, se amplió a los 7
+orígenes completos.
+
+**`GASTO_REGISTRO_NOMINA`**: funciona **sin ningún cambio** en el join
+directo -- 99 folios/$10,590,952.94 en enero 2026, exacto contra el
+`$10.59M` ya documentado en `layout-gastos-pasos/README.md`. Investigado
+a fondo por qué `MONTO_COBRADO`/UUID salen vacíos (esperado, pero no
+confirmado hasta ahora):
+- `Gr_Genera_Cxp = 'NO'` en el 100% de los folios de nómina -- bandera
+  nativa del sistema, nómina no pasa por CXP por diseño (se paga por
+  dispersión bancaria directa, un proceso separado).
+- `CLAVE_PROVEEDOR`/`RFC_PROVEEDOR` en nómina **no son un proveedor
+  real** -- son 4 cuentas de pasivo placeholder (`SYP - SUELDOS Y
+  SALARIOS POR PAGAR`, `VACACIONES POR PAGAR`, `VALES DE DESPENSA POR
+  PAGAR`, `AGUINALDOS POR PAGAR`), las 4 con el RFC genérico
+  `XAXX010101000` ("público en general"). Documentar esto explícito en
+  cualquier entregable -- fácil de confundir con un proveedor real.
+- **`Comprobante_Digital.Cd_Tabla='NOMINA'`** (69,766 filas totales)
+  **dejó de alimentarse en 2022** (`MAX(Cd_Timbre_Fecha) = 2022-12-31`,
+  cero registros después) -- confirmado buscando SIN restringir
+  `Cd_Tabla` en absoluto contra 15 folios de nómina de enero 2026: los
+  únicos "hits" son coincidencias falsas de número de folio con
+  documentos de `CHEQUE`/`FACTURA`/`TRASLADO` de otros módulos/años
+  (ej. `01-0034715` "matchea" un `CHEQUE` de 2021-11-22, folio de
+  numeración independiente). **Conclusión: hoy (2026) la nómina se
+  timbra en un sistema externo no integrado con esta base** -- el
+  vacío de XML/UUID es correcto, no un hueco de la query.
+
+**`CONSUMO_INTERNO`**: filtro de doble póliza (memo de inventario vs.
+gasto real) igual al ya validado, por `Pl_Comentario` NOT LIKE
+`'%CUENTAS DE ORDEN%'`/`'%CTS ORDEN%'`/`'%CUENTA ORDEN%'`. Se probó la
+alternativa "más robusta" que quedaba pendiente en `trivasa-context`
+(filtrar por raíz de cuenta `6xxx` en vez de comentario) -- **descartada**:
+excluye 1,319 de 2,970 folios legítimos (muchas cuentas de gasto real de
+este origen NO son raíz `6xxx`). El filtro de comentario, pese a su bug
+conocido, es muchísimo más completo.
+
+**Bug real encontrado, documentado, no corregido**: folio `05-0174748`
+("LLANTA PONCHADA") tiene **4 pólizas reales** (configs `0274`/`0277`/
+`0234`/`0396`), no 2 como asume el diseño memo/gasto-real. El filtro de
+comentario excluye correctamente las 2 de memo (`10500.012.003`,
+comentario con "orden"), pero **una tercera póliza tipo "Provisión"**
+(`2120.010.004.005.002`, config `0274`, comentario "CONSUMO INTERNO
+LLANTAS DEL..." -- sin la palabra "orden") se escapa y duplica el Cargo
+real ($64.51 x2 = $129.02 en vez de $64.51). Probado también filtrar por
+`Poliza_Configuracion.Pc_Descripcion` en vez de `Pl_Comentario` -- **no
+resuelve nada**, la config `0274` tampoco menciona "orden" en su
+descripción. Cuantificado a escala: **1 combinación (FOLIO,CECO) de
+9,090 en todo ene-mar 2026** -- extremadamente raro, no vale la pena una
+regla nueva para cerrarlo. **Corrige la documentación previa**: este
+folio NO es uno de los "2-3 folios genuinamente sin póliza" que se
+creía -- sí tiene póliza(s), el problema es de sobra, no de falta.
+
+**Rama de capitalización de activo fijo, reincorporada** (configs
+`0295`/`0414`, resuelta 2026-09-08 en `12_reporte_base_ceco_consumo_
+interno.py` pero **nunca portada a producción** -- ni a `layout_gastos_
+lib.py`/CONT-1/2, ni usada hasta ahora en este trabajo). `Pd_Referencia`
+de estas pólizas es `Gasto_Registro.Gr_Referencia` (código corto de
+proyecto, ej. "445"), no `Gr_Folio` -- el join directo nunca las
+encuentra por sí solo (tampoco hay riesgo de doble conteo entre las dos
+consultas). `Gr_Referencia` no es único dentro de una póliza -- se
+resuelve con rank-pairing por `(POLIZA, REFERENCIA)`, la única excepción
+al principio "sin rank-pairing" de este script, justificada porque aquí
+sí falta una llave real (no hay forma de evitarlo, a diferencia de los
+demás casos). Con la rama incorporada: `CONSUMO_INTERNO` enero 2026 pasa
+de 2,950 a **2,970 folios exactos** (el número esperado), Cargo
+$6,594,596.21 (esperado $6,594,522.55 -- diff $73.66, los 2 residuales ya
+conocidos que reparten en más de 1 centro).
+
+### Validación final, universo completo (7 orígenes)
+
+Consolidado final (`25`) con los 7 orígenes, enero 2026: **CARGO-ABONO =
+$39,469,326.09** vs. baseline nativo completo (`paso1`, incluye
+NOMINA+CONSUMO_INTERNO) **$39,469,269.50** -- diferencia de solo **$56.59
+(0.00014%)**, mismo redondeo de siempre (`Poliza_Detalle` postea
+redondeado a centavos, los campos nativos de `Gasto_Registro_Documento`
+no). Bloque impuestos, mismo universo: coincide **exacto a $0.00** contra
+el mismo baseline en las 4 cifras (folios, SUBTOTAL_NETO, IMPUESTO,
+TOTAL) -- confirma que NOMINA/CONSUMO_INTERNO aportan $0 de impuesto
+(esperado, ninguno de los dos tiene IVA/retención).
+
+CSV consolidado final: `layout_gastos_60col/CONSOLIDADO_<fi>_<ff>.csv`
+(52 columnas, gitignored -- se regenera corriendo `25_consolidado_
+final.py`). Gaps permanentes documentados, sin fuente identificada:
+`FACTURA_REF`, `DESCUENTO`/`DESCUENTO_GLOBAL` (placeholder `NULL`, igual
+que el legado).
+
+**Pendiente real, sin cerrar**:
+- `MONTO_COBRADO`: fan-out del `Cxp_Folio` compartido (41.6% de
+  inflación) -- decidido dejarlo así por ahora, no prorratear.
+- "2 órdenes de compra con doble cargo" (mencionado en
+  `layout-gastos-pasos/paso4d_drill_down_4_pendientes_207.py`, agosto) --
+  nunca se revisó en esta sesión.
+- Vista **agrupada por cuenta contable** (1 fila/folio, la segunda vista
+  que pide el Word) -- solo se construyó la vista detalle; la agrupada
+  es un `groupby(FOLIO, CUENTA_REGISTRO)` sobre el mismo CSV, no
+  debería requerir tocar la base de datos otra vez.
+- Nota aclaratoria en el CSV/documentación de que `CLAVE_PROVEEDOR`/
+  `RFC_PROVEEDOR`/`NOMBRE_PROVEEDOR` en filas de `GASTO_REGISTRO_NOMINA`
+  son cuentas de pasivo placeholder, no un proveedor real -- pendiente
+  de decidir si se agrega una columna/flag explícito o basta con la
+  documentación.
