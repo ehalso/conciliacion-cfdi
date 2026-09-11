@@ -60,6 +60,7 @@ from extract_poliza_por_origen import extract_poliza_por_origen, extract_poliza_
 from extract_gasto_registro import extract_gasto_registro_granular  # noqa: E402
 from extract_detalle_lineas import extract_lineas_poliza, extract_lineas_gasto_registro, DETALLE_COLS  # noqa: E402
 from extract_moneda import extract_moneda_documento  # noqa: E402
+from extract_empresa import filtra_empresa_trivasa  # noqa: E402
 from extract_vias_extra import (cuadre_arrendamiento_financiero, cuadre_repartido_por_referencia,  # noqa: E402
                                 resumen_folios_gasto, cuadre_cheque_agrupado,
                                 extract_moneda_e_importe_documento, extract_referencia_cxp,
@@ -174,6 +175,12 @@ def calcular(periodo: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     origenes = origenes.drop_duplicates(subset=["uuid", "origen_up", "_dedup_doc"]).drop(columns=["_dedup_doc"])
     print(f"     {origenes['uuid'].nunique()} CFDI con al menos 1 etiqueta en mpro"
           f" ({len(origenes)} etiquetas documento, algunos CFDI tienen varias)")
+
+    print("[2b/5] Filtrando ruido intercompañía (Comprobante_Digital es compartida entre empresas del mpro)")
+    n_antes = len(origenes)
+    origenes = filtra_empresa_trivasa(origenes)
+    print(f"     {n_antes - len(origenes)} etiquetas descartadas por no ser de la empresa Trivasa"
+          f" (quedan {len(origenes)}, {origenes['uuid'].nunique()} CFDI con al menos 1 etiqueta propia)")
 
     print("[3/5] Cargo por documento, para cada origen presente (genérico, excluye cuentas de orden)")
     origenes_cargo = sorted(o for o in origenes["origen"].unique()
@@ -634,6 +641,9 @@ def detalle_regla1(uuids: list[str]) -> pd.DataFrame:
     origenes["_dedup_doc"] = origenes["documento_real"].where(
         ~origenes["origen_up"].isin(ORIGEN_GRANULAR), origenes["documento"].str.slice(0, 14))
     origenes = origenes.drop_duplicates(subset=["uuid", "origen_up", "_dedup_doc"]).drop(columns=["_dedup_doc"])
+    origenes = filtra_empresa_trivasa(origenes)
+    if origenes.empty:
+        return pd.DataFrame(columns=["uuid"] + DETALLE_COLS)
 
     partes = []
 
