@@ -116,6 +116,7 @@ from extract_sat import extract_sat_emitidos  # noqa: E402
 from extract_origen import extract_origenes_por_uuids  # noqa: E402
 from extract_poliza_por_origen import extract_poliza_factura, extract_poliza_nota_credito  # noqa: E402
 from extract_moneda import extract_moneda_documento  # noqa: E402
+from extract_empresa import filtra_empresa_trivasa  # noqa: E402
 
 TOL = 1.00
 TOL_RELATIVA = 0.00005
@@ -168,6 +169,13 @@ def calcular(periodo: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     origenes = origenes.drop_duplicates(subset=["uuid", "origen_up", "documento"])
     print(f"     {origenes['uuid'].nunique()} CFDI con al menos 1 etiqueta en mpro"
           f" ({len(origenes)} etiquetas documento)")
+
+    print("[2b/4] Filtrando ruido intercompañía (Comprobante_Digital es compartida entre empresas del mpro)")
+    n_antes = len(origenes)
+    origenes["documento_real"] = origenes["documento"]
+    origenes = filtra_empresa_trivasa(origenes).drop(columns=["documento_real"])
+    print(f"     {n_antes - len(origenes)} etiquetas descartadas por no ser de la empresa Trivasa"
+          f" (quedan {len(origenes)}, {origenes['uuid'].nunique()} CFDI con al menos 1 etiqueta propia)")
 
     print("[3/4] Cargo/abono por documento (FACTURA vía Venta_Encabezado->VENTA, NOTA_CREDITO por cuenta 4200 vs resto)")
     # Dos "cubetas" de importe reconocido, cada una contra su propia base
