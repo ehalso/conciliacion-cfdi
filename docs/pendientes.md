@@ -18,9 +18,40 @@ lo genuinamente accionable:
 - **CONAGUA (4 CFDI, $12,187)**: captura parcial real confirmada (solo
   actualización + recargos, no los derechos de agua). Vale la pena
   preguntar a Trivasa si es intencional.
-- **Cheque `01-0060062`** (FABRICA DE IMPLEMENTOS, 3 CFDI de feb-2026): la
-  etiqueta apunta a un folio de cheque de enero 2024 — parece un error de
-  captura, vale la pena confirmar el folio correcto.
+- **Cheque `01-0060062`** (FABRICA DE IMPLEMENTOS MINEROS, RFC FIM700102AU6):
+  confirmado en vivo 2026-09-11 — son **8 CFDI en total** (no solo los 3 de
+  feb-2026), fechados 2024-01-11, 2024-09-03, 2025-11-06 (×2), 2026-01-30,
+  2026-02-23, 2026-02-24, 2026-02-25, que suman **$60,395.38** contra un
+  cheque de **$626,916.82** (2024-01-15, "ANTICIPO C/F A987 T.C 16.9898 BIEN
+  O SERVICIO" — anticipo en USD). Póliza real del cheque: `Pl_Folio
+  0000395288` (activa; hay una cancelada idéntica, `0000367538`) — ninguna
+  liga a estos 8 CFDI por `Pd_Referencia`. Sigue sin resolver: no se
+  confirmó el folio correcto ni si es un error de captura o un anticipo que
+  se va aplicando (sin método propio para ese patrón — ver el caso análogo
+  de `ANTICIPO_CXP` en la línea de abajo).
+  **Pista de Esteban para investigar la relación real (2026-09-11, sin
+  confirmar todavía)**: para el UUID `E12E90BC-4C4A-5BF0-B01F-A406D28F7F99`
+  (uno de los 8, CFDI `01-00600620007`, 2026-02-24, $6,234.98), la liga
+  correcta pasaría por la **`Pl_Folio 476319`** (póliza del 2026-02-25) — no
+  por las pólizas del propio cheque (`395288`/`367538`) que hoy usa
+  `extract_poliza_cheque()`. Falta seguir esta pista: qué hay en `Pl_Folio
+  476319` (revisado en esta sesión: aparece como `Pc_Tabla='PAGO_CXP'`,
+  `Pc_Documento` `01-0095069...`/`07-0015318...`, con renglones de
+  `DEVOLUCION` y referencia `2007587` — ninguno de esos folios calza a
+  simple vista con el cheque `01-0060062` ni con el CFDI; falta entender el
+  mecanismo que sí los conecta, quizá vía `Aplicacion_Nota_Credito_Compra`/
+  `Aplicacion_Indirecto` u otra tabla de aplicación de anticipo/nota de
+  crédito de proveedor — exploradas en esta sesión sin encontrar la liga
+  directa).
+- **`ANTICIPO_CXP` sin método de cargo propio** (confirmado 2026-09-11, CFDI
+  `6CDC03DF...`, feb-2026): el origen no está en `FUENTES`/`IMPORTE_DOCUMENTO`
+  de ningún extractor, así que el genérico nunca lo cuadra aunque el
+  documento sí exista y sea real — ej. anticipo real a Triturados de
+  Valladolid (`Anticipo_CXP` folio `01-0005881`, $180,000, pagado por
+  cheque) aplicado solo parcialmente contra un CFDI de $77,384.98. Mismo
+  patrón de fondo que el cheque `01-0060062` de arriba: un anticipo grande
+  que se va aplicando contra varios CFDI chicos, sin que el pipeline sepa
+  sumarlos ni aislar la aplicación parcial correcta.
 - Nómina (IMSS/INFONAVIT, 20 CFDI, $10.3M) y los residuales de agencia
   aduanal/otros: **no requieren trabajo** — confirmado con Esteban
   (2026-09-10) que son errores de captura reales o límites de alcance, no
