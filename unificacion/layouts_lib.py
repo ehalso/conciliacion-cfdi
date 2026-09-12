@@ -275,6 +275,102 @@ LAYOUTS = {
 # contra un universo honesto en vez de esconder el hueco.
 SIN_LAYOUT = ("CHEQUE", "ANTICIPO_CXP")
 
+# Estados del documento de mpro frente al SAT.
+CONCILIADO = "CONCILIADO"                # UUID existe en raw_sat como I/E
+UUID_FUERA_IE = "UUID_NO_ES_I_NI_E"      # UUID existe en el SAT pero es P/N/T
+UUID_NO_EN_SAT = "UUID_NO_EN_SAT"        # mpro tiene UUID que el SAT no conoce
+SIN_UUID = "SIN_UUID_EN_MPRO"            # documento sin comprobante digital
+
+# Sub-origenes que por definicion no generan un CFDI Recibido I/E. Medidos en
+# la corrida sin filtrar de feb-2026, los tres dan 0.0% de conciliacion sobre
+# 5,230 documentos, que es la evidencia de que no pertenecen al universo y no
+# un hueco por resolver:
+#   GASTO_REGISTRO_NOMINA  — la nomina timbra CFDI tipo N, no I/E
+#   CONSUMO_INTERNO        — movimiento interno, no hay proveedor que facture
+#   GASTO_RECLASIFICACION  — reasienta gasto ya registrado, importe neto cero
+SIN_CFDI_POR_DEFINICION = {
+    ("GASTO_REGISTRO", "GASTO_REGISTRO_NOMINA"),
+    ("GASTO_REGISTRO", "CONSUMO_INTERNO"),
+    ("GASTO_REGISTRO", "GASTO_RECLASIFICACION"),
+}
+
+
+def cargar_sat() -> pd.DataFrame:
+    sql = """
+SELECT upper(trim(uuid)) AS uuid, tipo_comprobante, periodo, total AS total_sat,
+       subtotal AS subtotal_sat, rfc_emisor
+FROM raw_sat.cfdi_recibidos
+"""
+    res = run_query("postgres_dw", sql)
+    sat = pd.DataFrame(res["rows"], columns=res["columns"])
+    sat["total_sat"] = pd.to_numeric(sat["total_sat"], errors="coerce").fillna(0.0)
+    sat["subtotal_sat"] = pd.to_numeric(sat["subtotal_sat"], errors="coerce").fillna(0.0)
+    return sat.drop_duplicates(subset="uuid")
+
+
+def clasificar(mpro: pd.DataFrame, sat: pd.DataFrame) -> pd.DataFrame:
+    """Cruza el layout unificado de mpro contra el SAT y etiqueta cada
+    documento con su estado (CONCILIADO / UUID_FUERA_IE / UUID_NO_EN_SAT /
+    SIN_UUID)."""
+    df = mpro.merge(sat, on="uuid", how="left", suffixes=("", "_sat"))
+    tiene_uuid = df["uuid"] != ""
+    en_sat = df["tipo_comprobante"].notna()
+    es_ie = df["tipo_comprobante"].isin(["I", "E"])
+
+    df["estado"] = SIN_UUID
+    df.loc[tiene_uuid & ~en_sat, "estado"] = UUID_NO_EN_SAT
+    df.loc[tiene_uuid & en_sat & ~es_ie, "estado"] = UUID_FUERA_IE
+    df.loc[tiene_uuid & en_sat & es_ie, "estado"] = CONCILIADO
+    return df
+
+
+def cobertura_sat(conc: pd.DataFrame, periodos: list[str]) -> pd.DataFrame:
+    """Cuanto del universo SAT del periodo alcanza a explicar este cruce.
+
+    Es el puente con el reporte SAT -> mpro (pages/recibido_conciliacion.py):
+    alli el universo es el CFDI y aqui el documento de mpro, asi que los
+    porcentajes no son comparables, pero el importe alcanzado si deberia
+    parecerse.
+    """
+    lista = ", ".join(f"'{p}'" for p in periodos)
+    sql = f"""
+SELECT periodo, tipo_comprobante, COUNT(*) AS cfdi, SUM(total) AS total_sat
+FROM raw_sat.cfdi_recibidos
+WHERE tipo_comprobante IN ('I','E') AND periodo IN ({lista})
+GROUP BY periodo, tipo_comprobante
+"""
+    res = run_query("postgres_dw", sql)
+    universo = pd.DataFrame(res["rows"], columns=res["columns"])
+    universo["total_sat"] = pd.to_numeric(universo["total_sat"], errors="coerce").fillna(0.0)
+
+    alcanzado = (conc.drop_duplicates("uuid")
+                 .groupby(["periodo", "tipo_comprobante"])
+                 .agg(cfdi_alcanzados=("uuid", "size"), total_alcanzado=("total_sat", "sum"))
+                 .reset_index())
+    out = universo.merge(alcanzado, on=["periodo", "tipo_comprobante"], how="left").fillna(0)
+    out["pct_cfdi"] = (out["cfdi_alcanzados"] / out["cfdi"] * 100).round(1)
+    out["pct_importe"] = (out["total_alcanzado"] / out["total_sat"] * 100).round(1)
+    return out
+
+
+def tabla_por(df: pd.DataFrame, columnas: list[str]) -> pd.DataFrame:
+    """Documentos e importe mpro por corte, con su % conciliado."""
+    if df.empty:
+        cols = columnas + ["docs", "importe_mpro", "docs_conc", "importe_conc", "pct_docs", "pct_importe"]
+        return pd.DataFrame(columns=cols)
+    g = df.groupby(columnas, dropna=False)
+    out = g.agg(
+        docs=("folio", "size"),
+        importe_mpro=("total", "sum"),
+        docs_conc=("estado", lambda s: (s == CONCILIADO).sum()),
+    ).reset_index()
+    conc = df[df["estado"] == CONCILIADO].groupby(columnas, dropna=False)["total"].sum()
+    out = out.merge(conc.rename("importe_conc").reset_index(), on=columnas, how="left")
+    out["importe_conc"] = out["importe_conc"].fillna(0.0)
+    out["pct_docs"] = (out["docs_conc"] / out["docs"] * 100).round(1)
+    out["pct_importe"] = (out["importe_conc"] / out["importe_mpro"].replace(0, float("nan")) * 100).round(1)
+    return out.sort_values("importe_mpro", ascending=False)
+
 
 def cargar_documentos(fecha_ini: str, fecha_fin: str, empresa: str = "0001") -> pd.DataFrame:
     """Layout unificado a grano documento. Fechas en 'YYYYMMDD'."""

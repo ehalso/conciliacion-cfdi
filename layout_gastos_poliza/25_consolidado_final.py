@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
-load_dotenv("/home/esteban/ehalso/conciliacion-cfdi/.env")  # worktree no trae .env (no versionado)
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")  # ruta relativa -- no asumir usuario/maquina
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 

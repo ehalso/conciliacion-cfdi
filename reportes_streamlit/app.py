@@ -32,7 +32,20 @@ pg = st.navigation({
         st.Page("pages/retencion_cruce_sat.py", title="Cruce SAT", icon="🔍"),
     ],
     "Layout de Gastos": [
-        st.Page("pages/layout_gastos.py", title="Layout de Gastos", icon="🧮"),
+        st.Page("layout_gastos_poliza/pages/1_CONT-1_Layout_Gastos_CECO.py",
+                title="Por CECO (CONT-1)", icon="🧮"),
+        st.Page("layout_gastos_poliza/pages/2_CONT-2_Layout_Gastos_CECO_con_Nomina.py",
+                title="Por CECO, con Nómina (CONT-2)", icon="🧮"),
+        st.Page("layout_gastos_poliza/pages/3_CONT-4_Layout_Gastos_por_Documento_XML.py",
+                title="Por Documento, vs XML · exploratorio (CONT-4)", icon="🧾"),
+        st.Page("layout_gastos_poliza/pages/4_CONT-5_Layout_Gastos_por_Cuenta_Contable_XML.py",
+                title="Por Cuenta Contable, vs XML · exploratorio (CONT-5)", icon="🧾"),
+        st.Page("layout_gastos_poliza/pages/5_CONT-3_Layout_Gastos_60_Columnas.py",
+                title="60 columnas, auditoría externa (CONT-3)", icon="✅"),
+    ],
+    "Unificación": [
+        st.Page("pages/unificacion_conciliacion_inversa.py",
+                title="Conciliación inversa (mpro → SAT)", icon="🔁"),
     ],
 })
 pg.run()

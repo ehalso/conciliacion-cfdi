@@ -15,6 +15,12 @@ propios hubs, cada uno junto al código que envuelve:
   RPTRV79-0X  -> repo separado github.com/ehalso/reportes-mpro,
                  reportes_streamlit/ ahí (puerto 8508 sugerido)
 
+CONT-3 (agregado 2026-09-12): layout de gastos de 60 columnas para
+auditoría externa (Bates y Asociados) -- consolidado final de
+`layout_gastos_poliza/25_consolidado_final.py`, ver
+`layout_gastos_60col/README.md`. Usa join directo de póliza
+(`24_bloque_poliza_directo.py`), no rank-pairing ni Poliza_Configuracion.
+
 Corre con:
   streamlit run streamlit_app.py --server.port 8506
 """
@@ -33,7 +39,7 @@ st.markdown(
     "(la dominante de `GASTO_DIRECTO`/`CONTROL_COMBUSTIBLE`/`VIAJE`/`ORDEN_COMPRA`)."
 )
 
-col1, col2 = st.columns(2)
+col1, col2, col_final = st.columns(3)
 with col1:
     st.subheader("CONT-1")
     st.markdown(
@@ -48,6 +54,13 @@ with col2:
         "no rank-pairing -- ver pestaña Documentación dentro del reporte)."
     )
     st.page_link("pages/2_CONT-2_Layout_Gastos_CECO_con_Nomina.py", label="Abrir CONT-2", icon="📊")
+with col_final:
+    st.subheader("CONT-3 · entregable final")
+    st.markdown(
+        "**60 columnas** para auditoría externa (Bates y Asociados) -- join directo de "
+        "póliza, validado contra el reporte nativo de mpro (ver pestaña Documentación)."
+    )
+    st.page_link("pages/5_CONT-3_Layout_Gastos_60_Columnas.py", label="Abrir CONT-3", icon="✅")
 
 col3, col4 = st.columns(2)
 with col3:
