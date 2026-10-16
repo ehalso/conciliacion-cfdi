@@ -1,0 +1,168 @@
+<meta charset="utf-8">
+<title>Layout de Gastos Trivasa</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+:root{--bg:#F8FAFC;--panel:#FFFFFF;--ink:#1F2937;--mute:#64748B;--line:#E2E8F0;--band:#EBEDEF;--accent:#FF8000;--accent-ink:#FFFFFF;--first:#FFF7ED;--neg:#B91C1C;--hl:#FFEDD5;--foot:#2E3F50;
+--o1:#0F766E;--o2:#7A4EA3;--o3:#C2410C;--o4:#1D4ED8;--o5:#8A6D00;--o6:#BE185D;--o7:#64748B;--o8:#3F7D2E}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:12px/1.4 Roboto,system-ui,sans-serif}
+.top{margin:6px 12px 0;background:var(--panel);box-shadow:0 2px 4px rgba(0,0,0,.1);height:52px;border-radius:6px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;border:1px solid var(--line)}.top .l{display:flex;align-items:center;gap:10px;font-weight:700;font-size:14px}.burger{width:30px;height:30px;background:var(--accent);border-radius:6px;display:grid;place-items:center}.burger i{display:block;width:12px;height:2px;background:#fff;box-shadow:0 -4px #fff,0 4px #fff}.top .u{color:var(--ink)}.foot{background:var(--foot);color:#fff;height:42px;display:flex;align-items:center;padding-left:200px;margin-top:8px}.wrap{max-width:none;margin:0;padding:0;display:flex;flex-direction:column;gap:16px}
+header{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;flex-wrap:wrap}
+h1{margin:0;font-size:13px;font-weight:700}
+.card{margin:12px;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:14px}.sub{color:var(--mute);margin-top:2px;max-width:70ch}
+.kpis{display:flex;border:1px solid var(--line);background:var(--panel);border-radius:6px;overflow:hidden}
+.kpi{padding:8px 16px;border-right:1px solid var(--line);min-width:118px}
+.kpi:last-child{border-right:0}
+.kpi b{display:block;font:500 16px "Roboto Mono",monospace;font-variant-numeric:tabular-nums}
+.kpi span{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute)}
+.bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.btn{font:inherit;font-weight:500;background:var(--accent);color:#fff;border:0;border-radius:6px;padding:6px 14px;cursor:pointer}.btn:hover{filter:brightness(.93)}.btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px}.chip{font:inherit;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);padding:5px 11px;cursor:pointer;display:flex;gap:7px;align-items:center}
+.chip i{width:9px;height:9px;display:inline-block}
+.chip small{color:var(--mute);font:11px "Roboto Mono",monospace}
+.chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.chip[aria-pressed="true"] small{color:inherit;opacity:.8}
+.chip:focus-visible,input:focus-visible,.vp:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input[type=search]{font:inherit;padding:6px 10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);min-width:240px}
+.sp{flex:1}
+label.t{display:flex;gap:6px;align-items:center;color:var(--mute);cursor:pointer}
+.grid{border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--panel);display:flex;flex-direction:column}
+.vp{flex:1;overflow:auto;position:relative}
+.hd{position:sticky;top:0;z-index:5;background:var(--panel)}
+.row{display:flex;height:26px;align-items:center;position:absolute;left:0;min-width:100%}
+.hrow{display:flex;position:relative}
+.c{flex:none;padding:0 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;height:100%;display:flex;align-items:center}
+.c.n{justify-content:flex-end;font:12px "Roboto Mono",monospace;font-variant-numeric:tabular-nums}
+.c.neg{color:var(--neg)}
+.hrow .c{background:var(--band);font-weight:600;font-size:11px;text-transform:uppercase;border-right:1px solid var(--line);height:34px;white-space:normal;line-height:1.15}
+.hrow.g .c{height:22px;color:var(--mute);background:var(--panel);border-bottom:1px solid var(--line);font-size:10.5px}
+.sticky{position:sticky;z-index:3;background:inherit}
+.hrow .sticky{background:var(--band)}
+.hrow.g .sticky{background:var(--panel)}
+.r{background:var(--panel)}
+.r.first{background:var(--first);border-top:1px solid var(--line)}
+.r.first .fo{font-weight:600}
+.r:not(.first) .c{color:var(--ink)}
+.r:hover{background:var(--hl)}
+.tag{font-size:11px;font-weight:600;padding:1px 7px;color:#fff;letter-spacing:.02em}
+.empty{padding:40px;text-align:center;color:var(--mute)}
+footer{color:var(--mute);font-size:12px;display:flex;gap:18px;flex-wrap:wrap}
+footer b{color:var(--ink);font-weight:600}
+@media (prefers-reduced-motion:no-preference){.chip{transition:background .12s}}
+
+.vp{overflow:auto;max-height:72vh;min-height:360px}
+table{border-collapse:separate;border-spacing:0;table-layout:fixed}
+th,td{padding:0 8px;height:26px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12.5px;border-bottom:1px solid var(--line);text-align:left}
+thead th{position:sticky;background:var(--band);text-transform:none;letter-spacing:0;z-index:4;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.05em;border-right:1px solid var(--line);white-space:normal;line-height:1.15;height:36px}
+thead tr.g th{top:0;height:22px;background:var(--panel);color:var(--mute);font-size:10.5px}
+thead tr.h th{top:22px}
+td.n,th.n{text-align:right;font:12px "Roboto Mono",monospace;font-variant-numeric:tabular-nums}
+td.neg{color:var(--neg)}
+td.stk,th.stk{position:sticky;z-index:3}
+thead th.stk{z-index:6}
+tr.r td{background:var(--panel)}
+tr.first td{background:var(--first);border-top:2px solid var(--line)}
+tr.first td.fo{font-weight:600}
+tr.r:hover td{background:var(--hl)}
+.pg{display:flex;gap:10px;align-items:center;padding:8px 12px;border-top:1px solid var(--line);color:var(--mute)}
+.pg button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:4px 12px;cursor:pointer}
+.pg button:disabled{opacity:.4;cursor:default}
+</style>
+<div class="top"><div class="l"><span class="burger"><i></i></span>Trivasa</div><div class="u">ESTEBAN HERNAN ALCOCER SOUZA</div></div>
+<div class="wrap"><div class="card">
+<header>
+ <div><h1>Reporte de Auditoria</h1><div style="margin-top:10px;display:flex;gap:40px;flex-wrap:wrap"><div><b>Empresa:</b> TRIVASA S.A. DE C.V.<br><b>Origen:</b> TODOS</div><div><b>Fecha Inicio :</b> 2026-01-01<br><b>Fecha Final :</b> 2026-01-31</div></div>
+ <div class="sub" style="margin-top:10px">Una línea por cuenta contable de la póliza. Los datos del folio aparecen solo en su primera fila; las filas siguientes llevan únicamente cuenta, CECO, cargo, abono, importes y proveedor.</div></div>
+ <div class="kpis" id="kpis"></div>
+</header>
+<div class="bar" id="chips" role="group" aria-label="Filtrar por origen"></div>
+<div class="bar">
+ <input type="search" id="q" placeholder="Buscar folio, proveedor, RFC, UUID, cuenta…" aria-label="Buscar">
+ <label class="t"><input type="checkbox" id="only"> Solo primera fila de cada folio</label>
+ <span class="sp"></span><button class="btn" id="xl" title="Exporta las filas que ve con el filtro actual">Exportar a Excel</button><span id="count" style="color:var(--mute);font:12px 'Roboto Mono',monospace"></span>
+</div>
+<div class="grid"><div class="vp" id="vp" tabindex="0"><table id="tb"><colgroup id="cg"></colgroup><thead id="hd"></thead><tbody id="body"></tbody></table></div><div class="pg" id="pg"></div></div>
+<footer id="foot"></footer>
+</div></div>
+<div class="foot">Sistema Trivasa © 2025</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+const D=__DATA__;
+const cols=D.cols,rows=D.rows,RH=26;
+const ORI={registro_gasto:['Registro de gasto','--o1'],comprobacion_gasto:['Comprobación de gasto','--o2'],orden_compra:['Orden de compra','--o3'],control_combustible:['Control de combustible','--o4'],viaje:['Viaje','--o5'],gasto_reclasificacion:['Gasto reclasificación','--o6'],consumo_interno:['Consumo interno','--o7'],gasto_registro_nomina:['Nómina','--o8']};
+const ix={};cols.forEach((c,i)=>ix[c.k]=i);
+const W={ORIGEN:190,FOLIO:92,POLIZA:120,FECHA_POLIZA:104,CONCEPTO_POLIZA:300,CUENTA_REGISTRO:130,NOMBRE_CUENTA_REGISTRO:230,CECO:70,CARGO:110,ABONO:110,FECHA:104,MONEDA:64,CLAVE_PROVEEDOR:80,RFC_PROVEEDOR:130,NOMBRE_PROVEEDOR:260,TIPO_COMPROBANTE:190,UUID:300,NOMBRE_CUENTA:200,CONCEPTO_GASTO:260,DESCRIPCION_USO_BIEN_SERVICIO:240,FORMA_PAGO:200,XML_FORMA_PAGO:230,XML_METODO_PAGO:200,COMPLEMENTO_PAGO:300,REFERENCIA:170,BANCO:130,CUENTA_BANCARIA:130,NO_CHEQUE_TRANSF:150,NUMERO_FACTURA:120,XML_RFC_EMISOR:130};
+cols.forEach(c=>c.w=c.k=='FECHA_FACTURA'||c.k=='FECHA_CHEQUE'?104:W[c.k]||(c.t=='n'?116:110));
+const total=cols.reduce((a,c)=>a+c.w,0);
+// sticky offsets for ORIGEN, FOLIO
+const stk={ORIGEN:0,FOLIO:cols[0].w};
+// group header
+const hd=document.getElementById('hd');
+document.getElementById('cg').innerHTML=cols.map(c=>'<col style="width:'+c.w+'px">').join('');
+document.getElementById('tb').style.width=total+'px';
+(function(){let g='<tr class="g">',h='<tr class="h">',i=0;
+ while(i<cols.length){let j=i;while(j<cols.length&&cols[j].g==cols[i].g)j++;g+='<th colspan="'+(j-i)+'">'+cols[i].g+'</th>';i=j}
+ cols.forEach(c=>{const s=c.k in stk?' stk" style="left:'+stk[c.k]+'px':'';h+='<th class="'+(c.t=='n'?'n':'')+s+'">'+c.l+'</th>'});
+ hd.innerHTML=g+'</tr>'+h+'</tr>'})();
+const fmt=new Intl.NumberFormat('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
+const money=v=>fmt.format(v);
+const oi=ix.ORIGEN,fi=ix.FOLIO,ci=ix.CARGO,ai=ix.ABONO,si=ix.SUBTOTAL_NETO;
+// first-row flag per row
+const first=new Uint8Array(rows.length);let last=null;rows.forEach((r,i)=>{if(r[fi]!==last){first[i]=1;last=r[fi]}});
+const oOf=new Array(rows.length);let cur=null;rows.forEach((r,i)=>{if(first[i])cur=r[oi];oOf[i]=cur});
+// folio reconciliation
+const fol=new Map();rows.forEach(r=>{const f=fol.get(r[fi])||{c:0,a:0,s:0};f.c+=r[ci]||0;f.a+=r[ai]||0;f.s+=r[si]||0;fol.set(r[fi],f)});
+let sel=new Set(),query='',only=false,view=[];
+const chips=document.getElementById('chips');
+const cnt={};rows.forEach((r,i)=>{if(first[i])cnt[r[oi]]=(cnt[r[oi]]||0)+1});
+function mkChips(){chips.innerHTML='';
+ const all=document.createElement('button');all.className='chip';all.setAttribute('aria-pressed',sel.size==0);all.innerHTML='Todos <small>'+fol.size+'</small>';all.onclick=()=>{sel.clear();apply()};chips.appendChild(all);
+ Object.keys(ORI).forEach(k=>{const b=document.createElement('button');b.className='chip';b.setAttribute('aria-pressed',sel.has(k));const n=cnt[k]||0;
+  b.innerHTML='<i style="background:var('+ORI[k][1]+')"></i>'+ORI[k][0]+' <small>'+n+'</small>';b.onclick=()=>{sel.has(k)?sel.delete(k):sel.add(k);apply()};chips.appendChild(b)})}
+function apply(){mkChips();const q=query.toLowerCase();view=[];
+ // folio-level search: match any row of the folio
+ let ok=null;
+ if(q){ok=new Set();rows.forEach(r=>{if(!ok.has(r[fi])){for(const v of r){if(v!=null&&String(v).toLowerCase().includes(q)){ok.add(r[fi]);break}}}})}
+ for(let i=0;i<rows.length;i++){if(sel.size&&!sel.has(oOf[i]))continue;if(ok&&!ok.has(rows[i][fi]))continue;if(only&&!first[i])continue;view.push(i)}
+ let c=0,a=0,s=0,fs=new Set();view.forEach(i=>{const r=rows[i];c+=r[ci]||0;a+=r[ai]||0;s+=r[si]||0;fs.add(r[fi])});
+ let okc=0;fs.forEach(f=>{const x=fol.get(f);if(Math.abs(x.c-x.a-x.s)<=0.02)okc++});
+ document.getElementById('kpis').innerHTML=[['Folios',fs.size.toLocaleString('es-MX')],['Líneas',view.length.toLocaleString('es-MX')],['Σ Cargo',money(c)],['Σ Abono',money(a)],['Σ Subtotal neto',money(s)],['Folios cuadrados',okc+' / '+fs.size]].map(k=>'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span></div>').join('');
+ document.getElementById('count').textContent=view.length.toLocaleString('es-MX')+' filas';
+ page=0;document.getElementById('count').textContent=view.length.toLocaleString('es-MX')+' filas';draw()}
+const vp=document.getElementById('vp'),body=document.getElementById('body'),PS=300;let page=0;
+function draw(){const pages=Math.max(1,Math.ceil(view.length/PS));page=Math.min(page,pages-1);
+ const s=page*PS,e=Math.min(view.length,s+PS);
+ if(!view.length){body.innerHTML='<tr><td colspan="'+cols.length+'" class="empty">Ningún folio coincide con el filtro.</td></tr>'}
+ else{let h='';for(let p=s;p<e;p++){const i=view[p],r=rows[i],f=first[i];
+  h+='<tr class="r'+(f?' first':'')+'">';
+  for(let k=0;k<cols.length;k++){const c=cols[k],v=r[k];let t='',cl=c.t=='n'?'n':'';
+   if(c.k=='ORIGEN'){if(v!=null){const o=ORI[v]||[v,'--o7'];t='<span class="tag" style="background:var('+o[1]+')">'+o[0]+'</span>'}}
+   else if(v!=null){if(c.t=='n'){if(v===0&&c.g=='Impuestos'){}else t=money(v);if(v<0)cl+=' neg'}else t=String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;')}
+   if(c.k=='FOLIO')cl+=' fo';
+   let sty='';if(c.k in stk){cl+=' stk';sty=' style="left:'+stk[c.k]+'px"'}
+   h+='<td class="'+cl+'"'+sty+'>'+t+'</td>'}
+  h+='</tr>'}
+ body.innerHTML=h}
+ const pg=document.getElementById('pg');pg.innerHTML='<button id="pp"'+(page==0?' disabled':'')+'>← Anterior</button><span>Filas '+(view.length?s+1:0)+'–'+e+' de '+view.length.toLocaleString('es-MX')+' · página '+(page+1)+' de '+pages+'</span><button id="pn"'+(page>=pages-1?' disabled':'')+'>Siguiente →</button>';
+ document.getElementById('pp').onclick=()=>{page--;draw();vp.scrollTop=0};document.getElementById('pn').onclick=()=>{page++;draw();vp.scrollTop=0}}
+document.getElementById('q').addEventListener('input',e=>{query=e.target.value.trim();clearTimeout(window._t);window._t=setTimeout(apply,200)});
+document.getElementById('only').addEventListener('change',e=>{only=e.target.checked;apply()});
+document.getElementById('foot').innerHTML='<span><b>Cargo</b> = importes positivos de la póliza; <b>Abono</b> = negativos en valor absoluto.</span><span>Subtotal neto e impuestos se reparten entre las líneas de póliza de un mismo CECO, sin duplicarse.</span><span>Columnas de impuesto: solo las claves con movimiento en el periodo (catálogo de 28).</span><span>Descuento y factura de referencia: sin fuente en base, pendientes.</span>';
+apply();
+
+function exportar(){
+ const n=cols.length,H=cols.map(c=>c.l),A=[H];
+ view.forEach(i=>{const r=rows[i];A.push(r.map((v,j)=>v==null?null:(cols[j].t=='n'?Number(v):v)))});
+ const nom='layout_gastos_'+new Date().toISOString().slice(0,10);
+ if(window.XLSX){
+  const ws=XLSX.utils.aoa_to_sheet(A);
+  ws['!cols']=cols.map(c=>({wch:Math.max(10,Math.round(c.w/7))}));
+  ws['!freeze']={xSplit:2,ySplit:1};ws['!autofilter']={ref:XLSX.utils.encode_range({s:{r:0,c:0},e:{r:A.length-1,c:n-1}})};
+  cols.forEach((c,j)=>{if(c.t=='n')for(let r=1;r<A.length;r++){const x=ws[XLSX.utils.encode_cell({r,c:j})];if(x)x.z='#,##0.00'}});
+  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Layout gastos');XLSX.writeFile(wb,nom+'.xlsx');
+ }else{
+  const q=v=>v==null?'':'"'+String(v).replace(/"/g,'""')+'"';
+  const blob=new Blob(['\ufeff'+A.map(r=>r.map(q).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=nom+'.csv';a.click();
+ }}
+document.getElementById('xl').onclick=exportar;
+</script>
