@@ -2,79 +2,16 @@
  {
   "k": "ORIGEN",
   "l": "Origen",
-  "g": "Póliza",
+  "g": "Registro",
   "t": "t",
   "linea": true
  },
  {
   "k": "FOLIO",
   "l": "Folio",
-  "g": "Póliza",
-  "t": "t",
-  "linea": true
- },
- {
-  "k": "POLIZA",
-  "l": "Póliza",
-  "g": "Póliza",
-  "t": "t",
-  "linea": false
- },
- {
-  "k": "FECHA_POLIZA",
-  "l": "Fecha póliza",
-  "g": "Póliza",
-  "t": "t",
-  "linea": false
- },
- {
-  "k": "CONCEPTO_POLIZA",
-  "l": "Concepto póliza",
-  "g": "Póliza",
-  "t": "t",
-  "linea": false
- },
- {
-  "k": "CUENTA_REGISTRO",
-  "l": "Cuenta",
-  "g": "Cuentas contables",
-  "t": "t",
-  "linea": true
- },
- {
-  "k": "NOMBRE_CUENTA_REGISTRO",
-  "l": "Nombre de cuenta",
-  "g": "Cuentas contables",
-  "t": "t",
-  "linea": true
- },
- {
-  "k": "CECO",
-  "l": "CECO",
-  "g": "Cuentas contables",
-  "t": "t",
-  "linea": true
- },
- {
-  "k": "CARGO",
-  "l": "Cargo",
-  "g": "Cuentas contables",
-  "t": "n",
-  "linea": true
- },
- {
-  "k": "ABONO",
-  "l": "Abono",
-  "g": "Cuentas contables",
-  "t": "n",
-  "linea": true
- },
- {
-  "k": "FECHA",
-  "l": "Fecha",
   "g": "Registro",
   "t": "t",
-  "linea": false
+  "linea": true
  },
  {
   "k": "MONEDA",
@@ -84,58 +21,149 @@
   "linea": false
  },
  {
+  "k": "FECHA",
+  "l": "Fecha",
+  "g": "Registro",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "CONCEPTO_GASTO",
+  "l": "Concepto del gasto",
+  "g": "Registro",
+  "t": "t",
+  "linea": false
+ },
+ {
   "k": "CLAVE_PROVEEDOR",
   "l": "Clave prov.",
-  "g": "Proveedor",
+  "g": "Registro",
   "t": "t",
   "linea": true
  },
  {
   "k": "RFC_PROVEEDOR",
   "l": "RFC",
-  "g": "Proveedor",
+  "g": "Registro",
   "t": "t",
   "linea": true
  },
  {
   "k": "NOMBRE_PROVEEDOR",
   "l": "Proveedor",
-  "g": "Proveedor",
+  "g": "Registro",
   "t": "t",
   "linea": true
  },
  {
+  "k": "NUMERO_FACTURA",
+  "l": "No. factura",
+  "g": "Registro",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "REFERENCIA",
+  "l": "Referencia",
+  "g": "Registro",
+  "t": "t",
+  "linea": false
+ },
+ {
   "k": "TIPO_COMPROBANTE",
   "l": "Tipo de comprobante",
-  "g": "Registro",
+  "g": "Comprobante (XML)",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "UUID",
+  "l": "UUID",
+  "g": "Comprobante (XML)",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "XML_MONTO",
+  "l": "XML monto",
+  "g": "Comprobante (XML)",
+  "t": "n",
+  "linea": false
+ },
+ {
+  "k": "XML_SERIE",
+  "l": "XML serie",
+  "g": "Comprobante (XML)",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "XML_FOLIO",
+  "l": "XML folio",
+  "g": "Comprobante (XML)",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "CLAVE_USO_BIEN_SERVICIO",
+  "l": "Clave uso",
+  "g": "Comprobante (XML)",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "DESCRIPCION_USO_BIEN_SERVICIO",
+  "l": "Uso del bien o servicio",
+  "g": "Comprobante (XML)",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "XML_RFC_EMISOR",
+  "l": "XML RFC emisor",
+  "g": "Comprobante (XML)",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "XML_METODO_PAGO",
+  "l": "XML método de pago",
+  "g": "Comprobante (XML)",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "XML_FORMA_PAGO",
+  "l": "XML forma de pago",
+  "g": "Comprobante (XML)",
   "t": "t",
   "linea": false
  },
  {
   "k": "SUBTOTAL_0",
   "l": "Subtotal 0%",
-  "g": "Importes",
+  "g": "Subtotales",
   "t": "n",
   "linea": true
  },
  {
   "k": "SUBTOTAL_16",
   "l": "Subtotal 16%",
-  "g": "Importes",
+  "g": "Subtotales",
   "t": "n",
   "linea": true
  },
  {
   "k": "SUBTOTAL_EXENTA",
   "l": "Subtotal exento",
-  "g": "Importes",
+  "g": "Subtotales",
   "t": "n",
   "linea": true
  },
  {
   "k": "SUBTOTAL_NETO",
   "l": "Subtotal neto",
-  "g": "Importes",
+  "g": "Subtotales",
   "t": "n",
   "linea": true
  },
@@ -240,76 +268,83 @@
  {
   "k": "TOTAL",
   "l": "Total",
-  "g": "Importes",
+  "g": "Total",
   "t": "n",
   "linea": true
  },
  {
-  "k": "NUMERO_FACTURA",
-  "l": "No. factura",
-  "g": "Comprobante",
+  "k": "FECHA_POLIZA",
+  "l": "Fecha póliza",
+  "g": "Póliza",
   "t": "t",
   "linea": false
  },
  {
-  "k": "UUID",
-  "l": "UUID",
-  "g": "Comprobante",
+  "k": "POLIZA",
+  "l": "Póliza",
+  "g": "Póliza",
   "t": "t",
   "linea": false
  },
  {
-  "k": "REFERENCIA",
-  "l": "Referencia",
-  "g": "Comprobante",
+  "k": "NUMERO_POLIZA",
+  "l": "Número Póliza",
+  "g": "Póliza",
   "t": "t",
   "linea": false
  },
  {
-  "k": "COBRADO_EFECTIVO",
-  "l": "Cobrado en efectivo",
-  "g": "Pago",
+  "k": "TIPO_POLIZA",
+  "l": "Tipo Póliza",
+  "g": "Póliza",
   "t": "t",
   "linea": false
+ },
+ {
+  "k": "CONCEPTO_POLIZA",
+  "l": "Concepto póliza",
+  "g": "Póliza",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "CUENTA_REGISTRO",
+  "l": "Cuenta",
+  "g": "Póliza",
+  "t": "t",
+  "linea": true
+ },
+ {
+  "k": "NOMBRE_CUENTA_REGISTRO",
+  "l": "Nombre de cuenta",
+  "g": "Póliza",
+  "t": "t",
+  "linea": true
+ },
+ {
+  "k": "CECO",
+  "l": "CECO",
+  "g": "Póliza",
+  "t": "t",
+  "linea": true
+ },
+ {
+  "k": "CARGO",
+  "l": "Cargo",
+  "g": "Póliza",
+  "t": "n",
+  "linea": true
+ },
+ {
+  "k": "ABONO",
+  "l": "Abono",
+  "g": "Póliza",
+  "t": "n",
+  "linea": true
  },
  {
   "k": "FORMA_PAGO",
   "l": "Forma de pago",
-  "g": "Pago",
-  "t": "t",
-  "linea": false
- },
- {
-  "k": "COBRADO_CHEQUE_TRANSFERENCIA",
-  "l": "Cobrado cheque/transf.",
-  "g": "Pago",
-  "t": "t",
-  "linea": false
- },
- {
-  "k": "CHEQUE",
-  "l": "Cheque",
-  "g": "Pago",
-  "t": "t",
-  "linea": false
- },
- {
-  "k": "BANCO",
-  "l": "Banco",
-  "g": "Pago",
-  "t": "t",
-  "linea": false
- },
- {
-  "k": "CUENTA_BANCARIA",
-  "l": "Cuenta bancaria",
-  "g": "Pago",
-  "t": "t",
-  "linea": false
- },
- {
-  "k": "NO_CHEQUE_TRANSF",
-  "l": "No. cheque / transferencia",
   "g": "Pago",
   "t": "t",
   "linea": false
@@ -329,8 +364,29 @@
   "linea": false
  },
  {
-  "k": "COMPLEMENTO_PAGO",
-  "l": "Complemento de pago",
+  "k": "CHEQUE",
+  "l": "Cheque",
+  "g": "Pago",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "NO_CHEQUE_TRANSF",
+  "l": "No. cheque / transferencia",
+  "g": "Pago",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "BANCO",
+  "l": "Banco",
+  "g": "Pago",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "CUENTA_BANCARIA",
+  "l": "Cuenta bancaria",
   "g": "Pago",
   "t": "t",
   "linea": false
@@ -343,65 +399,16 @@
   "linea": false
  },
  {
-  "k": "CONCEPTO_GASTO",
-  "l": "Concepto del gasto",
-  "g": "Gasto",
+  "k": "COMPLEMENTO_PAGO",
+  "l": "Complemento de pago",
+  "g": "Pago",
   "t": "t",
   "linea": false
  },
  {
-  "k": "CLAVE_USO_BIEN_SERVICIO",
-  "l": "Clave uso",
-  "g": "Gasto",
-  "t": "t",
-  "linea": false
- },
- {
-  "k": "DESCRIPCION_USO_BIEN_SERVICIO",
-  "l": "Uso del bien o servicio",
-  "g": "Gasto",
-  "t": "t",
-  "linea": false
- },
- {
-  "k": "XML_RFC_EMISOR",
-  "l": "XML RFC emisor",
-  "g": "XML",
-  "t": "t",
-  "linea": false
- },
- {
-  "k": "XML_MONTO",
-  "l": "XML monto",
-  "g": "XML",
-  "t": "n",
-  "linea": false
- },
- {
-  "k": "XML_SERIE",
-  "l": "XML serie",
-  "g": "XML",
-  "t": "t",
-  "linea": false
- },
- {
-  "k": "XML_FOLIO",
-  "l": "XML folio",
-  "g": "XML",
-  "t": "t",
-  "linea": false
- },
- {
-  "k": "XML_METODO_PAGO",
-  "l": "XML método de pago",
-  "g": "XML",
-  "t": "t",
-  "linea": false
- },
- {
-  "k": "XML_FORMA_PAGO",
-  "l": "XML forma de pago",
-  "g": "XML",
+  "k": "FECHA_COMPLEMENTO_PAGO",
+  "l": "Fecha complemento de pago",
+  "g": "Pago",
   "t": "t",
   "linea": false
  }

@@ -67,7 +67,8 @@ monto AS (
     FROM cxp_d cd JOIN Pago_CXP pc ON pc.Cxp_Folio=cd.Cxp_Folio AND pc.Es_Cve_Estado<>'CA' GROUP BY cd.FOLIO
 ),
 cpago AS (
-    SELECT cd.FOLIO, COUNT(DISTINCT pcc.Pcc_Timbre_UUID) n, MIN(pcc.Pcc_Timbre_UUID) u
+    SELECT cd.FOLIO, COUNT(DISTINCT pcc.Pcc_Timbre_UUID) n, MIN(pcc.Pcc_Timbre_UUID) u,
+           (SELECT MIN(cdg.Cd_Timbre_Fecha) FROM Comprobante_Digital cdg WHERE cdg.Cd_Timbre_UUID=MIN(pcc.Pcc_Timbre_UUID)) AS fc
     FROM cxp_d cd JOIN Pago_Cxp_Comprobante pcc ON pcc.Cxp_Folio=cd.Cxp_Folio GROUP BY cd.FOLIO
 )
 SELECT f.FOLIO, f.Gr_Referencia AS REFERENCIA,
@@ -79,7 +80,8 @@ SELECT f.FOLIO, f.Gr_Referencia AS REFERENCIA,
   COALESCE(ch.Ch_Folio, NULLIF(LTRIM(RTRIM(r.Pc_Documento)),'')) AS FOLIO_PAGO,
   COALESCE(NULLIF(LTRIM(RTRIM(r.Pc_Referencia)),''), NULLIF(LTRIM(RTRIM(ch.Ch_Referencia)),'')) AS NO_CHEQUE_TRANSF,
   m.MONTO_COBRADO,
-  CASE WHEN cp.n>=2 THEN 'VARIOS' ELSE cp.u END AS COMPLEMENTO_PAGO
+  CASE WHEN cp.n>=2 THEN 'VARIOS' ELSE cp.u END AS COMPLEMENTO_PAGO,
+  CASE WHEN cp.n>=2 THEN NULL ELSE cp.fc END AS FECHA_COMPLEMENTO_PAGO
 FROM folios f
 LEFT JOIN rep r ON r.FOLIO=f.FOLIO
 LEFT JOIN formas fm ON fm.FOLIO=f.FOLIO
@@ -145,8 +147,6 @@ def post(d):
     d['TOTAL']=(d.SUBTOTAL_NETO.fillna(0)+d[imp_cols].fillna(0).sum(axis=1)).round(2)
     # flags de pago
     fp=d.FP_CVE
-    d['COBRADO_EFECTIVO']=np.where(fp.isna(),None,np.where(fp=='0001','SI','NO'))
-    d['COBRADO_CHEQUE_TRANSFERENCIA']=np.where(fp.isna(),None,np.where(fp.isin(['0002','0003']),'SI','NO'))
     d['CHEQUE']=np.where(fp.isna(),None,np.where(fp=='0002','SI','NO'))
     # retenciones
     r=d.R_N.fillna(0)>=1
