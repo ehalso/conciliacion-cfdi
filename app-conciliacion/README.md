@@ -37,3 +37,6 @@ APP_USER=... APP_PASS=... APP_PORT=8080 python3 serve.py # sin APP_PORT usa un p
   interno (proveedor genérico "PROVEEDORES VARIOS") y nómina salen del reporte.
 - El botón de Excel no funciona dentro de un artifact de claude.ai (el visor
   bloquea descargas); sí en el servidor.
+
+## Reporte de gastos en vivo (BD .207)
+`APP_USER=.. APP_PASS=.. APP_PORT=32838 python3 serve_vivo.py` — sirve `plantilla.html` y `/api/reporte?ini=&fin=` consultando `.207/TRIVASADB` (credenciales por `trivasa-bi-core`, caché 10 min, `refresh=1` para forzar). `exportar_datos.py <pkl>` sigue generando el HTML estático con datos incrustados.

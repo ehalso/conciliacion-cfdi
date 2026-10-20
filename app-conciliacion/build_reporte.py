@@ -34,26 +34,29 @@ def pesos(fi,ff):
     z=sf<0.01; grc.loc[z,'PESO']=(grc.ABS/ti)[z]; grc['PESO']=grc.PESO.fillna(0)
     return grc
 
-PAGO_SQL="""
-WITH folios AS (
-    SELECT gr.Gr_Folio AS FOLIO, gr.Gr_Referencia
-    FROM Gasto_Registro gr JOIN Sucursal s ON gr.Sc_Cve_Sucursal=s.Sc_Cve_Sucursal
-    WHERE gr.Gr_Fecha>=:fi AND gr.Gr_Fecha<:ff AND gr.Es_Cve_Estado<>'CA' AND s.Em_Cve_Empresa=:emp
-),
-cxp_g AS (SELECT DISTINCT f.FOLIO, cxp.Cxp_Folio FROM folios f
+PAGO_SETUP_SQL="""
+SELECT gr.Gr_Folio AS FOLIO, gr.Gr_Referencia INTO #folios
+FROM Gasto_Registro gr JOIN Sucursal s ON gr.Sc_Cve_Sucursal=s.Sc_Cve_Sucursal
+WHERE gr.Gr_Fecha>=:fi AND gr.Gr_Fecha<:ff AND gr.Es_Cve_Estado<>'CA' AND s.Em_Cve_Empresa=:emp;
+SELECT * INTO #cxp_d FROM (
+    SELECT DISTINCT f.FOLIO, cxp.Cxp_Folio FROM #folios f
     JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=f.FOLIO
-    JOIN Cuenta_X_Pagar cxp ON cxp.Cxp_Tabla='Gasto_Registro:'+f.FOLIO AND cxp.Cxp_Documento=grd.Grd_ID),
-cxp_r AS (SELECT DISTINCT f.FOLIO, cxp.Cxp_Folio FROM folios f
+    JOIN Cuenta_X_Pagar cxp ON cxp.Cxp_Tabla='Gasto_Registro:'+f.FOLIO AND cxp.Cxp_Documento=grd.Grd_ID
+    UNION
+    SELECT DISTINCT f.FOLIO, cxp.Cxp_Folio FROM #folios f
     JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=f.FOLIO
     JOIN Cuenta_X_Pagar cxp ON cxp.Cxp_Tabla='Cuenta_X_Pagar' AND cxp.Cxp_Referencia=grd.Grd_Referencia AND cxp.Pv_Cve_Proveedor=grd.Pv_Cve_Proveedor
-    WHERE grd.Grd_Referencia IS NOT NULL AND LTRIM(RTRIM(grd.Grd_Referencia))<>''),
-cxp_d AS (SELECT * FROM cxp_g UNION SELECT * FROM cxp_r),
+    WHERE grd.Grd_Referencia IS NOT NULL AND LTRIM(RTRIM(grd.Grd_Referencia))<>''
+) u;
+"""
+# tablas temporales: con estadisticas reales el optimizador de .207 baja esta consulta de ~68 s a ~1 s
+PAGO_SQL="""WITH folios AS (SELECT * FROM #folios), cxp_d AS (SELECT * FROM #cxp_d),
 pagos AS (
     SELECT cd.FOLIO, pc.Pc_ID, pc.Cxp_Folio, pc.Fp_Cve_Forma_Pago, pc.Pc_Banco, pc.Pc_Cuenta_Bancaria,
            pc.Pc_Documento, pc.Pc_Tabla, pc.Pc_Referencia,
            ROW_NUMBER() OVER (PARTITION BY cd.FOLIO ORDER BY
                CASE WHEN pc.Fp_Cve_Forma_Pago IN ('0001','0002','0003') THEN 0 ELSE 1 END,
-               ABS(pc.Pc_Importe*ISNULL(pc.Pc_Tipo_Cambio,1)) DESC, pc.Pc_ID) rn
+               ABS(pc.Pc_Importe*ISNULL(pc.Pc_Tipo_Cambio,1)) DESC, pc.Cxp_Folio, pc.Pc_ID) rn
     FROM cxp_d cd JOIN Pago_CXP pc ON pc.Cxp_Folio=cd.Cxp_Folio AND pc.Es_Cve_Estado<>'CA'
 ),
 rep AS (SELECT * FROM pagos WHERE rn=1),
@@ -107,6 +110,14 @@ FORMA_SAT={'01':'Efectivo','02':'Cheque nominativo','03':'Transferencia electró
 METODO={'PUE':'PUE - Pago en una sola exhibición','PPD':'PPD - Pago en parcialidades o diferido'}
 ORIG={'GASTO_DIRECTO':'registro_gasto','COMPROBACION_GASTO':'comprobacion_gasto','ORDEN_COMPRA':'orden_compra','CONTROL_COMBUSTIBLE':'control_combustible','VIAJE':'viaje','GASTO_RECLASIFICACION':'gasto_reclasificacion','CONSUMO_INTERNO':'consumo_interno','GASTO_REGISTRO_NOMINA':'gasto_registro_nomina'}
 
+def pago_df(fi,ff):
+    p={'fi':fi,'ff':ff,'emp':EMP}
+    with engine.connect() as c:
+        c.execute(text(PAGO_SETUP_SQL),p)
+        d=pd.read_sql(text(PAGO_SQL),c,params=p)
+        c.execute(text('DROP TABLE #folios; DROP TABLE #cxp_d'))
+    d['FOLIO']=d.FOLIO.str.strip(); return d
+
 def construir(fi,ff):
     base=m24.cargar(fi,ff); base['FOLIO']=base.FOLIO.str.strip()
     imp,_=m21.construir(fi,ff)
@@ -117,7 +128,7 @@ def construir(fi,ff):
     pv.columns=['IMP_'+c for c in pv.columns]; pv=pv.reset_index()
     imp['DESCUENTO']=np.nan
     prov=Q(m22.PROVEEDOR_PAGO_SQL,fi,ff).drop(columns=['ORIGEN','COBRADO_EFECTIVO','COBRADO_CHEQUE_TRANSFERENCIA','CHEQUE','CFDI_COMPROBANTE_PAGO','BANCO','CUENTA_BANCARIA','FECHA_CHEQUE','NO_CHEQUE_TRANSF','MONTO_COBRADO','FACTURA_REF'])
-    pago=Q(PAGO_SQL,fi,ff)
+    pago=pago_df(fi,ff)
     xml=Q(m23.XML_CONCEPTO_SQL,fi,ff)
     ret=Q(RET_SQL,fi,ff)
     d=base.merge(imp,on=['FOLIO','CECO'],how='left').merge(pv,on=['FOLIO','CECO'],how='left')\

@@ -66,14 +66,16 @@ tr.r:hover td{background:var(--hl)}
 .pg{display:flex;gap:10px;align-items:center;padding:8px 12px;border-top:1px solid var(--line);color:var(--mute)}
 .pg button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:4px 12px;cursor:pointer}
 .pg button:disabled{opacity:.4;cursor:default}
+.st{color:var(--mute);font:12px "Roboto Mono",monospace}.st.busy{color:var(--accent)}.st.err{color:var(--neg)}input[type=date]{font:inherit;padding:5px 8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}.btn:disabled{opacity:.5;cursor:wait}
 </style>
 <div class="top"><div class="l"><span class="burger"><i></i></span>Trivasa</div><div class="u">ESTEBAN HERNAN ALCOCER SOUZA</div></div>
 <div class="wrap"><div class="card">
 <header>
- <div><h1>Reporte de Auditoria</h1><div style="margin-top:10px;display:flex;gap:40px;flex-wrap:wrap"><div><b>Empresa:</b> TRIVASA S.A. DE C.V.<br><b>Origen:</b> TODOS</div><div><b>Fecha Inicio :</b> 2026-01-01<br><b>Fecha Final :</b> 2026-01-31</div></div>
+ <div><h1>Reporte de Auditoria</h1><div style="margin-top:10px;display:flex;gap:40px;flex-wrap:wrap"><div><b>Empresa:</b> TRIVASA S.A. DE C.V.<br><b>Origen:</b> TODOS</div><div><b>Fuente:</b> .207 · TRIVASADB (producción)</div></div>
  <div class="sub" style="margin-top:10px">Una línea por cuenta contable de la póliza. Los datos del folio aparecen solo en su primera fila; las filas siguientes llevan únicamente cuenta, CECO, cargo, abono, importes y proveedor.</div></div>
  <div class="kpis" id="kpis"></div>
 </header>
+<div class="bar" id="ctl"><label class="t">Fecha inicio <input type="date" id="fi" value="2026-01-01"></label><label class="t">Fecha final <input type="date" id="ff" value="2026-01-31"></label><button class="btn" id="go">Consultar</button><button class="chip" id="rf" title="Ignora el caché y vuelve a consultar .207">Actualizar desde .207</button><span class="st" id="st"></span></div>
 <div class="bar" id="chips" role="group" aria-label="Filtrar por origen"></div>
 <div class="bar">
  <input type="search" id="q" placeholder="Buscar folio, proveedor, RFC, UUID, cuenta…" aria-label="Buscar">
@@ -86,7 +88,8 @@ tr.r:hover td{background:var(--hl)}
 <div class="foot">Sistema Trivasa © 2025</div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script>
-const D=__DATA__;
+const PRE=/*DATA*/null;
+function init(D){
 const cols=D.cols,rows=D.rows,RH=26;
 const ORI={registro_gasto:['Registro de gasto','--o1'],comprobacion_gasto:['Comprobación de gasto','--o2'],orden_compra:['Orden de compra','--o3'],control_combustible:['Control de combustible','--o4'],viaje:['Viaje','--o5'],gasto_reclasificacion:['Gasto reclasificación','--o6'],consumo_interno:['Consumo interno','--o7'],gasto_registro_nomina:['Nómina','--o8']};
 const ix={};cols.forEach((c,i)=>ix[c.k]=i);
@@ -144,8 +147,8 @@ function draw(){const pages=Math.max(1,Math.ceil(view.length/PS));page=Math.min(
  body.innerHTML=h}
  const pg=document.getElementById('pg');pg.innerHTML='<button id="pp"'+(page==0?' disabled':'')+'>← Anterior</button><span>Filas '+(view.length?s+1:0)+'–'+e+' de '+view.length.toLocaleString('es-MX')+' · página '+(page+1)+' de '+pages+'</span><button id="pn"'+(page>=pages-1?' disabled':'')+'>Siguiente →</button>';
  document.getElementById('pp').onclick=()=>{page--;draw();vp.scrollTop=0};document.getElementById('pn').onclick=()=>{page++;draw();vp.scrollTop=0}}
-document.getElementById('q').addEventListener('input',e=>{query=e.target.value.trim();clearTimeout(window._t);window._t=setTimeout(apply,200)});
-document.getElementById('only').addEventListener('change',e=>{only=e.target.checked;apply()});
+document.getElementById('q').oninput=e=>{query=e.target.value.trim();clearTimeout(window._t);window._t=setTimeout(apply,200)};
+document.getElementById('only').onchange=e=>{only=e.target.checked;apply()};
 document.getElementById('foot').innerHTML='<span><b>Cargo</b> = importes positivos de la póliza; <b>Abono</b> = negativos en valor absoluto.</span><span>Subtotal neto e impuestos se reparten entre las líneas de póliza de un mismo CECO, sin duplicarse.</span><span>Columnas de impuesto: solo las claves con movimiento en el periodo (catálogo de 28).</span><span>Descuento y factura de referencia: sin fuente en base, pendientes.</span>';
 apply();
 
@@ -165,4 +168,23 @@ function exportar(){
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=nom+'.csv';a.click();
  }}
 document.getElementById('xl').onclick=exportar;
+}
+const $=id=>document.getElementById(id);
+async function cargar(refresh){
+ const ini=$('fi').value,fin=$('ff').value,st=$('st'),btn=$('go');
+ if(!ini||!fin){st.textContent='Indica fecha inicio y fecha final.';return}
+ btn.disabled=true;st.className='st busy';st.textContent='Consultando .207…';
+ const t0=performance.now();
+ try{
+  const r=await fetch('api/reporte?ini='+ini+'&fin='+fin+(refresh?'&refresh=1':''),{cache:'no-store'});
+  if(!r.ok)throw new Error((await r.text())||r.status);
+  const t1=performance.now(),D=await r.json(),t2=performance.now();
+  init(D);const t3=performance.now(),m=D.meta||{};
+  st.className='st';
+  st.textContent=(m.cache?'Desde caché del servidor':'Consulta en vivo a '+m.fuente)+' · datos de '+m.generado+(m.cache?'':' ('+m.seg_consulta+' s de consulta')+(m.cache?'':')')+' · descarga '+((t1-t0)/1000).toFixed(2)+' s · render '+((t3-t2)/1000).toFixed(2)+' s';
+  window.__tiempos={fetch_ms:Math.round(t1-t0),parse_ms:Math.round(t2-t1),render_ms:Math.round(t3-t2),total_ms:Math.round(t3-t0),cache:!!m.cache,filas:D.rows.length};
+ }catch(e){st.className='st err';st.textContent='Error: '+e.message}
+ btn.disabled=false}
+$('go').onclick=()=>cargar(false);$('rf').onclick=()=>cargar(true);
+if(PRE){$('ctl').hidden=true;init(PRE)}else{const q=new URLSearchParams(location.search);if(q.get('ini'))$('fi').value=q.get('ini');if(q.get('fin'))$('ff').value=q.get('fin');cargar(false)}
 </script>

@@ -21,16 +21,19 @@ try:
 except ImportError:
     pass
 
-_user = os.environ.get("MSSQL_205_USER")
-_password = os.environ.get("MSSQL_205_PASSWORD")
+_host = os.environ.get("MPRO_HOST", "192.168.117.205")
+_sfx = "207" if _host.endswith(".207") else "205"
+_user = os.environ.get(f"MSSQL_{_sfx}_USER")
+_password = os.environ.get(f"MSSQL_{_sfx}_PASSWORD")
 if not _user or not _password:
     raise RuntimeError(
-        "Sin credenciales: define MSSQL_205_USER / MSSQL_205_PASSWORD "
+        f"Sin credenciales: define MSSQL_{_sfx}_USER / MSSQL_{_sfx}_PASSWORD "
         "(mismo .env que usa src/bridge_client.py, en la raíz del repo).")
 
 engine = create_engine(URL.create(
     "mssql+pymssql", username=_user, password=_password,
-    host="192.168.117.205", port=1433, database="TRIVASADB3",
+    host=_host, port=1433,
+    database=os.environ.get("MPRO_DB", "TRIVASADB3"),
 ))
 
 def q(sql):
