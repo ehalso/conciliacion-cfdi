@@ -26,7 +26,7 @@ for g in grupos:
                 st.code(e["ruta"], language=None)
             with c2:
                 if e["puerto"]:
-                    st.link_button(f"Abrir :{e['puerto']}", f"http://{host}:{e['puerto']}/")
+                    st.link_button(f"Abrir :{e['puerto']}", f"http://{host}:{e['puerto']}{e.get('ruta_url', '/')}")
             if e["readme"] and os.path.exists(e["readme"]):
                 with st.expander("Ver README"):
                     st.markdown(open(e["readme"], encoding="utf-8").read())
