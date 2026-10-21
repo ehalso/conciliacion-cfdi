@@ -5,9 +5,9 @@ H = "/home/ealcocer/ehalso"
 CATALOGO = [
     # --- apps ejecutables (se levantan con lanzar.sh) ---
     dict(id="conciliacion-hub", nombre="Hub de conciliación CFDI ↔ mpro (Streamlit)", grupo="Apps legacy ejecutables",
-         estado="LEGACY", puerto=32842, ruta=f"{H}/conciliacion-cfdi/reportes_streamlit",
+         estado="LEGACY", puerto=32842, ruta=f"{H}/trivasa-apps-archivadas/conciliacion-hub-cont",
          readme=f"{H}/conciliacion-cfdi/README.md",
-         nota="Recibido/Emitido/Retención/Gastos CECO/Conciliación inversa. Sustituido por app-sat-mpro (:32836) y app-conciliacion (:32835)."),
+         nota="Recibido/Emitido/Retención/Gastos CECO/Conciliación inversa. Sustituido por app-sat-mpro (:32836) y app-conciliacion (:32835). Código movido (2026-10-21) al repo trivasa-apps-archivadas/conciliacion-hub-cont; usa la lógica de conciliacion-cfdi vía CONCILIACION_CFDI_ROOT."),
     dict(id="gastos-60col", nombre="Layout de Gastos 60 columnas (Streamlit, bloques 21-25) — incluido en :32842 CONT-3", grupo="Histórico (código y docs)",
          estado="HISTORICO", puerto=None, ruta=f"{H}/reportes-mpro/legacy/layout_gastos",
          readme=f"{H}/reportes-mpro/legacy/README.md",

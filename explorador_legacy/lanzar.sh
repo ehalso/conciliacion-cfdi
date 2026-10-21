@@ -13,9 +13,8 @@ arranca() { # puerto dir archivo
   (cd $2 && nohup python3 $CF/explorador_legacy/run_con_creds.py $ST run $3 --server.port $1 --server.address 0.0.0.0 --server.headless true > $LOG/$1.log 2>&1 &)
 }
 arranca 32841 $CF/explorador_legacy app.py
-arranca 32842 $CF/reportes_streamlit app.py
+arranca 32842 /home/ealcocer/ehalso/trivasa-apps-archivadas/conciliacion-hub-cont app.py
 arranca 32840 $RM reportes_streamlit/streamlit_app.py
-CR=$CF/reportes_streamlit
 FIFO=/home/ealcocer/ehalso/trivasa-context/docs/proyectos/consumo-interno-fifo/scripts
 PO=/home/ealcocer/por_ordenar/exploracion
 HUB=/home/ealcocer/ehalso/trivasa-apps-archivadas/hub-reportes-trivasa

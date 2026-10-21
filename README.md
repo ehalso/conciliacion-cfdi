@@ -84,7 +84,7 @@ layout_gastos_poliza/  Reconciliación CECO/Gasto_Registro (Cargo-Abono vs Impor
                        fuente de desarrollo de las páginas CONT-1/CONT-2 de streamlit-reportes
 
 src/                 Extractores compartidos entre los métodos de arriba (ver abajo)
-reportes_streamlit/  UIs interactivas — candidatas a promover a streamlit-reportes (producción)
+reportes_streamlit/  (movido a trivasa-apps-archivadas/conciliacion-hub-cont el 2026-10-21; usa este repo vía CONCILIACION_CFDI_ROOT)
 docs/                Metodología, hallazgos, pendientes — consolidados, no uno por dominio
 ```
 
@@ -131,18 +131,9 @@ de resumen y detalle, semaforeado por color.
   (emitido, retención), con búsqueda, filtros y orden por columna. Es un
   snapshot estático de los datos de este README — se regenera pidiendo que
   se actualice con datos más recientes.
-- **Streamlit interno** (`reportes_streamlit/`): UIs en vivo sobre los
-  métodos de arriba, sin duplicar lógica — candidatas a promoverse a
-  `streamlit-reportes` (el deployment de producción real, Docker +
-  Cloudflare Tunnel en `reportes.frento.com.mx`) cuando maduren. Un hub por
-  frente, cada uno junto al código que envuelve (evita colisión de nombre
-  entre `streamlit_app.py`):
-  - `streamlit run reportes_streamlit/streamlit_app.py` — recibidos, nivel
-    póliza (TEMP-1/TEMP-2).
-  - `streamlit run reportes_streamlit/layout_gastos_poliza/streamlit_app.py`
-    — CECO (CONT-1/2/4/5).
-  - `streamlit run reportes_streamlit/recibidos_nivel_documento/streamlit_app.py`
-    — recibidos, nivel documento con XML (CONT-6).
+- **Streamlit interno**: el hub `reportes_streamlit/` (CONT-1 a CONT-6, TEMP-1/2) se movió el
+  2026-10-21 al repo `trivasa-apps-archivadas` (`conciliacion-hub-cont/`). Sigue usando la lógica de
+  este repo vía `CONCILIACION_CFDI_ROOT`. Reemplazo vigente: `app-conciliacion` (:32835).
   - RPTRV79 (auditoría de compras) vive en su propio repo,
     `github.com/ehalso/reportes-mpro`, `reportes_streamlit/` ahí.
 
