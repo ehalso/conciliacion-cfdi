@@ -14,16 +14,11 @@ arranca() { # puerto dir archivo
 }
 arranca 32841 $CF/explorador_legacy app.py
 arranca 32842 $CF/reportes_streamlit app.py
-arranca 32843 $RM/legacy/layout_gastos launch_gastos.py
 arranca 32840 $RM reportes_streamlit/streamlit_app.py
 CR=$CF/reportes_streamlit
-arranca 32844 $CR/recibidos_nivel_documento streamlit_app.py
-arranca 32845 $CR/layout_gastos_poliza streamlit_app.py
 FIFO=/home/ealcocer/ehalso/trivasa-context/docs/proyectos/consumo-interno-fifo/scripts
 arranca 32847 $FIFO streamlit_app_movimientos.py
 arranca 32848 $FIFO streamlit_app_uuid_fifo.py
-ss -ltn | grep -q ":32849 " || (nohup python3 $CF/explorador_legacy/serve_estatico.py 32849 /home/ealcocer/ehalso/layout_gastos_pub > $LOG/32849.log 2>&1 &)
-arranca 32846 $CF/layout_gastos_60col/legado/layout-gastos-streamlit-claude streamlit_app.py
 PO=/home/ealcocer/por_ordenar/exploracion
 arranca 32850 $PO/layout-gastos-ctunlinux hub_app.py
 PY=$RM/streamlit_venv/bin/python
