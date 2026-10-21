@@ -17,8 +17,6 @@ arranca 32842 $CF/reportes_streamlit app.py
 arranca 32840 $RM reportes_streamlit/streamlit_app.py
 CR=$CF/reportes_streamlit
 FIFO=/home/ealcocer/ehalso/trivasa-context/docs/proyectos/consumo-interno-fifo/scripts
-arranca 32847 $FIFO streamlit_app_movimientos.py
-arranca 32848 $FIFO streamlit_app_uuid_fifo.py
 PO=/home/ealcocer/por_ordenar/exploracion
 arranca 32850 $PO/layout-gastos-ctunlinux hub_app.py
 PY=$RM/streamlit_venv/bin/python
