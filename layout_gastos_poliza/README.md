@@ -10,8 +10,8 @@ póliza × cuenta contable × CECO).
 
 Es también la fuente de desarrollo de las páginas CONT-1/CONT-2 ("Layout de
 Gastos por CECO") que se copian a mano a `streamlit-reportes/contabilidad/`
-para producción — ver `reportes_streamlit/layout_gastos_poliza/` en este
-mismo repo para esa parte (UI), separada de la reconciliación (aquí).
+para producción — ver `trivasa-apps-archivadas/conciliacion-hub-cont/layout_gastos_poliza/` (repo
+`trivasa-apps-archivadas`, movido desde este repo el 2026-10-21) para esa parte (UI), separada de la reconciliación (aquí).
 
 Ver `PROGRESS.md` y `RESUMEN_CASOS.md` para el detalle completo de método y
 casos ya resueltos — documentos largos, no repetidos en este README.
@@ -28,7 +28,7 @@ reemplaza el rank-pairing de `01`-`13` por reconstrucción real vía
 `Poliza_Configuracion` (`14`/`15`, solo cubre la config `0450`) y extiende
 la conciliación XML a un panorama completo sin pasar por esa config
 (`16`/`17`). Su UI (CONT-4/CONT-5) vive en
-`reportes_streamlit/layout_gastos_poliza/`. Ver
+`trivasa-apps-archivadas/conciliacion-hub-cont/layout_gastos_poliza/` (repo `trivasa-apps-archivadas`). Ver
 `docs/proyectos/layout-gastos/index.md` de `trivasa-context` para el
 detalle completo de método y resultados de estos 4 scripts — no repetido
 aquí. `NOTAS_REF_EXPLORACION.md` documenta 3 métodos de cruce alternativos
