@@ -23,4 +23,3 @@ PO=/home/ealcocer/por_ordenar/exploracion
 arranca 32850 $PO/layout-gastos-ctunlinux hub_app.py
 PY=$RM/streamlit_venv/bin/python
 EX=$CF/explorador_legacy
-ss -ltn | grep -q ":32852 " || (cd $PO/layout_gastos_unificado_claude && PYTHONPATH=$EX nohup $PY server_reporte.py 32852 > $LOG/32852.log 2>&1 &)

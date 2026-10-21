@@ -37,9 +37,9 @@ CATALOGO = [
     dict(id="xmls-pendientes", nombre="XMLs sin registro en MPRO (Flask + HTML, por periodo)", grupo="Histórico (código y docs)",
          estado="HISTORICO", puerto=None, ruta="/home/ealcocer/ehalso/trivasa-apps-archivadas/xmls-pendientes", readme="/home/ealcocer/ehalso/trivasa-apps-archivadas/xmls-pendientes/README.md",
          nota="Hecha para Ismael, sin uso. Código archivado en el repo trivasa-apps-archivadas (monorepo local). Los CSV de data/ quedan solo en por_ordenar/exploracion/consulta_xmls_gastos. Puerto :32851 dado de baja."),
-    dict(id="reporte-unificado-api", nombre="Reporte unificado en vivo (API JSON para Flexmonster)", grupo="Apps legacy ejecutables",
-         estado="LEGACY", puerto=32852, ruta="/home/ealcocer/por_ordenar/exploracion/layout_gastos_unificado_claude", readme="/home/ealcocer/por_ordenar/exploracion/layout_gastos_unificado_claude/README.md",
-         nota="PARCIAL: solo la API funciona (/api/reporte?fecha_ini=&fecha_fin=). El frontend ~/flexmonster-demo/index.html ya no existe, por eso / da 404."),
+    dict(id="reporte-unificado-api", nombre="Reporte unificado en vivo (API JSON para Flexmonster)", grupo="Histórico (código y docs)",
+         estado="HISTORICO", puerto=None, ruta="/home/ealcocer/por_ordenar/README_reporte_unificado_api.md", readme="/home/ealcocer/por_ordenar/exploracion/layout_gastos_unificado_claude/README.md",
+         nota="ELIMINADO (2026-10-21), solo se conserva el README en por_ordenar. CONT-3 (:32842) cubre la misma funcionalidad. Sirve de punto de partida para documentar en trivasa-context o app-conciliacion. Puerto :32852 dado de baja."),
     # --- documentación / código no ejecutable ---
     dict(id="legado-60col", nombre="Layout de gastos original (Streamlit v0.1→v1, pasos 1-15)", grupo="Histórico (código y docs)",
          estado="HISTORICO", puerto=None, ruta=f"{H}/conciliacion-cfdi/layout_gastos_60col/legado/layout-gastos-streamlit-claude",
