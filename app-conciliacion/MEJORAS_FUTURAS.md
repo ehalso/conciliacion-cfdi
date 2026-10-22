@@ -11,10 +11,11 @@ Comparar, por documento, `SUBTOTAL_NETO` contra el cargo contable neto de la pó
 - Ya existe una versión básica en la interfaz (KPI "Documentos cuadrados", tolerancia 0.05).
 - Siguiente paso: columna o filtro "Diferencia" por documento, con causa probable (póliza ausente, línea memo, redondeo, IVA no acreditable).
 - En Sep 2026: Compra, Indirecto y NC proveedor cuadran al 100 % (CxP libre y OC también en ene–ago 2026); en Gasto quedan 57 de 4,994 con diferencias de centavos (comportamiento heredado de v1).
-- Gasto en ene–sep 2026: 663 folios con descuadre contra su póliza, aunque el total por documento ya iguala a RPAG008. Causas que son de la póliza, no del layout:
-  - `05-0188211`, `05-0188214`, `05-0188215` y `05-0190618`: la póliza tiene líneas con CECO vacío y no se atribuyen al folio.
-  - 4 pares de folios que comparten una línea agregada de póliza (misma referencia y CECO): la póliza la asigna a un solo folio y los pares se compensan.
-  - Las filas que agrega `completar_gasto` llevan `CARGO = ABONO = 0`. Se podría cargarles el cargo de las líneas de póliza sin CECO y repartir las líneas agregadas entre sus folios, para que cuadren también contra la póliza.
+- Gasto en ene–sep 2026: 651 de 42,452 folios con descuadre contra su póliza (antes 663; suma de |diferencias| de $97,469 a $4,959), aunque el total por documento ya iguala a RPAG008. Ya se atribuyen las líneas de póliza sin CECO (`atribuir_sin_ceco`) y se reparten las líneas agregadas compartidas por varios folios de consumo interno (`_emparejar_activo_fijo`). Lo que queda:
+  - 648 folios con diferencias de centavos por el redondeo del prorrateo por CECO.
+  - `05-0187796`: doble contabilización real (configuraciones de póliza 0414 y 0396 registran el mismo gasto), $3,824.62.
+  - `05-0188329` y `05-0188332`: duplicidad 0324 (provisión) + 0450 (registro) sobre una `orden_compra`, $320.70 y $283.22.
+- CxP libre: 329 folios sin póliza de registro (solo 96 tienen póliza de pago por cheque, `Pc_Tabla='Cheque'`). Es correcto dejarlos sin póliza; si se quiere distinguirlos, marcar "póliza solo de pago".
 
 ## Escalabilidad
 

@@ -127,10 +127,48 @@ CECO_DESC_SQL="select Cc_Cve_Centro_Costo AS CECO, Cc_Descripcion AS CECO_DESCRI
 POLIZA_COLS=['POLIZA','FECHA_POLIZA','TIPO_POLIZA','NUMERO_POLIZA','CONCEPTO_POLIZA']
 IMP_DOC_COLS=['SUBTOTAL_16','SUBTOTAL_0','SUBTOTAL_EXENTA','RETENCIONES_IVA','RETENCIONES_ISR','IVA_ACREDITABLE','SUBTOTAL_NETO']
 
+# lineas de poliza del documento (Pd_Referencia = folio) sin CECO: m24 las descarta; aqui se atribuyen por importe
+POLIZA_SIN_CECO_SQL="""
+SELECT gr.Gr_Folio AS FOLIO, pl.Pl_Folio AS POLIZA, pl.Pl_Fecha AS FECHA_POLIZA, pl.Pl_Tipo AS TIPO_POLIZA,
+       pl.Pl_Numero AS NUMERO_POLIZA, pl.Pl_Comentario AS CONCEPTO_POLIZA,
+       pd.Cc_Cve_Cuenta_Contable AS CUENTA_REGISTRO, cc.Cc_Descripcion AS NOMBRE_CUENTA_REGISTRO,
+       CASE WHEN pd.Pd_Tipo=1 THEN pd.Pd_Importe ELSE 0 END AS CARGO, CASE WHEN pd.Pd_Tipo=2 THEN pd.Pd_Importe ELSE 0 END AS ABONO
+FROM Gasto_Registro gr JOIN Sucursal s ON gr.Sc_Cve_Sucursal=s.Sc_Cve_Sucursal
+JOIN Poliza_Control plc ON plc.Pc_Tabla='GASTO_REGISTRO' AND plc.Pc_Documento=gr.Gr_Folio AND plc.Es_Cve_Estado<>'CA'
+JOIN Poliza pl ON pl.Pl_Folio=plc.Pl_Folio AND pl.Es_Cve_Estado<>'CA'
+JOIN Poliza_Detalle pd ON pd.Pl_Folio=plc.Pl_Folio AND pd.Pd_Referencia=gr.Gr_Folio
+LEFT JOIN Cuenta_Contable cc ON cc.Cc_Cve_Cuenta_Contable=pd.Cc_Cve_Cuenta_Contable
+WHERE gr.Gr_Fecha>=:fi AND gr.Gr_Fecha<:ff AND gr.Es_Cve_Estado<>'CA' AND s.Em_Cve_Empresa=:emp
+  AND ISNULL(pd.Pd_Centro_Costo,'')=''
+  AND pd.Cc_Cve_Cuenta_Contable NOT LIKE '1170%' AND pd.Cc_Cve_Cuenta_Contable NOT LIKE '2110%' AND pd.Cc_Cve_Cuenta_Contable NOT LIKE '2150%'
+  AND pd.Cc_Cve_Cuenta_Contable NOT LIKE '10500%' AND pd.Cc_Cve_Cuenta_Contable NOT LIKE '10600%'
+"""
+LINEA_COLS=['POLIZA','FECHA_POLIZA','TIPO_POLIZA','NUMERO_POLIZA','CONCEPTO_POLIZA','CUENTA_REGISTRO','NOMBRE_CUENTA_REGISTRO','CARGO','ABONO']
+
+def atribuir_sin_ceco(ex,imp,fi,ff):
+    """Carga a las filas completadas la linea de poliza sin CECO del mismo folio cuyo importe iguala el subtotal neto
+    de su (FOLIO, CECO) del reparto (tolerancia 0.05); cada linea se usa una sola vez."""
+    lin=Q(POLIZA_SIN_CECO_SQL,fi,ff)
+    lin=lin[lin.FOLIO.isin(ex.FOLIO)].copy()
+    if lin.empty: return ex
+    lin['NET']=lin.CARGO-lin.ABONO
+    meta_ix={f:list(g.index) for f,g in lin.groupby('FOLIO')}
+    obj=imp.groupby(['FOLIO','CECO']).SUBTOTAL_NETO.sum()
+    libre=set(lin.index); ex=ex.copy()
+    for i,r in ex.iterrows():
+        t=obj.get((r.FOLIO,r.CECO))
+        if t is None or pd.isna(t): continue
+        for j in meta_ix.get(r.FOLIO,[]):
+            if j in libre and abs(lin.at[j,'NET']-t)<=0.05:
+                for c in LINEA_COLS: ex.at[i,c]=lin.at[j,c]
+                libre.discard(j); break
+    return ex
+
 def completar_gasto(base,imp,pv,grc,doc,ic,fi,ff):
     """Agrega filas sin cargo/abono (el documento no tiene linea de poliza con CECO que lo cubra) para que el layout
     totalice igual que RPAG008: (a) CECO del reparto del documento (Gasto_Registro_Control) sin linea de poliza y
-    (b) documentos sin reparto ni linea de poliza (CECO vacio, importes del documento)."""
+    (b) documentos sin reparto ni linea de poliza (CECO vacio, importes del documento). Si la poliza trae una linea
+    sin CECO que iguala el subtotal de esa fila, se le carga (atribucion por importe)."""
     kb=set(zip(base.FOLIO,base.CECO))
     a=grc[['FOLIO','CECO']].drop_duplicates()
     a=a[[k not in kb for k in zip(a.FOLIO,a.CECO)]].copy()
@@ -148,6 +186,7 @@ def completar_gasto(base,imp,pv,grc,doc,ic,fi,ff):
         w=ic[ic.FOLIO.isin(sin_reparto)].groupby(['FOLIO','CLAVE']).IMPORTE.sum().unstack('CLAVE').fillna(0).round(2)
         w.columns=['IMP_'+c for c in w.columns]; w=w.reset_index(); w['CECO']=''
         pv=pd.concat([pv,w],ignore_index=True,sort=False)
+    ex=atribuir_sin_ceco(ex,imp,fi,ff)
     return pd.concat([base,ex],ignore_index=True,sort=False),imp,pv
 
 def construir(fi,ff):

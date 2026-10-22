@@ -154,12 +154,22 @@ def _emparejar_activo_fijo(gr_ref, poliza_af):
     p["rank"] = p.groupby(["POLIZA", "REFERENCIA"]).cumcount()
     # un solo folio para (POLIZA, REFERENCIA): le corresponden todas las lineas (un documento repartido en
     # varios CECO genera varias lineas con la misma referencia); el rank solo aplica si hay varios folios
-    n_folios = g.groupby(["POLIZA", "REFERENCIA"]).FOLIO.transform("size")
-    unicos = g[n_folios == 1].drop(columns="rank")
-    resto = g[n_folios > 1]
+    llave = ["POLIZA", "REFERENCIA"]
+    g = g.merge(p.groupby(llave).IMPORTE_PD.agg(n_lin="size", s_lin="sum").reset_index(), on=llave, how="left")
+    g = g.merge(g.groupby(llave).VALOR_CMP.sum().rename("s_val").reset_index(), on=llave, how="left")
+    n_folios = g.groupby(llave).FOLIO.transform("size")
+    # linea agregada: la poliza junta varios folios en menos lineas y la suma de las lineas iguala la de los folios;
+    # cada folio recibe la parte proporcional a su valor (el rank solo le daria la linea a uno)
+    agregada = (n_folios > 1) & (g.n_lin < n_folios) & (g.s_val > 0) & ((g.s_lin - g.s_val).abs() <= 0.5)
+    aux = ["n_lin", "s_lin", "s_val"]
+    unicos = g[n_folios == 1].drop(columns=["rank"] + aux)
+    agreg = g[agregada].drop(columns="rank").merge(p.drop(columns="rank"), on=llave, how="inner")
+    agreg["IMPORTE_PD"] = agreg.IMPORTE_PD * agreg.VALOR_CMP / agreg.s_val
+    resto = g[(n_folios > 1) & ~agregada].drop(columns=aux)
     m = pd.concat([
-        unicos.merge(p.drop(columns="rank"), on=["POLIZA", "REFERENCIA"], how="inner"),
-        resto.merge(p, on=["POLIZA", "REFERENCIA", "rank"], how="inner"),
+        unicos.merge(p.drop(columns="rank"), on=llave, how="inner"),
+        agreg.drop(columns=aux),
+        resto.merge(p, on=llave + ["rank"], how="inner"),
     ], ignore_index=True)
     m["ORIGEN"] = "CONSUMO_INTERNO"
     m["CARGO"] = m["IMPORTE_PD"]
