@@ -6,7 +6,8 @@ Modo vivo: serve_vivo.py importa a_datos() y entrega el JSON por /api/reporte.
 Dos vistas:
   layout  (por defecto) subtotales, impuestos, TOTAL, XML_MONTO y MONTO_COBRADO solo en la primera fila del documento;
           las demás filas llevan únicamente Tipo/folio y los campos de la póliza. Con agrupar=True las líneas de
-          póliza se suman por cuenta contable.
+          póliza se suman por cuenta contable. En registro_gasto, control_combustible, orden_compra y viaje los
+          datos de texto (proveedor, UUID, XML, pago) se repiten en todas las filas del folio (observación de Ismael).
   ceco    análisis por CECO: subtotales e impuestos prorrateados en cada línea de póliza (TOTAL por línea).
 Las columnas sin ningún dato en el resultado no se envían.
 """
@@ -87,7 +88,10 @@ def a_datos(d, vista='layout', agrupar=True):
     for i, r in enumerate(d[[fuente[k] for k in ks]].itertuples(index=False)):
         fila = []
         for j, (c, v) in enumerate(zip(cols, r)):
-            visible = primera[i] or (c['k'] in LAYOUT_LINEA if layout else (c['linea'] or (rep[i] and c['k'] not in POLIZA)))
+            if layout:
+                visible = primera[i] or c['k'] in LAYOUT_LINEA or (rep[i] and c['t'] == 't' and c['k'] not in POLIZA)
+            else:
+                visible = primera[i] or c['linea'] or (rep[i] and c['k'] not in POLIZA)
             v = val(v) if visible else None
             fila.append(None if (j in cero and v == 0) else v)
         for j in ia:
