@@ -152,7 +152,15 @@ def _emparejar_activo_fijo(gr_ref, poliza_af):
     p = poliza_af.sort_values(["POLIZA", "REFERENCIA", "IMPORTE_PD"]).reset_index(drop=True)
     g["rank"] = g.groupby(["POLIZA", "REFERENCIA"]).cumcount()
     p["rank"] = p.groupby(["POLIZA", "REFERENCIA"]).cumcount()
-    m = g.merge(p, on=["POLIZA", "REFERENCIA", "rank"], how="inner")
+    # un solo folio para (POLIZA, REFERENCIA): le corresponden todas las lineas (un documento repartido en
+    # varios CECO genera varias lineas con la misma referencia); el rank solo aplica si hay varios folios
+    n_folios = g.groupby(["POLIZA", "REFERENCIA"]).FOLIO.transform("size")
+    unicos = g[n_folios == 1].drop(columns="rank")
+    resto = g[n_folios > 1]
+    m = pd.concat([
+        unicos.merge(p.drop(columns="rank"), on=["POLIZA", "REFERENCIA"], how="inner"),
+        resto.merge(p, on=["POLIZA", "REFERENCIA", "rank"], how="inner"),
+    ], ignore_index=True)
     m["ORIGEN"] = "CONSUMO_INTERNO"
     m["CARGO"] = m["IMPORTE_PD"]
     m["ABONO"] = 0.0

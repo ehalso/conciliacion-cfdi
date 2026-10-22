@@ -1,5 +1,12 @@
 [
  {
+  "k": "Tipo",
+  "l": "Tipo",
+  "g": "Registro",
+  "t": "t",
+  "linea": true
+ },
+ {
   "k": "ORIGEN",
   "l": "Origen",
   "g": "Registro",
@@ -203,6 +210,20 @@
   "linea": true
  },
  {
+  "k": "IMP_0006",
+  "l": "0006 Iva Trasladado 16%",
+  "g": "Impuestos",
+  "t": "n",
+  "linea": true
+ },
+ {
+  "k": "IMP_0008",
+  "l": "0008 Iva Trasladado Exento",
+  "g": "Impuestos",
+  "t": "n",
+  "linea": true
+ },
+ {
   "k": "IMP_0011",
   "l": "0011 Isr Retenido Sobre Honorarios 10%",
   "g": "Impuestos",
@@ -259,8 +280,29 @@
   "linea": true
  },
  {
+  "k": "IMP_0024",
+  "l": "0024 Iva Retenido S/Servicio De Personal 6% (Proveedor)",
+  "g": "Impuestos",
+  "t": "n",
+  "linea": true
+ },
+ {
+  "k": "IMP_0025",
+  "l": "0025 Iva Acreditable Al 8% Región Fronteriza",
+  "g": "Impuestos",
+  "t": "n",
+  "linea": true
+ },
+ {
   "k": "IMP_0026",
   "l": "0026 Isr Retenido Resico 1.25%",
+  "g": "Impuestos",
+  "t": "n",
+  "linea": true
+ },
+ {
+  "k": "IMP_0028",
+  "l": "0028 Iva Acreditable Diesel",
   "g": "Impuestos",
   "t": "n",
   "linea": true

@@ -118,14 +118,47 @@ def pago_df(fi,ff):
         c.execute(text('DROP TABLE #folios; DROP TABLE #cxp_d'))
     d['FOLIO']=d.FOLIO.str.strip(); return d
 
+ORIGEN_CECO_SQL="""
+SELECT gr.Gr_Folio AS FOLIO, CASE WHEN ISNULL(gr.Gr_Tabla,'')='' THEN 'GASTO_DIRECTO' ELSE gr.Gr_Tabla END AS ORIGEN
+FROM Gasto_Registro gr JOIN Sucursal s ON gr.Sc_Cve_Sucursal=s.Sc_Cve_Sucursal
+WHERE gr.Gr_Fecha>=:fi AND gr.Gr_Fecha<:ff AND gr.Es_Cve_Estado<>'CA' AND s.Em_Cve_Empresa=:emp
+"""
+CECO_DESC_SQL="select Cc_Cve_Centro_Costo AS CECO, Cc_Descripcion AS CECO_DESCRIPCION from Centro_Costo"
+POLIZA_COLS=['POLIZA','FECHA_POLIZA','TIPO_POLIZA','NUMERO_POLIZA','CONCEPTO_POLIZA']
+IMP_DOC_COLS=['SUBTOTAL_16','SUBTOTAL_0','SUBTOTAL_EXENTA','RETENCIONES_IVA','RETENCIONES_ISR','IVA_ACREDITABLE','SUBTOTAL_NETO']
+
+def completar_gasto(base,imp,pv,grc,doc,ic,fi,ff):
+    """Agrega filas sin cargo/abono (el documento no tiene linea de poliza con CECO que lo cubra) para que el layout
+    totalice igual que RPAG008: (a) CECO del reparto del documento (Gasto_Registro_Control) sin linea de poliza y
+    (b) documentos sin reparto ni linea de poliza (CECO vacio, importes del documento)."""
+    kb=set(zip(base.FOLIO,base.CECO))
+    a=grc[['FOLIO','CECO']].drop_duplicates()
+    a=a[[k not in kb for k in zip(a.FOLIO,a.CECO)]].copy()
+    sin_reparto=sorted(set(doc.FOLIO)-set(grc.FOLIO)-set(base.FOLIO))
+    b=pd.DataFrame({'FOLIO':sin_reparto,'CECO':''})
+    ex=pd.concat([a,b],ignore_index=True)
+    if ex.empty: return base,imp,pv
+    ex=ex.merge(Q(ORIGEN_CECO_SQL,fi,ff),on='FOLIO',how='left').merge(Q(CECO_DESC_SQL,fi,ff).assign(CECO=lambda t:t.CECO.str.strip()),on='CECO',how='left')
+    pol=base.drop_duplicates('FOLIO').set_index('FOLIO')[POLIZA_COLS]
+    ex=ex.join(pol,on='FOLIO'); ex['CARGO']=0.0; ex['ABONO']=0.0
+    if sin_reparto:
+        d=doc[doc.FOLIO.isin(sin_reparto)]
+        v=d.groupby('FOLIO')[[c+'_DOC' for c in IMP_DOC_COLS]].sum().rename(columns=lambda c:c[:-4]).reset_index(); v['CECO']=''
+        imp=pd.concat([imp,v],ignore_index=True,sort=False)
+        w=ic[ic.FOLIO.isin(sin_reparto)].groupby(['FOLIO','CLAVE']).IMPORTE.sum().unstack('CLAVE').fillna(0).round(2)
+        w.columns=['IMP_'+c for c in w.columns]; w=w.reset_index(); w['CECO']=''
+        pv=pd.concat([pv,w],ignore_index=True,sort=False)
+    return pd.concat([base,ex],ignore_index=True,sort=False),imp,pv
+
 def construir(fi,ff):
     base=m24.cargar(fi,ff); base['FOLIO']=base.FOLIO.str.strip()
-    imp,_=m21.construir(fi,ff)
+    imp,doc=m21.construir(fi,ff)
     grc=pesos(fi,ff)
     ic=Q(IMP_CLAVE_SQL,fi,ff)
     x=grc.merge(ic,on=['FOLIO','Grd_ID'],how='inner'); x['V']=x.IMPORTE*x.PESO
     pv=x.groupby(['FOLIO','CECO','CLAVE']).V.sum().unstack('CLAVE').fillna(0).round(2)
     pv.columns=['IMP_'+c for c in pv.columns]; pv=pv.reset_index()
+    base,imp,pv=completar_gasto(base,imp,pv,grc,doc,ic,fi,ff)
     imp['DESCUENTO']=np.nan
     prov=Q(m22.PROVEEDOR_PAGO_SQL,fi,ff).drop(columns=['ORIGEN','COBRADO_EFECTIVO','COBRADO_CHEQUE_TRANSFERENCIA','CHEQUE','CFDI_COMPROBANTE_PAGO','BANCO','CUENTA_BANCARIA','FECHA_CHEQUE','NO_CHEQUE_TRANSF','MONTO_COBRADO','FACTURA_REF'])
     pago=pago_df(fi,ff)
@@ -135,24 +168,44 @@ def construir(fi,ff):
           .merge(prov,on='FOLIO',how='left').merge(pago,on='FOLIO',how='left').merge(xml,on='FOLIO',how='left').merge(ret.add_prefix('R_').rename(columns={'R_FOLIO':'FOLIO'}),on='FOLIO',how='left')
     return d,ic
 
+def construir_todo(fi,ff):
+    """Gastos + compras + indirectos + NC de proveedor, una fila por linea de poliza, con columna Tipo."""
+    import tipos_documento as t
+    d,_=construir(fi,ff); d['Tipo']='Gasto'
+    partes=[d]+[t.construir_tipo(s,fi,ff,engine,EMP,PAGO_SQL) for s in t.SPECS]
+    return pd.concat(partes,ignore_index=True,sort=False)
+
+def _num(d,cols):
+    for c in cols: d[c]=pd.to_numeric(d[c],errors='coerce').astype(float)
+
 def post(d):
     d=d.copy()
+    if 'Tipo' not in d: d['Tipo']='Gasto'
+    for c in ('R_N','R_MONTO','R_SERIE','R_FOLIO_XML','FP_CVE','TIPO_COMPROBANTE','XML_MONTO','XML_SERIE','XML_FOLIO','NUMERO_FACTURA','FECHA_CHEQUE','ORIGEN'):
+        if c not in d: d[c]=np.nan
+    for c in ('TIPO_COMPROBANTE','XML_SERIE','XML_FOLIO','NUMERO_FACTURA','R_SERIE','R_FOLIO_XML','FP_CVE','ORIGEN'): d[c]=d[c].astype(object)
+    imp_cols=[c for c in d.columns if c.startswith('IMP_')]
+    val=['SUBTOTAL_0','SUBTOTAL_16','SUBTOTAL_EXENTA','SUBTOTAL_NETO']+imp_cols
+    _num(d,['CARGO','ABONO','R_N','R_MONTO','XML_MONTO']+val)
     # cargo/abono: positivos en cargo, negativos en abono (valor absoluto)
     net=d.CARGO.fillna(0)-d.ABONO.fillna(0)
     d['CARGO']=net.clip(lower=0).round(2); d['ABONO']=(-net).clip(lower=0).round(2)
-    # subtotales/impuestos: una linea de poliza por (FOLIO,CECO) -> prorrateo por peso de la linea para no duplicar
-    imp_cols=[c for c in d.columns if c.startswith('IMP_')]
-    val=['SUBTOTAL_0','SUBTOTAL_16','SUBTOTAL_EXENTA','SUBTOTAL_NETO']+imp_cols
-    d['_net']=(d.CARGO-d.ABONO)
-    g=d.groupby(['FOLIO','CECO'])
-    n=g.FOLIO.transform('size'); s_abs=g._net.transform(lambda s:s.abs().sum())
-    w=np.where(n==1,1.0,np.where(s_abs>0,d._net.abs()/s_abs.replace(0,np.nan),np.nan))
+    # gastos: una linea de poliza por (FOLIO,CECO) -> prorrateo por peso de la linea; el resto de tipos trae cifras por documento
+    d['_net']=(d.CARGO-d.ABONO); d['_abs']=d._net.abs()
+    d['_gk']=np.where(d.Tipo=='Gasto',d.CECO.fillna('').astype(str),'')
+    g=d.groupby(['Tipo','FOLIO','_gk'],sort=False)
+    n=g.FOLIO.transform('size'); s_abs=g._abs.transform('sum')
+    w=np.where(n==1,1.0,np.where(s_abs>0,d._abs/s_abs.replace(0,np.nan),np.nan))
     first=(g.cumcount()==0).astype(float)
     w=np.where(np.isnan(w),first,w)
     for c in val: d[c]=d[c]*w
     # sin documento (reclasificacion, nomina, consumo interno): subtotal neto = cargo-abono de la poliza
     sin=d.SUBTOTAL_NETO.isna() | (d.ORIGEN.isin(['CONSUMO_INTERNO'])&(d.SUBTOTAL_NETO.fillna(0)==0))
     d.loc[sin,'SUBTOTAL_NETO']=d.loc[sin,'_net']
+    # valor del documento completo (suma de sus lineas prorrateadas): lo usa la vista Layout
+    gd=d.groupby(['Tipo','FOLIO'],sort=False)
+    for c in val: d['DOC_'+c]=gd[c].transform('sum').round(2)
+    d['DOC_TOTAL']=(d.DOC_SUBTOTAL_NETO.fillna(0)+d[['DOC_'+c for c in imp_cols]].fillna(0).sum(axis=1)).round(2)
     for c in val: d[c]=d[c].round(2)
     d['DESCUENTO']=np.nan; d['DESCUENTO_GLOBAL']=np.nan
     d['TOTAL']=(d.SUBTOTAL_NETO.fillna(0)+d[imp_cols].fillna(0).sum(axis=1)).round(2)
@@ -172,11 +225,11 @@ def post(d):
         v=str(v).strip(); return v if v=='VARIOS' else f"{v} - {FORMA_SAT.get(v,'')}".rstrip(' -')
     d['XML_FORMA_PAGO']=d.XML_FORMA_PAGO.map(ff_)
     d['XML_METODO_PAGO']=d.XML_METODO_PAGO.map(lambda v: METODO.get(str(v).strip(),v) if v is not None and str(v).strip()!='' else None)
-    d['ORIGEN']=d.ORIGEN.map(lambda o: ORIG.get(o,str(o).lower()))
+    d['ORIGEN']=d.ORIGEN.map(lambda o: None if o is None or (isinstance(o,float) and np.isnan(o)) else ORIG.get(o,str(o).lower()))
     d['FECHA_CHEQUE']=pd.to_datetime(d.FECHA_CHEQUE,errors='coerce').dt.strftime('%Y-%m-%d')
     d.loc[d.FECHA_CHEQUE.isin(['1900-01-01']),'FECHA_CHEQUE']=None
-    return d
+    return d.drop(columns=['_net','_abs','_gk'])
 
 if __name__=='__main__':
     fi,ff=sys.argv[1],sys.argv[2]
-    d,ic=construir(fi,ff); d=post(d); d.to_pickle(f'rep_{fi}_{ff}.pkl'); print(d.shape)
+    d=post(construir_todo(fi,ff)); d.to_pickle(f'rep_{fi}_{ff}.pkl'); print(d.shape)

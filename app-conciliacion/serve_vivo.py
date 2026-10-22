@@ -1,7 +1,8 @@
 """Reporte de gastos con formato de poliza, consultando en vivo la BD .207 (TRIVASADB).
 
 GET /               -> plantilla.html (selector de fechas, carga por fetch)
-GET /api/reporte    -> ?ini=AAAA-MM-DD&fin=AAAA-MM-DD[&refresh=1]  JSON {cols,rows,meta} (gzip)
+GET /api/reporte    -> ?ini=AAAA-MM-DD&fin=AAAA-MM-DD[&vista=layout|ceco][&agrupar=0|1][&refresh=1]  JSON {cols,rows,meta} (gzip)
+                       Incluye Gasto, Compra, Indirecto, NC proveedor, CxP libre y CxP orden compra (columna Tipo). Vista por defecto: layout, agrupada por cuenta.
 Variables: APP_USER, APP_PASS, APP_PORT, TTL_SEG (cache, default 600).
 Credenciales de BD: shared.db_credentials.ealcocer() de trivasa-bi-core (no se escriben en disco).
 """
@@ -27,24 +28,34 @@ import build_reporte as b
 from exportar_datos import a_datos
 
 HTML = open(os.path.join(aqui, 'plantilla.html'), 'rb').read()
+MAX_CACHE = 6
 cache, lock = {}, threading.Lock()
 
-def reporte(ini, fin, refresh):
-    k = (ini, fin)
+def reporte(ini, fin, vista, agrupar, refresh):
+    """Devuelve (gz, desde_cache). El DataFrame de (ini, fin) se consulta una vez y se reutiliza para cada vista."""
+    k, kv = (ini, fin), (vista, agrupar)
     with lock:
         c = cache.get(k)
         if c and not refresh and time.time() - c['t'] < TTL:
-            return c['gz'], True
-        t0 = time.time()
-        ff = (dt.date.fromisoformat(fin) + dt.timedelta(days=1)).isoformat()
-        d, _ = b.construir(ini, ff)
-        d = b.post(d)
-        datos = a_datos(d)
-        datos['meta'] = {'fuente': '.207 TRIVASADB', 'ini': ini, 'fin': fin, 'filas': len(datos['rows']),
-                         'generado': dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 'seg_consulta': round(time.time() - t0, 1)}
+            if kv in c['gz']:
+                return c['gz'][kv], True
+            hit = True
+        else:
+            t0 = time.time()
+            ff = (dt.date.fromisoformat(fin) + dt.timedelta(days=1)).isoformat()
+            d = b.post(b.construir_todo(ini, ff))
+            c = {'t': time.time(), 'd': d, 'gz': {}, 'seg': round(time.time() - t0, 1),
+                 'generado': dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+            cache[k] = c
+            while len(cache) > MAX_CACHE:
+                cache.pop(min(cache, key=lambda x: cache[x]['t']))
+            hit = False
+        datos = a_datos(c['d'], vista, agrupar)
+        datos['meta'] = {'fuente': '.207 TRIVASADB', 'ini': ini, 'fin': fin, 'filas': len(datos['rows']), 'vista': vista,
+                         'agrupar': datos['agrupar'], 'generado': c['generado'], 'seg_consulta': c['seg']}
         gz = gzip.compress(json.dumps(datos, ensure_ascii=False, separators=(',', ':')).encode(), 5)
-        cache[k] = {'t': time.time(), 'gz': gz}
-        return gz, False
+        c['gz'][kv] = gz
+        return gz, hit
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -64,10 +75,13 @@ class H(BaseHTTPRequestHandler):
                 ini, fin = q['ini'][0], q['fin'][0]
                 a, z = dt.date.fromisoformat(ini), dt.date.fromisoformat(fin)
                 if z < a or (z - a).days > 366: raise ValueError('Rango invalido (max. 1 año, fin >= inicio).')
+                vista = q.get('vista', ['layout'])[0]
+                if vista not in ('layout', 'ceco'): raise ValueError('vista debe ser layout o ceco.')
+                agrupar = q.get('agrupar', ['1'])[0] != '0'
             except Exception as e:
                 return self.send(400, str(e).encode(), 'text/plain; charset=utf-8')
             try:
-                gz, hit = reporte(ini, fin, 'refresh' in q)
+                gz, hit = reporte(ini, fin, vista, agrupar, 'refresh' in q)
             except Exception as e:
                 print('ERROR', repr(e), flush=True)
                 return self.send(500, b'Error consultando .207; reintenta o avisa a TI.', 'text/plain; charset=utf-8')
