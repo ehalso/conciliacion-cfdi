@@ -93,9 +93,9 @@ const PRE=/*DATA*/null;
 const $=id=>document.getElementById(id);
 function init(D){
 const RH=26,meta=D.meta||{},vista=D.vista||'layout',agrupado=!!D.agrupar;
-const TIPO={'Gasto':'#0F766E','Compra':'#A16207','Indirecto':'#C2410C','NC proveedor':'#BE185D','CxP libre':'#7A4EA3','CxP orden compra':'#78350F'};
-// Gasto: rampa fría (teal, cielo, azul, índigo), cada matiz en tono oscuro (texto blanco) y claro (l=1, texto oscuro)
-const ORI={registro_gasto:['Registro de gasto','#0F766E'],comprobacion_gasto:['Comprobación de gasto','#5EEAD4',1],orden_compra:['Orden de compra','#0369A1'],consumo_interno:['Consumo interno','#7DD3FC',1],viaje:['Viaje','#1D4ED8'],control_combustible:['Control de combustible','#93C5FD',1],gasto_reclasificacion:['Gasto reclasificación','#4338CA'],gasto_registro_nomina:['Nómina','#A5B4FC',1]};
+const TIPO={'Gasto':'#06707D','Compra':'#A16207','Indirecto':'#C2410C','NC proveedor':'#BE185D','CxP libre':'#7A4EA3','CxP orden compra':'#78350F'};
+// Gasto: rampa de 8 pasos (teal oscuro a lila claro); los 4 pasos claros llevan texto oscuro (3.er valor = 1)
+const ORI={registro_gasto:['Registro de gasto','#084741'],comprobacion_gasto:['Comprobación de gasto','#0B5B5D'],orden_compra:['Orden de compra','#06707D'],control_combustible:['Control de combustible','#167F9B'],viaje:['Viaje','#15A8E4',1],gasto_reclasificacion:['Gasto reclasificación','#64B9FE',1],consumo_interno:['Consumo interno','#A5C9FF',1],gasto_registro_nomina:['Nómina','#D2DDFD',1]};
 // la etiqueta de Tipo absorbe el origen: Gasto · origen, CxP · Libre/Orden Compra; el resto, solo el tipo
 const lbl=(t,o)=>t=='Gasto'&&o?'Gasto · '+(ORI[o]?ORI[o][0]:o):t=='CxP libre'?'CxP · Libre':t=='CxP orden compra'?'CxP · Orden Compra':t;
 const tOf=[],oOf=[];
