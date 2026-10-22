@@ -76,7 +76,7 @@ tr.r:hover td{background:var(--hl)}
  <div class="sub" id="sub" style="margin-top:10px"></div></div>
  <div class="kpis" id="kpis"></div>
 </header>
-<div class="bar" id="ctl"><label class="t">Fecha inicio <input type="date" id="fi" value="2026-01-01"></label><label class="t">Fecha final <input type="date" id="ff" value="2026-01-31"></label><label class="t">Vista <select id="vista"><option value="layout">Layout por documento</option><option value="ceco">Análisis por CECO</option></select></label><label class="t" id="agrl"><input type="checkbox" id="agr" checked> Agrupar por cuenta contable</label><button class="btn" id="go">Consultar</button><button class="chip" id="rf" title="Ignora el caché y vuelve a consultar .207">Actualizar desde .207</button><span class="st" id="st"></span></div>
+<div class="bar" id="ctl"><label class="t">Fecha inicio <input type="date" id="fi" value="2026-01-01"></label><label class="t">Fecha final <input type="date" id="ff" value="2026-01-31"></label><label class="t" id="agrl"><input type="checkbox" id="agr" checked> Agrupar por cuenta contable</label><button class="btn" id="go">Consultar</button><button class="chip" id="rf" title="Ignora el caché y vuelve a consultar .207">Actualizar desde .207</button><span class="st" id="st"></span></div>
 <div class="bar" role="group" aria-label="Filtrar por tipo"><span id="chips" style="display:contents"></span></div>
 <div class="bar">
  <input type="search" id="q" placeholder="Buscar folio, proveedor, RFC, UUID, cuenta…" aria-label="Buscar">
@@ -92,7 +92,7 @@ tr.r:hover td{background:var(--hl)}
 const PRE=/*DATA*/null;
 const $=id=>document.getElementById(id);
 function init(D){
-const RH=26,meta=D.meta||{},vista=D.vista||'layout',agrupado=!!D.agrupar;
+const RH=26,meta=D.meta||{},agrupado=!!D.agrupar;
 const TIPO={'Gasto':'#06707D','Compra':'#A16207','Indirecto':'#C2410C','NC proveedor':'#BE185D','CxP libre':'#7A4EA3','CxP orden compra':'#78350F'};
 // Gasto: rampa de 8 pasos (teal oscuro a lila claro); los 4 pasos claros llevan texto oscuro (3.er valor = 1)
 const ORI={registro_gasto:['Registro de gasto','#084741'],comprobacion_gasto:['Comprobación de gasto','#0B5B5D'],orden_compra:['Orden de compra','#06707D'],control_combustible:['Control de combustible','#167F9B'],viaje:['Viaje','#15A8E4',1],gasto_reclasificacion:['Gasto reclasificación','#64B9FE',1],consumo_interno:['Consumo interno','#A5C9FF',1],gasto_registro_nomina:['Nómina','#D2DDFD',1]};
@@ -110,9 +110,7 @@ cols.forEach(c=>c.w=c.k=='FECHA_FACTURA'||c.k=='FECHA_CHEQUE'?104:W[c.k]||(c.t==
 const total=cols.reduce((a,c)=>a+c.w,0);
 // columnas fijas a la izquierda: Tipo (con origen) y FOLIO
 const stk={};let off=0;['Tipo','FOLIO'].forEach(k=>{if(k in ix){stk[k]=off;off+=cols[ix[k]].w}});
-$('sub').textContent=vista=='ceco'
- ?'Análisis por CECO: una línea por cuenta contable de la póliza; subtotales e impuestos se reparten entre las líneas de un mismo CECO y el TOTAL se calcula por línea.'
- :'Una fila por documento con sus importes (subtotales, impuestos, total, XML y cobro); si tiene varias líneas de póliza, las siguientes solo llevan el folio, la cuenta, el CECO, el cargo y el abono'+(agrupado?', sumadas por cuenta contable.':'.');
+$('sub').textContent='Una fila por documento con sus importes (subtotales, impuestos, total, XML y cobro); si tiene varias líneas de póliza, las siguientes solo llevan el folio, la cuenta, el CECO, el cargo y el abono'+(agrupado?', sumadas por cuenta contable.':'.');
 // group header
 const hd=document.getElementById('hd');
 document.getElementById('cg').innerHTML=cols.map(c=>'<col style="width:'+c.w+'px">').join('');
@@ -173,7 +171,7 @@ function draw(){const pages=Math.max(1,Math.ceil(view.length/PS));page=Math.min(
  document.getElementById('pp').onclick=()=>{page--;draw();vp.scrollTop=0};document.getElementById('pn').onclick=()=>{page++;draw();vp.scrollTop=0}}
 document.getElementById('q').oninput=e=>{query=e.target.value.trim();clearTimeout(window._t);window._t=setTimeout(apply,200)};
 document.getElementById('only').onchange=e=>{only=e.target.checked;apply()};
-$('foot').innerHTML='<span><b>Tipo</b>: Gasto (con su origen), Compra, Indirecto, NC proveedor o CxP (Libre u Orden Compra: inversión que parte de una OC y genera CxP). Las notas de crédito van en negativo.</span><span><b>Subtotal neto</b> ya descuenta descuentos; <b>Cargo</b> = importes positivos de la póliza y <b>Abono</b> = negativos en valor absoluto.</span>'+(vista=='ceco'?'<span>Subtotal neto e impuestos se reparten entre las líneas de póliza de un mismo CECO, sin duplicarse.</span>':'<span>Los importes del documento aparecen solo en su primera fila, por lo que las sumas de columna no duplican.</span>')+'<span>Solo se muestran las columnas con algún dato en el periodo.</span>';
+$('foot').innerHTML='<span><b>Tipo</b>: Gasto (con su origen), Compra, Indirecto, NC proveedor o CxP (Libre u Orden Compra: inversión que parte de una OC y genera CxP). Las notas de crédito van en negativo.</span><span><b>Subtotal neto</b> ya descuenta descuentos; <b>Cargo</b> = importes positivos de la póliza y <b>Abono</b> = negativos en valor absoluto.</span>'+'<span>Los importes del documento aparecen solo en su primera fila, por lo que las sumas de columna no duplican.</span>'+'<span>Solo se muestran las columnas con algún dato en el periodo.</span>';
 apply();
 
 function exportar(){
@@ -181,15 +179,14 @@ function exportar(){
  const emp='TRIVASA S.A. DE C.V.',ini=meta.ini||'',fin=meta.fin||'';
  const dm=s=>s?s.split('-').reverse().join('-'):'';
  A.push(['Empresa:',emp]);A.push(['Fecha inicial:',dm(ini)]);A.push(['Fecha final:',dm(fin)]);
- A.push(['Vista:',vista=='ceco'?'Análisis por CECO':'Layout por documento'+(agrupado?' (agrupado por cuenta contable)':'')]);
+ A.push(['Vista:','Layout por documento'+(agrupado?' (agrupado por cuenta contable)':'')]);
  A.push([]);
  A.push(cols.map((c,j)=>j+1));
  const rHd=A.length;A.push(cols.map(c=>c.l));
  const r0=A.length;
  view.forEach(i=>{const r=rows[i];A.push(r.map((v,j)=>v==null?null:(cols[j].t=='n'?Number(v):v)))});
  const r1=A.length-1;
- const noSuma=vista=='ceco'?['XML_MONTO','MONTO_COBRADO']:[];
- const suma=cols.map(c=>c.t=='n'&&!noSuma.includes(c.k));
+ const suma=cols.map(c=>c.t=='n');
  const sums=cols.map((c,j)=>{if(!suma[j])return 0;let x=0;for(let r=r0;r<=r1;r++)x+=A[r][j]||0;return Math.round(x*100)/100});
  A.push(cols.map((c,j)=>j==0?'TOTAL':null));const rTot=A.length-1;
  const nom='reporte_auditoria_'+(ini&&fin?ini+'_'+fin:new Date().toISOString().slice(0,10));
@@ -216,7 +213,7 @@ async function cargar(refresh){
  btn.disabled=true;st.className='st busy';st.textContent='Consultando .207…';
  const t0=performance.now();
  try{
-  const r=await fetch('api/reporte?ini='+ini+'&fin='+fin+'&vista='+$('vista').value+'&agrupar='+($('agr').checked?1:0)+(refresh?'&refresh=1':''),{cache:'no-store'});
+  const r=await fetch('api/reporte?ini='+ini+'&fin='+fin+'&agrupar='+($('agr').checked?1:0)+(refresh?'&refresh=1':''),{cache:'no-store'});
   if(!r.ok)throw new Error((await r.text())||r.status);
   const t1=performance.now(),D=await r.json(),t2=performance.now();
   init(D);const t3=performance.now(),m=D.meta||{};
@@ -225,8 +222,7 @@ async function cargar(refresh){
   window.__tiempos={fetch_ms:Math.round(t1-t0),parse_ms:Math.round(t2-t1),render_ms:Math.round(t3-t2),total_ms:Math.round(t3-t0),cache:!!m.cache,filas:D.rows.length};
  }catch(e){st.className='st err';st.textContent='Error: '+e.message}
  btn.disabled=false}
-const syncAgr=()=>{$('agr').disabled=$('vista').value=='ceco';$('agrl').style.opacity=$('agr').disabled?.5:1};
-$('vista').onchange=()=>{syncAgr();cargar(false)};$('agr').onchange=()=>cargar(false);syncAgr();
+$('agr').onchange=()=>cargar(false);
 $('go').onclick=()=>cargar(false);$('rf').onclick=()=>cargar(true);
-if(PRE){$('ctl').hidden=true;init(PRE)}else{const q=new URLSearchParams(location.search);if(q.get('ini'))$('fi').value=q.get('ini');if(q.get('fin'))$('ff').value=q.get('fin');if(q.get('vista')=='ceco'){$('vista').value='ceco';syncAgr()}cargar(false)}
+if(PRE){$('ctl').hidden=true;init(PRE)}else{const q=new URLSearchParams(location.search);if(q.get('ini'))$('fi').value=q.get('ini');if(q.get('fin'))$('ff').value=q.get('fin');cargar(false)}
 </script>
