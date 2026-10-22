@@ -45,7 +45,7 @@ def extract_sat_api(tipo: str = "recibidos", periodos: list[str] | None = None,
     if tipo not in TIPOS_VALIDOS:
         raise ValueError(f"tipo debe ser uno de {TIPOS_VALIDOS}, se recibió {tipo!r}")
 
-    filtro = f"c.direccion = {sql_quote(tipo[:-1].upper())}"  # recibidos->RECIBIDO, emitidos->EMITIDO
+    filtro = f"c.tipo = {sql_quote(tipo[:-1].upper())}"  # recibidos->RECIBIDO, emitidos->EMITIDO
     if periodos:
         lista = ", ".join(sql_quote(p) for p in periodos)
         filtro += f" AND to_char(c.fecha, 'YYYY-MM') IN ({lista})"

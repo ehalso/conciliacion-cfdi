@@ -21,12 +21,12 @@ columnas BM:CB), cuya fuente es Postgres, esquema `raw_sat_api`.
    **Pendiente recomendado:** rotar la credencial admin (quedó con superusuario).
 2. **`src/extract_sat_api.py`** (nuevo). `extract_sat_api(tipo, periodos=None, con_concepto=True, uuids=None)`
    devuelve las columnas BM:BW desde `raw_sat_api.cfdi`:
-   - filtra por `direccion` (RECIBIDO / EMITIDO; AUTOEMITIDO queda aparte);
+   - filtra por `tipo` (RECIBIDO / EMITIDO; AUTOEMITIDO queda aparte);
    - Estatus = `Cancelado` si el UUID está en `raw_sat_api.cancelados` con `estatus='0'`;
    - Concepto UUID = Descripcion del primer Concepto del XML;
    - Importe = `total`; para recibidos la contraparte es el emisor;
    - acepta lista de `uuids` (en bloques de 400) para no depender del mes de timbrado.
-   Nota: la columna `tipo` fue reemplazada por `direccion` y ya no hay UUID duplicados.
+   Nota: `tipo` toma los valores RECIBIDO / EMITIDO / AUTOEMITIDO (en mayúsculas) y ya no hay UUID duplicados.
 3. **`layout_gastos_poliza/26_consolidado_vs_sat.py`** (nuevo). Toma el consolidado de v2
    (`25_consolidado_final`, que ya trae `UUID` y `XML_MONTO` de Mpro con sus reglas de
    deduplicación), cruza por UUID contra `extract_sat_api` y agrega BM:BW y BY:CB.
