@@ -76,8 +76,7 @@ tr.r:hover td{background:var(--hl)}
  <div class="kpis" id="kpis"></div>
 </header>
 <div class="bar" id="ctl"><label class="t">Fecha inicio <input type="date" id="fi" value="2026-01-01"></label><label class="t">Fecha final <input type="date" id="ff" value="2026-01-31"></label><label class="t">Vista <select id="vista"><option value="layout">Layout por documento</option><option value="ceco">Análisis por CECO</option></select></label><label class="t" id="agrl"><input type="checkbox" id="agr" checked> Agrupar por cuenta contable</label><button class="btn" id="go">Consultar</button><button class="chip" id="rf" title="Ignora el caché y vuelve a consultar .207">Actualizar desde .207</button><span class="st" id="st"></span></div>
-<div class="bar" id="chips" role="group" aria-label="Filtrar por tipo"></div>
-<div class="bar" id="chipsO" role="group" aria-label="Filtrar por origen del gasto"></div>
+<div class="bar" role="group" aria-label="Filtrar por tipo"><span id="chips" style="display:contents"></span><label class="t" id="oriW" hidden>Origen del gasto <select id="ori"></select></label></div>
 <div class="bar">
  <input type="search" id="q" placeholder="Buscar folio, proveedor, RFC, UUID, cuenta…" aria-label="Buscar">
  <label class="t"><input type="checkbox" id="only"> Solo primera fila de cada documento</label>
@@ -92,15 +91,23 @@ tr.r:hover td{background:var(--hl)}
 const PRE=/*DATA*/null;
 const $=id=>document.getElementById(id);
 function init(D){
-const cols=D.cols,rows=D.rows,RH=26,meta=D.meta||{},vista=D.vista||'layout',agrupado=!!D.agrupar;
+const RH=26,meta=D.meta||{},vista=D.vista||'layout',agrupado=!!D.agrupar;
 const TIPO={'Gasto':'--o1','Compra':'--o4','Indirecto':'--o3','NC proveedor':'--o6','CxP libre':'--o2','CxP orden compra':'--o5'};
 const ORI={registro_gasto:['Registro de gasto','--o1'],comprobacion_gasto:['Comprobación de gasto','--o2'],orden_compra:['Orden de compra','--o3'],control_combustible:['Control de combustible','--o4'],viaje:['Viaje','--o5'],gasto_reclasificacion:['Gasto reclasificación','--o6'],consumo_interno:['Consumo interno','--o7'],gasto_registro_nomina:['Nómina','--o8']};
+// la etiqueta de Tipo absorbe el origen: Gasto · origen, CxP · Libre/Orden Compra; el resto, solo el tipo
+const lbl=(t,o)=>t=='Gasto'&&o?'Gasto · '+(ORI[o]?ORI[o][0]:o):t=='CxP libre'?'CxP · Libre':t=='CxP orden compra'?'CxP · Orden Compra':t;
+const tOf=[],oOf=[];
+const cols=D.cols.filter(c=>c.k!='ORIGEN');
+const rows=(function(){const c0=D.cols,T0=c0.findIndex(c=>c.k=='Tipo'),O0=c0.findIndex(c=>c.k=='ORIGEN'),F0=c0.findIndex(c=>c.k=='FOLIO');
+ let k0=null,cT=null,cO=null;
+ return D.rows.map((r,i)=>{const k=r[T0]+'|'+r[F0];if(k!==k0){k0=k;cT=r[T0];cO=O0<0?null:r[O0]}tOf[i]=cT;oOf[i]=cO;
+  const n=r.slice();n[T0]=lbl(cT,cO);if(O0>=0)n.splice(O0,1);return n})})();
 const ix={};cols.forEach((c,i)=>ix[c.k]=i);
-const W={Tipo:104,ORIGEN:190,FOLIO:92,POLIZA:120,FECHA_POLIZA:104,CONCEPTO_POLIZA:300,CUENTA_REGISTRO:130,NOMBRE_CUENTA_REGISTRO:230,CECO:70,CARGO:110,ABONO:110,FECHA:104,MONEDA:64,CLAVE_PROVEEDOR:80,RFC_PROVEEDOR:130,NOMBRE_PROVEEDOR:260,TIPO_COMPROBANTE:190,UUID:300,NOMBRE_CUENTA:200,CONCEPTO_GASTO:260,DESCRIPCION_USO_BIEN_SERVICIO:240,FORMA_PAGO:200,XML_FORMA_PAGO:230,XML_METODO_PAGO:200,COMPLEMENTO_PAGO:300,REFERENCIA:170,BANCO:130,CUENTA_BANCARIA:130,NO_CHEQUE_TRANSF:150,NUMERO_FACTURA:120,XML_RFC_EMISOR:130};
+const W={Tipo:230,FOLIO:92,POLIZA:120,FECHA_POLIZA:104,CONCEPTO_POLIZA:300,CUENTA_REGISTRO:130,NOMBRE_CUENTA_REGISTRO:230,CECO:70,CARGO:110,ABONO:110,FECHA:104,MONEDA:64,CLAVE_PROVEEDOR:80,RFC_PROVEEDOR:130,NOMBRE_PROVEEDOR:260,TIPO_COMPROBANTE:190,UUID:300,NOMBRE_CUENTA:200,CONCEPTO_GASTO:260,DESCRIPCION_USO_BIEN_SERVICIO:240,FORMA_PAGO:200,XML_FORMA_PAGO:230,XML_METODO_PAGO:200,COMPLEMENTO_PAGO:300,REFERENCIA:170,BANCO:130,CUENTA_BANCARIA:130,NO_CHEQUE_TRANSF:150,NUMERO_FACTURA:120,XML_RFC_EMISOR:130};
 cols.forEach(c=>c.w=c.k=='FECHA_FACTURA'||c.k=='FECHA_CHEQUE'?104:W[c.k]||(c.t=='n'?116:110));
 const total=cols.reduce((a,c)=>a+c.w,0);
-// columnas fijas a la izquierda: Tipo, ORIGEN (solo Gasto), FOLIO
-const stk={};let off=0;['Tipo','ORIGEN','FOLIO'].forEach(k=>{if(k in ix){stk[k]=off;off+=cols[ix[k]].w}});
+// columnas fijas a la izquierda: Tipo (con origen) y FOLIO
+const stk={};let off=0;['Tipo','FOLIO'].forEach(k=>{if(k in ix){stk[k]=off;off+=cols[ix[k]].w}});
 $('sub').textContent=vista=='ceco'
  ?'Análisis por CECO: una línea por cuenta contable de la póliza; subtotales e impuestos se reparten entre las líneas de un mismo CECO y el TOTAL se calcula por línea.'
  :'Una fila por documento con sus importes (subtotales, impuestos, total, XML y cobro); si tiene varias líneas de póliza, las siguientes solo llevan el folio, la cuenta, el CECO, el cargo y el abono'+(agrupado?', sumadas por cuenta contable.':'.');
@@ -114,31 +121,29 @@ document.getElementById('tb').style.width=total+'px';
  hd.innerHTML=g+'</tr>'+h+'</tr>'})();
 const fmt=new Intl.NumberFormat('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
 const money=v=>fmt.format(v);
-const ti=ix.Tipo,oi=ix.ORIGEN,fi=ix.FOLIO,ci=ix.CARGO,ai=ix.ABONO,si=ix.SUBTOTAL_NETO,toi=ix.TOTAL;
+const ti=ix.Tipo,fi=ix.FOLIO,ci=ix.CARGO,ai=ix.ABONO,si=ix.SUBTOTAL_NETO,toi=ix.TOTAL;
 // llave de documento = Tipo + folio (un folio puede repetirse entre tipos)
 const kOf=rows.map(r=>r[ti]+'|'+r[fi]);
 const first=new Uint8Array(rows.length);let last=null;kOf.forEach((k,i)=>{if(k!==last){first[i]=1;last=k}});
-const tOf=new Array(rows.length),oOf=new Array(rows.length);let cT=null,cO=null;
-rows.forEach((r,i)=>{if(first[i]){cT=r[ti];cO=oi==null?null:r[oi]}tOf[i]=cT;oOf[i]=cO});
 const fol=new Map();rows.forEach((r,i)=>{const k=kOf[i],f=fol.get(k)||{c:0,a:0,s:0};f.c+=r[ci]||0;f.a+=r[ai]||0;f.s+=r[si]||0;fol.set(k,f)});
-let selT=new Set(),selO=new Set(),query='',only=false,view=[];
-const chips=$('chips'),chipsO=$('chipsO');
+let selT=new Set(),selO='',query='',only=false,view=[];
+const chips=$('chips'),oriW=$('oriW'),ori=$('ori');
 const cntT={},cntO={};rows.forEach((r,i)=>{if(first[i]){cntT[tOf[i]]=(cntT[tOf[i]]||0)+1;if(tOf[i]=='Gasto')cntO[oOf[i]]=(cntO[oOf[i]]||0)+1}});
 function chip(box,html,pressed,fn){const b=document.createElement('button');b.className='chip';b.setAttribute('aria-pressed',pressed);b.innerHTML=html;b.onclick=fn;box.appendChild(b)}
-function mkChips(){chips.innerHTML='';chipsO.innerHTML='';
- chip(chips,'Todos <small>'+fol.size+'</small>',selT.size==0,()=>{selT.clear();selO.clear();apply()});
+function mkChips(){chips.innerHTML='';
+ chip(chips,'Todos <small>'+fol.size+'</small>',selT.size==0&&!selO,()=>{selT.clear();selO='';apply()});
  Object.keys(TIPO).forEach(k=>{if(!cntT[k])return;chip(chips,'<i style="background:var('+TIPO[k]+')"></i>'+k+' <small>'+cntT[k]+'</small>',selT.has(k),()=>{selT.has(k)?selT.delete(k):selT.add(k);apply()})});
- const showO=Object.keys(cntO).length&&(!selT.size||selT.has('Gasto'));chipsO.hidden=!showO;
- if(showO){const l=document.createElement('span');l.className='st';l.textContent='Origen del gasto:';chipsO.appendChild(l);
-  Object.keys(ORI).forEach(k=>chip(chipsO,'<i style="background:var('+ORI[k][1]+')"></i>'+ORI[k][0]+' <small>'+(cntO[k]||0)+'</small>',selO.has(k),()=>{selO.has(k)?selO.delete(k):selO.add(k);apply()}))}}
-function apply(){mkChips();const q=query.toLowerCase();view=[];
+ oriW.hidden=!(Object.keys(cntO).length&&(!selT.size||selT.has('Gasto')))}
+ori.innerHTML='<option value="">Todos ('+Object.values(cntO).reduce((a,b)=>a+b,0)+')</option>'+Object.keys(ORI).filter(k=>cntO[k]).map(k=>'<option value="'+k+'">'+ORI[k][0]+' ('+cntO[k]+')</option>').join('');
+ori.onchange=()=>{selO=ori.value;apply()};
+function apply(){mkChips();ori.value=selO;const q=query.toLowerCase();view=[];
  let ok=null;
  if(q){ok=new Set();rows.forEach((r,i)=>{const k=kOf[i];if(!ok.has(k)){for(const v of r){if(v!=null&&String(v).toLowerCase().includes(q)){ok.add(k);break}}}})}
- const useO=selO.size>0&&(!selT.size||selT.has('Gasto'));
+ const useO=!!selO&&(!selT.size||selT.has('Gasto'));
  for(let i=0;i<rows.length;i++){const t=tOf[i];
   if(selT.size&&!selT.has(t))continue;
   if(useO&&t!='Gasto'&&!selT.has(t))continue;
-  if(useO&&t=='Gasto'&&!selO.has(oOf[i]))continue;
+  if(useO&&t=='Gasto'&&oOf[i]!==selO)continue;
   if(ok&&!ok.has(kOf[i]))continue;if(only&&!first[i])continue;view.push(i)}
  let c=0,a=0,s=0,tt=0,fs=new Set();view.forEach(i=>{const r=rows[i];c+=r[ci]||0;a+=r[ai]||0;s+=r[si]||0;tt+=toi==null?0:r[toi]||0;fs.add(kOf[i])});
  let okc=0;fs.forEach(f=>{const x=fol.get(f);if(Math.abs(x.c-x.a-x.s)<=0.05)okc++});
@@ -151,8 +156,7 @@ function draw(){const pages=Math.max(1,Math.ceil(view.length/PS));page=Math.min(
  else{let h='';for(let p=s;p<e;p++){const i=view[p],r=rows[i],f=first[i];
   h+='<tr class="r'+(f?' first':'')+'">';
   for(let k=0;k<cols.length;k++){const c=cols[k],v=r[k];let t='',cl=c.t=='n'?'n':'';
-   if(c.k=='Tipo'){if(v!=null)t='<span class="tag" style="background:var('+(TIPO[v]||'--o7')+')">'+v+'</span>'}
-   else if(c.k=='ORIGEN'){if(v!=null){const o=ORI[v]||[v,'--o7'];t='<span class="tag" style="background:var('+o[1]+')">'+o[0]+'</span>'}}
+   if(c.k=='Tipo'){if(v!=null)t='<span class="tag" style="background:var('+(TIPO[tOf[i]]||'--o7')+')">'+v+'</span>'}
    else if(v!=null){if(c.t=='n'){if(v===0&&c.g=='Impuestos'){}else t=money(v);if(v<0)cl+=' neg'}else t=String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;')}
    if(c.k=='FOLIO')cl+=' fo';
    let sty='';if(c.k in stk){cl+=' stk';sty=' style="left:'+stk[c.k]+'px"'}
@@ -163,7 +167,7 @@ function draw(){const pages=Math.max(1,Math.ceil(view.length/PS));page=Math.min(
  document.getElementById('pp').onclick=()=>{page--;draw();vp.scrollTop=0};document.getElementById('pn').onclick=()=>{page++;draw();vp.scrollTop=0}}
 document.getElementById('q').oninput=e=>{query=e.target.value.trim();clearTimeout(window._t);window._t=setTimeout(apply,200)};
 document.getElementById('only').onchange=e=>{only=e.target.checked;apply()};
-$('foot').innerHTML='<span><b>Tipo</b>: Gasto, Compra, Indirecto, NC proveedor, CxP libre o CxP orden compra (inversión que parte de una OC y genera CxP). Las notas de crédito van en negativo.</span><span><b>Subtotal neto</b> ya descuenta descuentos; <b>Cargo</b> = importes positivos de la póliza y <b>Abono</b> = negativos en valor absoluto.</span>'+(vista=='ceco'?'<span>Subtotal neto e impuestos se reparten entre las líneas de póliza de un mismo CECO, sin duplicarse.</span>':'<span>Los importes del documento aparecen solo en su primera fila, por lo que las sumas de columna no duplican.</span>')+'<span>Solo se muestran las columnas con algún dato en el periodo.</span>';
+$('foot').innerHTML='<span><b>Tipo</b>: Gasto (con su origen), Compra, Indirecto, NC proveedor o CxP (Libre u Orden Compra: inversión que parte de una OC y genera CxP). Las notas de crédito van en negativo.</span><span><b>Subtotal neto</b> ya descuenta descuentos; <b>Cargo</b> = importes positivos de la póliza y <b>Abono</b> = negativos en valor absoluto.</span>'+(vista=='ceco'?'<span>Subtotal neto e impuestos se reparten entre las líneas de póliza de un mismo CECO, sin duplicarse.</span>':'<span>Los importes del documento aparecen solo en su primera fila, por lo que las sumas de columna no duplican.</span>')+'<span>Solo se muestran las columnas con algún dato en el periodo.</span>';
 apply();
 
 function exportar(){
