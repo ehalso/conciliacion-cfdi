@@ -2,8 +2,7 @@
 <title>Layout de Gastos Trivasa</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
 <style>
-:root{--bg:#F8FAFC;--panel:#FFFFFF;--ink:#1F2937;--mute:#64748B;--line:#E2E8F0;--band:#EBEDEF;--accent:#FF8000;--accent-ink:#FFFFFF;--first:#FFF7ED;--neg:#B91C1C;--hl:#FFEDD5;--foot:#2E3F50;
---o1:#0F766E;--o2:#7A4EA3;--o3:#C2410C;--o4:#1D4ED8;--o5:#8A6D00;--o6:#BE185D;--o7:#64748B;--o8:#3F7D2E}
+:root{--bg:#F8FAFC;--panel:#FFFFFF;--ink:#1F2937;--mute:#64748B;--line:#E2E8F0;--band:#EBEDEF;--accent:#FF8000;--accent-ink:#FFFFFF;--first:#FFF7ED;--neg:#B91C1C;--hl:#FFEDD5;--foot:#2E3F50;}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:12px/1.4 Roboto,system-ui,sans-serif}
 .top{margin:6px 12px 0;background:var(--panel);box-shadow:0 2px 4px rgba(0,0,0,.1);height:52px;border-radius:6px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;border:1px solid var(--line)}.top .l{display:flex;align-items:center;gap:10px;font-weight:700;font-size:14px}.burger{width:30px;height:30px;background:var(--accent);border-radius:6px;display:grid;place-items:center}.burger i{display:block;width:12px;height:2px;background:#fff;box-shadow:0 -4px #fff,0 4px #fff}.top .u{color:var(--ink)}.foot{background:var(--foot);color:#fff;height:42px;display:flex;align-items:center;padding-left:200px;margin-top:8px}.wrap{max-width:none;margin:0;padding:0;display:flex;flex-direction:column;gap:16px}
@@ -44,6 +43,7 @@ label.t{display:flex;gap:6px;align-items:center;color:var(--mute);cursor:pointer
 .r.first .fo{font-weight:600}
 .r:not(.first) .c{color:var(--ink)}
 .r:hover{background:var(--hl)}
+.tag.lt{color:var(--ink)}
 .tag{font-size:11px;font-weight:600;padding:1px 7px;color:#fff;letter-spacing:.02em}
 .empty{padding:40px;text-align:center;color:var(--mute)}
 footer{color:var(--mute);font-size:12px;display:flex;gap:18px;flex-wrap:wrap}
@@ -93,8 +93,9 @@ const PRE=/*DATA*/null;
 const $=id=>document.getElementById(id);
 function init(D){
 const RH=26,meta=D.meta||{},vista=D.vista||'layout',agrupado=!!D.agrupar;
-const TIPO={'Gasto':'--o1','Compra':'--o4','Indirecto':'--o3','NC proveedor':'--o6','CxP libre':'--o2','CxP orden compra':'--o5'};
-const ORI={registro_gasto:['Registro de gasto','--o1'],comprobacion_gasto:['Comprobación de gasto','--o2'],orden_compra:['Orden de compra','--o3'],control_combustible:['Control de combustible','--o4'],viaje:['Viaje','--o5'],gasto_reclasificacion:['Gasto reclasificación','--o6'],consumo_interno:['Consumo interno','--o7'],gasto_registro_nomina:['Nómina','--o8']};
+const TIPO={'Gasto':'#0F766E','Compra':'#A16207','Indirecto':'#C2410C','NC proveedor':'#BE185D','CxP libre':'#7A4EA3','CxP orden compra':'#78350F'};
+// Gasto: rampa fría (teal, cielo, azul, índigo), cada matiz en tono oscuro (texto blanco) y claro (l=1, texto oscuro)
+const ORI={registro_gasto:['Registro de gasto','#0F766E'],comprobacion_gasto:['Comprobación de gasto','#5EEAD4',1],orden_compra:['Orden de compra','#0369A1'],consumo_interno:['Consumo interno','#7DD3FC',1],viaje:['Viaje','#1D4ED8'],control_combustible:['Control de combustible','#93C5FD',1],gasto_reclasificacion:['Gasto reclasificación','#4338CA'],gasto_registro_nomina:['Nómina','#A5B4FC',1]};
 // la etiqueta de Tipo absorbe el origen: Gasto · origen, CxP · Libre/Orden Compra; el resto, solo el tipo
 const lbl=(t,o)=>t=='Gasto'&&o?'Gasto · '+(ORI[o]?ORI[o][0]:o):t=='CxP libre'?'CxP · Libre':t=='CxP orden compra'?'CxP · Orden Compra':t;
 const tOf=[],oOf=[];
@@ -135,7 +136,7 @@ function mkChips(){chips.innerHTML='';
  chip(chips,'Todos <small>'+fol.size+'</small>',selT.size==0&&!selO,()=>{selT.clear();selO='';apply()});
  Object.keys(TIPO).forEach(k=>{if(!cntT[k])return;
   const f=()=>{if(selT.has(k)){selT.delete(k);if(k=='Gasto')selO=''}else selT.add(k);apply()};
-  const h='<i style="background:var('+TIPO[k]+')"></i>'+k+' <small>'+cntT[k]+'</small>';
+  const h='<i style="background:'+TIPO[k]+'"></i>'+k+' <small>'+cntT[k]+'</small>';
   if(k!='Gasto'||!Object.keys(cntO).length){chip(chips,h,selT.has(k),f);return}
   const d=document.createElement('div');d.className='chip cs';d.setAttribute('aria-pressed',selT.has(k));
   const b=document.createElement('button');b.innerHTML=h;b.onclick=f;d.appendChild(b);d.appendChild(ori);chips.appendChild(d)})}
@@ -161,7 +162,7 @@ function draw(){const pages=Math.max(1,Math.ceil(view.length/PS));page=Math.min(
  else{let h='';for(let p=s;p<e;p++){const i=view[p],r=rows[i],f=first[i];
   h+='<tr class="r'+(f?' first':'')+'">';
   for(let k=0;k<cols.length;k++){const c=cols[k],v=r[k];let t='',cl=c.t=='n'?'n':'';
-   if(c.k=='Tipo'){if(v!=null)t='<span class="tag" style="background:var('+(TIPO[tOf[i]]||'--o7')+')">'+v+'</span>'}
+   if(c.k=='Tipo'){if(v!=null){const o=tOf[i]=='Gasto'?ORI[oOf[i]]:null;t='<span class="tag'+(o&&o[2]?' lt':'')+'" style="background:'+(o?o[1]:TIPO[tOf[i]]||'#64748B')+'">'+v+'</span>'}}
    else if(v!=null){if(c.t=='n'){if(v===0&&c.g=='Impuestos'){}else t=money(v);if(v<0)cl+=' neg'}else t=String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;')}
    if(c.k=='FOLIO')cl+=' fo';
    let sty='';if(c.k in stk){cl+=' stk';sty=' style="left:'+stk[c.k]+'px"'}
