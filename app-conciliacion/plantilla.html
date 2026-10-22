@@ -17,6 +17,7 @@ h1{margin:0;font-size:13px;font-weight:700}
 .kpi span{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute)}
 .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .btn{font:inherit;font-weight:500;background:var(--accent);color:#fff;border:0;border-radius:6px;padding:6px 14px;cursor:pointer}.btn:hover{filter:brightness(.93)}.btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px}.chip{font:inherit;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);padding:5px 11px;cursor:pointer;display:flex;gap:7px;align-items:center}
+.chip.cs{padding:0;gap:0;overflow:hidden}.chip.cs>button{font:inherit;color:inherit;background:none;border:0;padding:5px 8px 5px 11px;cursor:pointer;display:flex;gap:7px;align-items:center}.chip.cs select{font:12px inherit;color:inherit;background:transparent;border:0;border-left:1px solid currentColor;padding:5px 6px;margin:0;cursor:pointer;max-width:200px}.chip.cs select option{color:var(--ink);background:var(--panel)}.chip.cs>button:focus-visible,.chip.cs select:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
 .chip i{width:9px;height:9px;display:inline-block}
 .chip small{color:var(--mute);font:11px "Roboto Mono",monospace}
 .chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
@@ -76,7 +77,7 @@ tr.r:hover td{background:var(--hl)}
  <div class="kpis" id="kpis"></div>
 </header>
 <div class="bar" id="ctl"><label class="t">Fecha inicio <input type="date" id="fi" value="2026-01-01"></label><label class="t">Fecha final <input type="date" id="ff" value="2026-01-31"></label><label class="t">Vista <select id="vista"><option value="layout">Layout por documento</option><option value="ceco">Análisis por CECO</option></select></label><label class="t" id="agrl"><input type="checkbox" id="agr" checked> Agrupar por cuenta contable</label><button class="btn" id="go">Consultar</button><button class="chip" id="rf" title="Ignora el caché y vuelve a consultar .207">Actualizar desde .207</button><span class="st" id="st"></span></div>
-<div class="bar" role="group" aria-label="Filtrar por tipo"><span id="chips" style="display:contents"></span><label class="t" id="oriW" hidden>Origen del gasto <select id="ori"></select></label></div>
+<div class="bar" role="group" aria-label="Filtrar por tipo"><span id="chips" style="display:contents"></span></div>
 <div class="bar">
  <input type="search" id="q" placeholder="Buscar folio, proveedor, RFC, UUID, cuenta…" aria-label="Buscar">
  <label class="t"><input type="checkbox" id="only"> Solo primera fila de cada documento</label>
@@ -127,19 +128,23 @@ const kOf=rows.map(r=>r[ti]+'|'+r[fi]);
 const first=new Uint8Array(rows.length);let last=null;kOf.forEach((k,i)=>{if(k!==last){first[i]=1;last=k}});
 const fol=new Map();rows.forEach((r,i)=>{const k=kOf[i],f=fol.get(k)||{c:0,a:0,s:0};f.c+=r[ci]||0;f.a+=r[ai]||0;f.s+=r[si]||0;fol.set(k,f)});
 let selT=new Set(),selO='',query='',only=false,view=[];
-const chips=$('chips'),oriW=$('oriW'),ori=$('ori');
+const chips=$('chips'),ori=document.createElement('select');ori.setAttribute('aria-label','Origen del gasto');
 const cntT={},cntO={};rows.forEach((r,i)=>{if(first[i]){cntT[tOf[i]]=(cntT[tOf[i]]||0)+1;if(tOf[i]=='Gasto')cntO[oOf[i]]=(cntO[oOf[i]]||0)+1}});
 function chip(box,html,pressed,fn){const b=document.createElement('button');b.className='chip';b.setAttribute('aria-pressed',pressed);b.innerHTML=html;b.onclick=fn;box.appendChild(b)}
 function mkChips(){chips.innerHTML='';
  chip(chips,'Todos <small>'+fol.size+'</small>',selT.size==0&&!selO,()=>{selT.clear();selO='';apply()});
- Object.keys(TIPO).forEach(k=>{if(!cntT[k])return;chip(chips,'<i style="background:var('+TIPO[k]+')"></i>'+k+' <small>'+cntT[k]+'</small>',selT.has(k),()=>{selT.has(k)?selT.delete(k):selT.add(k);apply()})});
- oriW.hidden=!(Object.keys(cntO).length&&(!selT.size||selT.has('Gasto')))}
-ori.innerHTML='<option value="">Todos ('+Object.values(cntO).reduce((a,b)=>a+b,0)+')</option>'+Object.keys(ORI).filter(k=>cntO[k]).map(k=>'<option value="'+k+'">'+ORI[k][0]+' ('+cntO[k]+')</option>').join('');
-ori.onchange=()=>{selO=ori.value;apply()};
+ Object.keys(TIPO).forEach(k=>{if(!cntT[k])return;
+  const f=()=>{if(selT.has(k)){selT.delete(k);if(k=='Gasto')selO=''}else selT.add(k);apply()};
+  const h='<i style="background:var('+TIPO[k]+')"></i>'+k+' <small>'+cntT[k]+'</small>';
+  if(k!='Gasto'||!Object.keys(cntO).length){chip(chips,h,selT.has(k),f);return}
+  const d=document.createElement('div');d.className='chip cs';d.setAttribute('aria-pressed',selT.has(k));
+  const b=document.createElement('button');b.innerHTML=h;b.onclick=f;d.appendChild(b);d.appendChild(ori);chips.appendChild(d)})}
+ori.innerHTML='<option value="">Todos los orígenes</option>'+Object.keys(ORI).filter(k=>cntO[k]).map(k=>'<option value="'+k+'">'+ORI[k][0]+' ('+cntO[k]+')</option>').join('');
+ori.onchange=()=>{selO=ori.value;if(selO)selT.add('Gasto');apply()};
 function apply(){mkChips();ori.value=selO;const q=query.toLowerCase();view=[];
  let ok=null;
  if(q){ok=new Set();rows.forEach((r,i)=>{const k=kOf[i];if(!ok.has(k)){for(const v of r){if(v!=null&&String(v).toLowerCase().includes(q)){ok.add(k);break}}}})}
- const useO=!!selO&&(!selT.size||selT.has('Gasto'));
+ const useO=!!selO&&selT.has('Gasto');
  for(let i=0;i<rows.length;i++){const t=tOf[i];
   if(selT.size&&!selT.has(t))continue;
   if(useO&&t!='Gasto'&&!selT.has(t))continue;
