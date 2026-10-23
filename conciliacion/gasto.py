@@ -1,0 +1,162 @@
+"""Documentos de Gasto: una fila por línea de póliza con CECO, con importes prorrateados por reparto de CECO."""
+import numpy as np
+import pandas as pd
+from sqlalchemy.engine import Connection
+
+from . import sql
+from .db import consultar
+
+COLS_POLIZA = ["POLIZA", "FECHA_POLIZA", "TIPO_POLIZA", "NUMERO_POLIZA", "CONCEPTO_POLIZA"]
+COLS_LINEA = COLS_POLIZA + ["CUENTA_REGISTRO", "NOMBRE_CUENTA_REGISTRO", "CARGO", "ABONO"]
+COLS_DOC = ["SUBTOTAL_16", "SUBTOTAL_0", "SUBTOTAL_EXENTA", "SUBTOTAL_NETO"]
+COLS_POLIZA_AF = ["FOLIO", "ORIGEN", *COLS_POLIZA, "CUENTA_REGISTRO", "NOMBRE_CUENTA_REGISTRO",
+                  "CECO", "CECO_DESCRIPCION", "CARGO", "ABONO"]
+TOLERANCIA_SIN_CECO = 0.05
+
+
+def pesos(reparto: pd.DataFrame) -> pd.DataFrame:
+    """Peso de cada (FOLIO, Grd_ID, CECO) dentro de su documento: `Grc_Factor`, o |Grc_Importe| si el factor suma < 0.01."""
+    r = reparto.copy()
+    r["ABS"] = r.Grc_Importe.abs()
+    r["PESO"] = r.Grc_Factor.fillna(0)
+    llave = ["FOLIO", "Grd_ID"]
+    sin_factor = r.groupby(llave).PESO.transform("sum") < 0.01
+    r.loc[sin_factor, "PESO"] = (r.ABS / r.groupby(llave).ABS.transform("sum"))[sin_factor]
+    r["PESO"] = r.PESO.fillna(0)
+    return r
+
+
+def impuestos_por_ceco(reparto: pd.DataFrame, subtotales: pd.DataFrame):
+    """Subtotales por (FOLIO, CECO) repartidos con los pesos del reparto."""
+    m = reparto.merge(subtotales, on=["FOLIO", "Grd_ID"], how="left")
+    for c in COLS_DOC:
+        m[c] = m[c] * m.PESO
+    return m.groupby(["FOLIO", "CECO"], as_index=False)[COLS_DOC].sum()
+
+
+def impuestos_clave_por_ceco(reparto: pd.DataFrame, por_clave: pd.DataFrame) -> pd.DataFrame:
+    x = reparto.merge(por_clave, on=["FOLIO", "Grd_ID"], how="inner")
+    x["V"] = x.IMPORTE * x.PESO
+    p = x.groupby(["FOLIO", "CECO", "CLAVE"]).V.sum().unstack("CLAVE").fillna(0).round(2)
+    p.columns = ["IMP_" + c for c in p.columns]
+    return p.reset_index()
+
+
+def emparejar_activo_fijo(folios: pd.DataFrame, lineas: pd.DataFrame) -> pd.DataFrame:
+    """Asigna a cada folio CONSUMO_INTERNO de activo fijo sus líneas de póliza, por (POLIZA, REFERENCIA).
+
+    `Gr_Referencia` no es único dentro de una póliza: con varios folios se empareja por rango de importe,
+    salvo que la póliza los agrupe en menos líneas, caso en que cada folio recibe la parte proporcional a su valor.
+    """
+    g = folios.sort_values(["POLIZA", "REFERENCIA", "VALOR_CMP"]).reset_index(drop=True)
+    p = lineas.sort_values(["POLIZA", "REFERENCIA", "IMPORTE_PD"]).reset_index(drop=True)
+    g["rank"] = g.groupby(["POLIZA", "REFERENCIA"]).cumcount()
+    p["rank"] = p.groupby(["POLIZA", "REFERENCIA"]).cumcount()
+    llave = ["POLIZA", "REFERENCIA"]
+    g = g.merge(p.groupby(llave).IMPORTE_PD.agg(n_lin="size", s_lin="sum").reset_index(), on=llave, how="left")
+    g = g.merge(g.groupby(llave).VALOR_CMP.sum().rename("s_val").reset_index(), on=llave, how="left")
+    n_folios = g.groupby(llave).FOLIO.transform("size")
+    agregada = (n_folios > 1) & (g.n_lin < n_folios) & (g.s_val > 0) & ((g.s_lin - g.s_val).abs() <= 0.5)
+    aux = ["n_lin", "s_lin", "s_val"]
+    p_sin_rank = p.drop(columns="rank")
+    unicos = g[n_folios == 1].drop(columns=["rank"] + aux)
+    agreg = g[agregada].drop(columns="rank").merge(p_sin_rank, on=llave, how="inner")
+    agreg["IMPORTE_PD"] = agreg.IMPORTE_PD * agreg.VALOR_CMP / agreg.s_val
+    resto = g[(n_folios > 1) & ~agregada].drop(columns=aux)
+    m = pd.concat([
+        unicos.merge(p_sin_rank, on=llave, how="inner"),
+        agreg.drop(columns=aux),
+        resto.merge(p, on=llave + ["rank"], how="inner"),
+    ], ignore_index=True)
+    m["ORIGEN"] = "CONSUMO_INTERNO"
+    m["CARGO"] = m["IMPORTE_PD"]
+    m["ABONO"] = 0.0
+    return m[COLS_POLIZA_AF]
+
+
+def atribuir_sin_ceco(filas: pd.DataFrame, subtotales: pd.DataFrame, sin_ceco: pd.DataFrame) -> pd.DataFrame:
+    """Carga a las filas completadas la línea de póliza sin CECO del mismo folio cuyo importe iguala el
+    subtotal neto de su (FOLIO, CECO); cada línea se usa una sola vez."""
+    lin = sin_ceco[sin_ceco.FOLIO.isin(filas.FOLIO)].copy()
+    if lin.empty:
+        return filas
+    lin["NET"] = lin.CARGO - lin.ABONO
+    por_folio = {f: list(g.index) for f, g in lin.groupby("FOLIO")}
+    objetivo = subtotales.groupby(["FOLIO", "CECO"]).SUBTOTAL_NETO.sum()
+    libres = set(lin.index)
+    filas = filas.copy()
+    for i, r in filas.iterrows():
+        t = objetivo.get((r.FOLIO, r.CECO))
+        if t is None or pd.isna(t):
+            continue
+        for j in por_folio.get(r.FOLIO, []):
+            if j in libres and abs(lin.at[j, "NET"] - t) <= TOLERANCIA_SIN_CECO:
+                for c in COLS_LINEA:
+                    filas.at[i, c] = lin.at[j, c]
+                libres.discard(j)
+                break
+    return filas
+
+
+def completar(base, subtotales, por_clave_ceco, reparto, doc, por_clave, origen, ceco_desc, sin_ceco):
+    """Agrega filas con CARGO = ABONO = 0 para los (FOLIO, CECO) del reparto que la póliza no cubre y para los
+    documentos sin reparto ni póliza con CECO, de modo que el layout totalice igual que el reporte nativo RPAG008."""
+    cubiertos = set(zip(base.FOLIO, base.CECO))
+    a = reparto[["FOLIO", "CECO"]].drop_duplicates()
+    a = a[[k not in cubiertos for k in zip(a.FOLIO, a.CECO)]].copy()
+    sin_reparto = sorted(set(doc.FOLIO) - set(reparto.FOLIO) - set(base.FOLIO))
+    extra = pd.concat([a, pd.DataFrame({"FOLIO": sin_reparto, "CECO": ""})], ignore_index=True)
+    if extra.empty:
+        return base, subtotales, por_clave_ceco
+    extra = extra.merge(origen, on="FOLIO", how="left").merge(
+        ceco_desc.assign(CECO=lambda t: t.CECO.str.strip()), on="CECO", how="left")
+    poliza = base.drop_duplicates("FOLIO").set_index("FOLIO")[COLS_POLIZA]
+    extra = extra.join(poliza, on="FOLIO")
+    extra["CARGO"] = 0.0
+    extra["ABONO"] = 0.0
+    if sin_reparto:
+        d = doc[doc.FOLIO.isin(sin_reparto)]
+        v = d.groupby("FOLIO")[COLS_DOC].sum().reset_index()
+        v["CECO"] = ""
+        subtotales = pd.concat([subtotales, v], ignore_index=True, sort=False)
+        w = (por_clave[por_clave.FOLIO.isin(sin_reparto)].groupby(["FOLIO", "CLAVE"]).IMPORTE.sum()
+             .unstack("CLAVE").fillna(0).round(2))
+        w.columns = ["IMP_" + c for c in w.columns]
+        w = w.reset_index()
+        w["CECO"] = ""
+        por_clave_ceco = pd.concat([por_clave_ceco, w], ignore_index=True, sort=False)
+    extra = atribuir_sin_ceco(extra, subtotales, sin_ceco)
+    return pd.concat([base, extra], ignore_index=True, sort=False), subtotales, por_clave_ceco
+
+
+def construir_gasto(con: Connection, p: dict) -> pd.DataFrame:
+    """Gasto previo a `posproceso.post`. Requiere las tablas temporales de `sql.GASTO_DOCS_SETUP`."""
+    lineas = consultar(con, sql.GASTO_POLIZA_SQL, p)
+    af_lineas = consultar(con, sql.GASTO_ACTIVO_FIJO_POLIZA_SQL, p)
+    af_lineas["REFERENCIA"] = af_lineas.REFERENCIA.str.strip()
+    af_folios = consultar(con, sql.GASTO_ACTIVO_FIJO_FOLIOS_SQL, p)
+    af_folios["REFERENCIA"] = af_folios.REFERENCIA.str.strip()
+    base = pd.concat([lineas, emparejar_activo_fijo(af_folios, af_lineas)], ignore_index=True)
+
+    subtotales_doc = consultar(con, sql.GASTO_SUBTOTALES_SQL, p)
+    reparto = pesos(consultar(con, sql.GASTO_REPARTO_SQL, p))
+    por_clave = consultar(con, sql.GASTO_IMPUESTO_CLAVE_SQL, p)
+    subtotales = impuestos_por_ceco(reparto, subtotales_doc)
+    por_clave_ceco = impuestos_clave_por_ceco(reparto, por_clave)
+
+    base, subtotales, por_clave_ceco = completar(
+        base, subtotales, por_clave_ceco, reparto, subtotales_doc, por_clave,
+        origen=consultar(con, sql.GASTO_ORIGEN_SQL),
+        ceco_desc=consultar(con, sql.CENTRO_COSTO_SQL),
+        sin_ceco=consultar(con, sql.GASTO_POLIZA_SIN_CECO_SQL, p))
+
+    proveedor = consultar(con, sql.GASTO_PROVEEDOR_SQL)
+    pagos = consultar(con, sql.PAGOS_SQL)
+    xml = consultar(con, sql.XML_SQL.format(origen="GASTO_REGISTRO"))
+    retenciones = consultar(con, sql.GASTO_RETENCIONES_SQL).add_prefix("R_").rename(columns={"R_FOLIO": "FOLIO"})
+    return (base.merge(subtotales, on=["FOLIO", "CECO"], how="left")
+                .merge(por_clave_ceco, on=["FOLIO", "CECO"], how="left")
+                .merge(proveedor, on="FOLIO", how="left")
+                .merge(pagos, on="FOLIO", how="left")
+                .merge(xml, on="FOLIO", how="left")
+                .merge(retenciones, on="FOLIO", how="left"))
