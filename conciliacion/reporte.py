@@ -7,7 +7,7 @@ from .db import parametros, tablas_temporales
 from .documentos import TIPOS, consultar_proveedores, construir_tipo
 from .gasto import construir_gasto
 from .posproceso import post
-from .sat import agregar_sat
+from .sat import agregar_sat, agregar_solo_sat
 
 
 def construir(engine: Engine, fi: str, ff: str, engine_sat: Engine | None = None) -> pd.DataFrame:
@@ -23,4 +23,7 @@ def construir(engine: Engine, fi: str, ff: str, engine_sat: Engine | None = None
         proveedores = consultar_proveedores(con)
         partes = [gasto] + [construir_tipo(con, t, p, proveedores) for t in TIPOS]
     d = post(pd.concat(partes, ignore_index=True, sort=False))
-    return agregar_sat(d, engine_sat) if engine_sat is not None else d
+    if engine_sat is None:
+        return d
+    d = agregar_sat(d, engine_sat)
+    return agregar_solo_sat(d, engine_sat, engine, fi, ff) if "SAT_UUID" in d else d

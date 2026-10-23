@@ -33,5 +33,22 @@ class CruceSat(unittest.TestCase):
             self.assertNotIn("SAT_UUID", sat.agregar_sat(d, None))
 
 
+class SoloSat(unittest.TestCase):
+    def test_agrega_los_que_no_estan_en_mpro(self):
+        crudo = pd.DataFrame({"uuid": [U1, U2, "BBBBBBBB-0000-0000-0000-000000000003"], "serie": "A", "folio": "1", "tipo_comprobante": "I",
+                              "fecha": "2026-01-08T10:00:00Z", "rfc_emisor": "XAXX", "nombre_emisor": "P",
+                              "total": [1.0, 2.0, 3.0], "cancelado": False, "concepto": "&amp;X"})
+        lecturas = iter([crudo, pd.DataFrame({"uuid": [U1]})])
+        engine = mock.MagicMock()
+        with mock.patch.object(sat.pd, "read_sql", lambda *a, **k: next(lecturas)):
+            d = pd.DataFrame({"Tipo": ["Gasto"], "FOLIO": ["01-1"], "UUID": [U1]})
+            o = sat.agregar_solo_sat(d, engine, engine, "2026-01-01", "2026-02-01")
+        n = o[o.Tipo == "Solo SAT"]
+        self.assertEqual(list(n.SAT_UUID), [U2, "BBBBBBBB-0000-0000-0000-000000000003"])
+        self.assertEqual(n.SAT_CONCEPTO.iloc[0], "&X")
+        self.assertEqual(list(n.CONC_EXISTE_MPRO), ["No", "No"])
+        self.assertEqual(n.FOLIO.nunique(), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

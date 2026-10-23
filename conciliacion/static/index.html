@@ -93,7 +93,7 @@ const PRE=/*DATA*/null;
 const $=id=>document.getElementById(id);
 function init(D){
 const RH=26,meta=D.meta||{},agrupado=!!D.agrupar;
-const TIPO={'Gasto':'#06707D','Compra':'#A16207','Indirecto':'#C2410C','NC proveedor':'#BE185D','CxP libre':'#7A4EA3','CxP orden compra':'#78350F'};
+const TIPO={'Gasto':'#06707D','Compra':'#A16207','Indirecto':'#C2410C','NC proveedor':'#BE185D','CxP libre':'#7A4EA3','CxP orden compra':'#78350F','Solo SAT':'#475569'};
 // Gasto: rampa de 8 pasos (teal oscuro a lila claro); los 4 pasos claros llevan texto oscuro (3.er valor = 1)
 const ORI={registro_gasto:['Registro de gasto','#084741'],comprobacion_gasto:['Comprobación de gasto','#0B5B5D'],orden_compra:['Orden de compra','#06707D'],control_combustible:['Control de combustible','#167F9B'],viaje:['Viaje','#15A8E4',1],gasto_reclasificacion:['Gasto reclasificación','#64B9FE',1],consumo_interno:['Consumo interno','#A5C9FF',1],gasto_registro_nomina:['Nómina','#D2DDFD',1]};
 // la etiqueta de Tipo absorbe el origen: Gasto · origen, CxP · Libre/Orden Compra; el resto, solo el tipo
