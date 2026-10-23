@@ -1,0 +1,25 @@
+[project]
+name = "conciliacion"
+version = "2.3.0"
+description = "Reporte de gastos, compras y CxP de Mpro con layout de póliza"
+requires-python = ">=3.10"
+dependencies = ["pandas>=2.0", "sqlalchemy>=2.0", "pymssql>=2.3"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+conciliacion = "conciliacion.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["conciliacion*"]
+
+[tool.setuptools.package-data]
+conciliacion = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
