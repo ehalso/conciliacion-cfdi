@@ -5,13 +5,21 @@ import pandas as pd
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL, Connection, Engine
 
-from .config import EMPRESA, Mpro
+from .config import EMPRESA, Mpro, Sat
 
 
 def crear_engine(mpro: Mpro) -> Engine:
     url = URL.create("mssql+pymssql", username=mpro.usuario, password=mpro.clave,
                      host=mpro.host, port=mpro.puerto, database=mpro.base)
     return create_engine(url, pool_pre_ping=True)
+
+
+def crear_engine_sat(sat: Sat) -> Engine:
+    """Postgres del SAT: la sesión se abre en solo lectura aunque la cuenta tenga permisos de escritura."""
+    url = URL.create("postgresql+psycopg2", username=sat.usuario, password=sat.clave,
+                     host=sat.host, port=sat.puerto, database=sat.base)
+    return create_engine(url, pool_pre_ping=True,
+                         connect_args={"options": "-c default_transaction_read_only=on", "connect_timeout": 10})
 
 
 def parametros(fi: str, ff: str) -> dict:

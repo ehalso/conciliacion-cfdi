@@ -7,10 +7,14 @@ from .db import parametros, tablas_temporales
 from .documentos import TIPOS, consultar_proveedores, construir_tipo
 from .gasto import construir_gasto
 from .posproceso import post
+from .sat import agregar_sat
 
 
-def construir(engine: Engine, fi: str, ff: str) -> pd.DataFrame:
-    """DataFrame final (ya posprocesado): una fila por línea de póliza, columna `Tipo`."""
+def construir(engine: Engine, fi: str, ff: str, engine_sat: Engine | None = None) -> pd.DataFrame:
+    """DataFrame final (ya posprocesado): una fila por línea de póliza, columna `Tipo`.
+
+    Con `engine_sat` agrega el cruce por UUID contra el SAT (columnas SAT_* y CONC_*).
+    """
     p = parametros(fi, ff)
     with engine.connect() as con:
         with tablas_temporales(con, sql.GASTO_DOCS_SETUP, p, *sql.TEMPORALES):
@@ -18,4 +22,5 @@ def construir(engine: Engine, fi: str, ff: str) -> pd.DataFrame:
         gasto["Tipo"] = "Gasto"
         proveedores = consultar_proveedores(con)
         partes = [gasto] + [construir_tipo(con, t, p, proveedores) for t in TIPOS]
-    return post(pd.concat(partes, ignore_index=True, sort=False))
+    d = post(pd.concat(partes, ignore_index=True, sort=False))
+    return agregar_sat(d, engine_sat) if engine_sat is not None else d
