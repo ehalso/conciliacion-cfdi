@@ -19,7 +19,7 @@ FECHAS = ("FECHA", "FECHA_POLIZA", "FECHA_CHEQUE", "FECHA_COMPLEMENTO_PAGO", "SA
 POLIZA = ("POLIZA", "NUMERO_POLIZA", "TIPO_POLIZA", "FECHA_POLIZA", "CONCEPTO_POLIZA")
 REPITEN = ("registro_gasto", "control_combustible", "orden_compra", "viaje")
 SIEMPRE = ("Tipo", "FOLIO", "FECHA", "SUBTOTAL_NETO", "TOTAL", "CARGO", "ABONO")
-ORDEN_TIPO = {"Gasto": 0, "Compra": 1, "Indirecto": 2, "NC proveedor": 3, "CxP libre": 4, "CxP orden compra": 5}
+ORDEN_TIPO = {"Gasto": 0, "Compra": 1, "Indirecto": 2, "NC proveedor": 3, "CxP libre": 4, "CxP orden compra": 5, "Solo SAT": 6}
 CIFRAS_DOC = ("SUBTOTAL_0", "SUBTOTAL_16", "SUBTOTAL_EXENTA", "SUBTOTAL_NETO", "TOTAL")
 SIN_CEROS = ("SUBTOTAL_0", "SUBTOTAL_16", "SUBTOTAL_EXENTA")
 VISTAS = ("layout", "ceco")
@@ -107,10 +107,11 @@ def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True) -> dic
     for i, r in enumerate(d[[fuente[k] for k in ks]].itertuples(index=False)):
         fila = []
         for j, (c, v) in enumerate(zip(cols, r)):
+            repetible = repite[i] and c["k"] not in POLIZA and c["g"] not in GRUPOS_SAT
             if layout:
-                visible = primera[i] or c["k"] in linea_poliza or (repite[i] and c["t"] == "t" and c["k"] not in POLIZA)
+                visible = primera[i] or c["k"] in linea_poliza or (repetible and c["t"] == "t")
             else:
-                visible = primera[i] or c["linea"] or (repite[i] and c["k"] not in POLIZA)
+                visible = primera[i] or c["linea"] or repetible
             v = val(v) if visible else None
             fila.append(None if (j in sin_ceros and v == 0) else v)
         for j in importes:
