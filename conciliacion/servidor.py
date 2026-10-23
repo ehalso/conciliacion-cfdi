@@ -23,8 +23,9 @@ ERROR_BD = "Error consultando la base de Mpro; reintenta o avisa a TI."
 class Cache:
     """DataFrame por (ini, fin) con TTL; JSON comprimido por (vista, agrupar)."""
 
-    def __init__(self, engine: Engine, etiqueta: str, ttl_seg: int, maximo: int):
+    def __init__(self, engine: Engine, etiqueta: str, ttl_seg: int, maximo: int, engine_sat: Engine | None = None):
         self.engine, self.etiqueta, self.ttl, self.maximo = engine, etiqueta, ttl_seg, maximo
+        self.engine_sat = engine_sat
         self._items: dict = {}
         self._lock = threading.Lock()
 
@@ -38,7 +39,7 @@ class Cache:
             if not vigente:
                 t0 = time.time()
                 ff = (dt.date.fromisoformat(fin) + dt.timedelta(days=1)).isoformat()
-                c = {"t": time.time(), "d": construir(self.engine, ini, ff), "gz": {},
+                c = {"t": time.time(), "d": construir(self.engine, ini, ff, self.engine_sat), "gz": {},
                      "seg": round(time.time() - t0, 1), "generado": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                 self._items[(ini, fin)] = c
                 while len(self._items) > self.maximo:
@@ -46,7 +47,7 @@ class Cache:
             datos = a_datos(c["d"], vista, agrupar)
             datos["meta"] = {"fuente": self.etiqueta, "ini": ini, "fin": fin, "filas": len(datos["rows"]),
                              "vista": vista, "agrupar": datos["agrupar"], "generado": c["generado"],
-                             "seg_consulta": c["seg"]}
+                             "seg_consulta": c["seg"], "sat": "SAT_UUID" in c["d"]}
             gz = gzip.compress(json.dumps(datos, ensure_ascii=False, separators=(",", ":")).encode(), 5)
             c["gz"][(vista, agrupar)] = gz
             return gz, vigente
@@ -63,10 +64,10 @@ def _parametros(q: dict) -> tuple[str, str, str, bool]:
     return ini, fin, vista, q.get("agrupar", ["1"])[0] != "0"
 
 
-def crear_servidor(cfg: Servidor, mpro: Mpro, engine: Engine) -> ThreadingHTTPServer:
+def crear_servidor(cfg: Servidor, mpro: Mpro, engine: Engine, engine_sat: Engine | None = None) -> ThreadingHTTPServer:
     esperado = "Basic " + base64.b64encode(f"{cfg.usuario}:{cfg.clave}".encode()).decode()
     pagina = (resources.files("conciliacion") / "static" / "index.html").read_bytes()
-    cache = Cache(engine, mpro.etiqueta, cfg.ttl_seg, cfg.max_cache)
+    cache = Cache(engine, mpro.etiqueta, cfg.ttl_seg, cfg.max_cache, engine_sat)
 
     class Manejador(BaseHTTPRequestHandler):
         def log_message(self, *a):

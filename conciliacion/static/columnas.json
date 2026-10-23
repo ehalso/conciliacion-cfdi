@@ -453,5 +453,110 @@
   "g": "Pago",
   "t": "t",
   "linea": false
+ },
+ {
+  "k": "SAT_UUID",
+  "l": "UUID",
+  "g": "Base de datos SAT",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "SAT_SERIE",
+  "l": "Serie UUID",
+  "g": "Base de datos SAT",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "SAT_FOLIO",
+  "l": "Folio UUID",
+  "g": "Base de datos SAT",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "SAT_ESTATUS",
+  "l": "Estatus",
+  "g": "Base de datos SAT",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "SAT_TIPO_CFDI",
+  "l": "Tipo de CFDI",
+  "g": "Base de datos SAT",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "SAT_FECHA",
+  "l": "Fecha UUID",
+  "g": "Base de datos SAT",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "SAT_CONCEPTO",
+  "l": "Concepto UUID",
+  "g": "Base de datos SAT",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "SAT_RFC",
+  "l": "RFC del proveedor",
+  "g": "Base de datos SAT",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "SAT_PROVEEDOR",
+  "l": "Nombre del proveedor",
+  "g": "Base de datos SAT",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "SAT_IMPORTE",
+  "l": "Importe",
+  "g": "Base de datos SAT",
+  "t": "n",
+  "linea": false
+ },
+ {
+  "k": "SAT_NO_LOCALIZADOS",
+  "l": "No localizados",
+  "g": "Base de datos SAT",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "CONC_EXISTE_MPRO",
+  "l": "Existe UUID en Mpro",
+  "g": "Conciliación SAT",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "CONC_EXISTE_SAT",
+  "l": "Existe UUID en SAT",
+  "g": "Conciliación SAT",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "CONC_EXISTENCIA",
+  "l": "Coincide existencia",
+  "g": "Conciliación SAT",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "CONC_IMPORTES",
+  "l": "Coincide importes",
+  "g": "Conciliación SAT",
+  "t": "t",
+  "linea": false
  }
 ]

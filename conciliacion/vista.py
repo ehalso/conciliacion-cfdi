@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-FECHAS = ("FECHA", "FECHA_POLIZA", "FECHA_CHEQUE", "FECHA_COMPLEMENTO_PAGO")
+FECHAS = ("FECHA", "FECHA_POLIZA", "FECHA_CHEQUE", "FECHA_COMPLEMENTO_PAGO", "SAT_FECHA")
 POLIZA = ("POLIZA", "NUMERO_POLIZA", "TIPO_POLIZA", "FECHA_POLIZA", "CONCEPTO_POLIZA")
 REPITEN = ("registro_gasto", "control_combustible", "orden_compra", "viaje")
 SIEMPRE = ("Tipo", "FOLIO", "FECHA", "SUBTOTAL_NETO", "TOTAL", "CARGO", "ABONO")
@@ -46,9 +46,12 @@ def val(v):
     return None if v == "" else v
 
 
+GRUPOS_SAT = {"Base de datos SAT", "Conciliación SAT"}
+
+
 def columnas(d: pd.DataFrame) -> list[dict]:
     """Catálogo más las claves IMP_xxxx que traiga el DataFrame y no estén en columnas.json."""
-    base = list(catalogo())
+    base = [c for c in catalogo() if "SAT_UUID" in d or c["g"] not in GRUPOS_SAT]
     conocidas = {c["k"] for c in base}
     extra = [{"k": k, "l": k[4:] + " Impuesto", "g": "Impuestos", "t": "n", "linea": True}
              for k in sorted(d.columns) if k.startswith("IMP_") and k not in conocidas]
@@ -90,7 +93,7 @@ def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True) -> dic
     llave = d.Tipo.astype(str) + "|" + d.FOLIO.astype(str)
     primera = (llave != llave.shift()).to_numpy()
     repite = d.ORIGEN.isin(REPITEN).to_numpy()
-    for k in FECHAS:
+    for k in (k for k in FECHAS if k in d):
         d[k] = pd.to_datetime(d[k], errors="coerce").dt.strftime("%d-%m-%Y")
 
     ks = [c["k"] for c in cols]

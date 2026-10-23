@@ -36,6 +36,15 @@ python -m conciliacion      # sin APP_PORT usa un puerto libre y lo imprime
 API: `/api/reporte?ini=YYYY-MM-DD&fin=YYYY-MM-DD[&vista=layout|ceco][&agrupar=0|1][&refresh=1]`
 (`fin` exclusivo, máximo 366 días). Los datos son financieros: nada se escribe a disco.
 
+## Cruce con el SAT (BM:CB)
+
+Con credenciales de Postgres (`SAT_PG_USER`/`SAT_PG_PASSWORD` o `POSTGRES_DW_RO_USERNAME`/`PASSWORD`; host/puerto/base por `SAT_PG_HOST`/`SAT_PG_PORT`/`SAT_PG_DB`, por omisión `localhost:5433/trivasa_dw`; respaldo: trivasa-bi-core, solo en memoria) el reporte agrega dos grupos de columnas cruzando por UUID contra `raw_sat_api.cfdi` (RECIBIDO y AUTOEMITIDO; cancelados desde `raw_sat_api.cancelados`):
+
+- **Base de datos SAT**: UUID, serie, folio, estatus, tipo de CFDI, fecha, concepto (primera descripción del XML), RFC y nombre del proveedor, importe y "No localizados" (vacío, pendiente de definir).
+- **Conciliación SAT**: existe en Mpro, existe en SAT, coincide existencia y coincide importes (`XML_MONTO` vs importe SAT, tolerancia 0.05).
+
+La sesión a Postgres es de solo lectura. Si no hay credenciales o el SAT falla, el reporte sale sin esas columnas (`meta.sat = false`).
+
 ## Pruebas
 
 ```bash
