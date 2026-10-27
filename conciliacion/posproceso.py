@@ -18,9 +18,26 @@ ORIGEN = {
 }
 FORMA_PAGO_CHEQUE = "0002"
 
+# Criterios de conciliación: Tipo_Gasto/grupo (catálogo Mpro) que por su naturaleza no tienen CFDI porque no
+# son una compra (ver docs/REGLAS_NEGOCIO.md). Solo se incluyen los 100% (o casi) limpios en los datos; queda
+# pendiente "No deducibles" (Tipo_Gasto 0092, 85.6% sin CFDI: el resto es compra real no deducible fiscalmente)
+# e "Impuesto Sobre Nómina" (0025, 86%: 17 folios sí tienen CFDI real de la Secretaría de Hacienda).
+GRUPO_NOMINA = "0001"  # Remuneración al personal
+GRUPOS_PROVISION_CONTABLE = {"0011", "0013", "0014"}  # depreciación de activo fijo, amortización de intangibles y otras amortizaciones
+# Tipo_Gasto individuales de provisión contable que quedan fuera de los grupos de arriba (grupo 0009, mixto)
+TIPOS_PROVISION_CONTABLE = {"0102", "0211", "0212"}  # cuentas incobrables, provisión gastos distribución, provisión derechos SDS
+# Tipo_Gasto "(COSTO ESTANDAR)": salida de almacén/producción valuada a costo estándar, no a la factura real.
+# El grupo 0005 (Mantenimiento costo estándar) no sirve como filtro: mezcla estos con su par "(CUENTA DE
+# BALANCE)" que sí tiene CFDI (24.4% de pureza); hay que listar los Tipo_Gasto individuales.
+TIPOS_COSTO_ESTANDAR = {
+    "0029", "0054", "0055", "0056", "0057", "0058", "0059", "0060", "0176", "0189", "0199", "0238", "0241",
+    "0240",  # fletes a producción: misma naturaleza (transporte interno sin CFDI), 100% limpio
+}
+
 _OPCIONALES = ("R_N", "R_MONTO", "R_SERIE", "R_FOLIO_XML", "FP_CVE", "TIPO_COMPROBANTE", "XML_MONTO", "XML_SERIE",
-               "XML_FOLIO", "NUMERO_FACTURA", "FECHA_CHEQUE", "ORIGEN")
-_TEXTO = ("TIPO_COMPROBANTE", "XML_SERIE", "XML_FOLIO", "NUMERO_FACTURA", "R_SERIE", "R_FOLIO_XML", "FP_CVE", "ORIGEN")
+               "XML_FOLIO", "NUMERO_FACTURA", "FECHA_CHEQUE", "ORIGEN", "GRUPO_TIPO_GASTO", "TIPO_GASTO")
+_TEXTO = ("TIPO_COMPROBANTE", "XML_SERIE", "XML_FOLIO", "NUMERO_FACTURA", "R_SERIE", "R_FOLIO_XML", "FP_CVE", "ORIGEN",
+          "GRUPO_TIPO_GASTO", "TIPO_GASTO")
 
 
 def _vacio(v) -> bool:
@@ -109,4 +126,13 @@ def post(d: pd.DataFrame) -> pd.DataFrame:
     d["ORIGEN"] = d.ORIGEN.map(_origen)
     d["FECHA_CHEQUE"] = pd.to_datetime(d.FECHA_CHEQUE, errors="coerce").dt.strftime("%Y-%m-%d")
     d.loc[d.FECHA_CHEQUE == "1900-01-01", "FECHA_CHEQUE"] = None
-    return d.drop(columns=["_net", "_abs", "_gk"])
+
+    # Criterios de conciliación: documentos que por su naturaleza no deben tener CFDI (no son una compra).
+    criterio = pd.Series(np.nan, index=d.index, dtype=object)
+    criterio[d.TIPO_GASTO.isin(TIPOS_COSTO_ESTANDAR)] = "Costo estándar"
+    criterio[d.GRUPO_TIPO_GASTO.isin(GRUPOS_PROVISION_CONTABLE) | d.TIPO_GASTO.isin(TIPOS_PROVISION_CONTABLE)] = "Provisión contable"
+    criterio[d.GRUPO_TIPO_GASTO == GRUPO_NOMINA] = "Nómina"
+    criterio[d.ORIGEN == "gasto_registro_nomina"] = "Nómina"
+    criterio[d.ORIGEN == "consumo_interno"] = "Consumo interno"
+    d["CRITERIO_CONCILIACION"] = criterio
+    return d.drop(columns=["_net", "_abs", "_gk", "GRUPO_TIPO_GASTO", "TIPO_GASTO"])

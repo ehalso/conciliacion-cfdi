@@ -29,6 +29,19 @@ TEMPORALES = ("#docs", "#folios", "#cxp_d")
 
 GASTO_ORIGEN_SQL = "SELECT FOLIO, ORIGEN FROM #docs"
 
+# Tipo de gasto (y su grupo) representativo del folio (el de mayor importe), para marcar nómina/provisión
+# contable/costo estándar que por su naturaleza no deben tener CFDI (ver docs/REGLAS_NEGOCIO.md).
+GASTO_TIPO_GASTO_SQL = """
+WITH doc_rank AS (
+    SELECT d.FOLIO, grd.Tg_Cve_Tipo_Gasto,
+           ROW_NUMBER() OVER (PARTITION BY d.FOLIO ORDER BY ABS(grd.Grd_Precio_Descontado_Importe) DESC, grd.Grd_ID) AS rn
+    FROM #docs d JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=d.FOLIO
+)
+SELECT r.FOLIO, r.Tg_Cve_Tipo_Gasto AS TIPO_GASTO, tg.Gtg_Cve_Grupo_Tipo_Gasto AS GRUPO_TIPO_GASTO
+FROM doc_rank r LEFT JOIN Tipo_Gasto tg ON tg.Tg_Cve_Tipo_Gasto=r.Tg_Cve_Tipo_Gasto
+WHERE r.rn=1
+"""
+
 # Proveedor representativo: el documento de mayor importe del folio.
 GASTO_PROVEEDOR_SQL = """
 WITH doc_rank AS (

@@ -4,6 +4,31 @@
 
 - **Orden de columnas igual al Excel de referencia** (`Layout_de_gastos_enero_2025_con_detalles.xlsx`). Hoy el orden es el de `columnas.json` (Tipo, Origen, Folio, datos del registro, comprobante XML, subtotales, impuestos, total, póliza, pago). No se ha decidido si se reordena como el Excel; se retoma después.
 
+## Criterios de conciliación (4)
+
+Ya implementado: columna `CRITERIO_CONCILIACION` para Consumo interno, Nómina, Provisión contable y Costo
+estándar (ver `REGLAS_NEGOCIO.md`). Con los cuatro marcados, de los 717 folios "sin explicar" que quedaban tras
+la primera pasada (Consumo interno/Nómina/Provisión contable de grupo), Costo estándar + la extensión de
+Provisión contable explican 281 (39.2 %) con 100 % de pureza cada uno. Pendiente:
+
+- **No deducibles**: `Tipo_Gasto` `0092` (catálogo Mpro) solo tiene 85.6 % de folios sin CFDI; el 14.4 %
+  restante sí tiene CFDI (son compras reales, p. ej. gasolineras) que simplemente no son deducibles
+  fiscalmente — no se puede marcar como "sin CFDI por naturaleza" sin decisión de negocio (¿se concilia igual
+  cuando sí hay CFDI, y solo se excluye cuando no lo hay?).
+- **Impuesto Sobre Nómina**: `Tipo_Gasto` `0025`, 86 % sin CFDI; los folios con CFDI son de la Secretaría de
+  Hacienda (17 folios) — mismo matiz que "No deducibles", no es un sí/no limpio.
+- **Residual sin patrón**: quedan ~195 folios dispersos en muchos `Tipo_Gasto` de baja pureza individual
+  (erogaciones preoperativas, cuotas y suscripciones, intereses bancarios, telefonía celular, recargos...),
+  sin un eje estructural adicional — probablemente timing de captura de CFDI o proveedores extranjeros (SaaS,
+  aerolíneas) ya vistos en la exploración inicial, no un criterio nuevo que valga la pena codificar.
+- **Filtro dedicado en la interfaz**: hoy `CRITERIO_CONCILIACION` es una columna más (visible, buscable con el
+  buscador de texto libre, con autofiltro en el Excel exportado), pero no tiene un control dedicado como el
+  dropdown de "Origen del gasto" en `static/index.html`. Si se necesita filtrar/aislar por este criterio desde
+  la interfaz web (no solo en Excel), falta ese control (y su color/leyenda, igual que `ORI` para Origen).
+- **4.1 Reporte propuesto filtrado y resultado**: falta un bloque de totales (KPI) que muestre cuánto del
+  universo de Gasto se excluye por cada criterio y cuánto queda como "esperado conciliar con el SAT", para
+  comparar ese resto contra lo que realmente aparece en la conciliación SAT (columnas `CONC_*`).
+
 ## Validación por folio (no implementada)
 
 Comparar, por documento, `SUBTOTAL_NETO` contra el cargo contable neto de la póliza (cargo − abono) y marcar las diferencias.

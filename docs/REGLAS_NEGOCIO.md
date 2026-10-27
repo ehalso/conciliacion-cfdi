@@ -15,6 +15,35 @@
 - **Exportar a Excel**: encabezado (empresa, fecha inicial, fecha final, vista), fila de numeración 1..N, títulos con autofiltro y fila final `TOTAL` con `SUBTOTAL(109,…)` (respeta el filtro de Excel) en las columnas de importe.
 - Ver `MEJORAS_FUTURAS.md` para lo pendiente de decidir.
 
+## Criterios de conciliación (documentos de Gasto que por su naturaleza no tienen CFDI)
+
+Columna `CRITERIO_CONCILIACION`: marca (no excluye) los folios de Gasto que, por su naturaleza, nunca van a
+tener un CFDI asociado, para no compararlos contra el SAT como si fueran una compra pendiente de factura.
+Se calcula con dos fuentes, ambas códigos de catálogo (no texto libre, salvo donde se indica):
+
+- `ORIGEN = consumo_interno` → **Consumo interno** (salida de almacén/activo fijo, `Gr_Tabla='CONSUMO_INTERNO'`).
+- `ORIGEN = gasto_registro_nomina`, o el grupo de `Tipo_Gasto` del folio (`Gasto_Registro_Documento.Tg_Cve_Tipo_Gasto`
+  → `Tipo_Gasto.Gtg_Cve_Grupo_Tipo_Gasto`) es `0001` (Remuneración al personal) → **Nómina**. El grupo cubre más
+  folios que el `ORIGEN` solo (974 vs. 900 en ene-sep 2026): hay nómina capturada también como `registro_gasto`.
+- Grupo de `Tipo_Gasto` en `{0011, 0013, 0014}` (depreciación de activo fijo, amortización de activos intangibles
+  y otras amortizaciones), o `Tipo_Gasto` individual en `{0102, 0211, 0212}` (cuentas incobrables, provisión de
+  gastos de distribución, provisión de derechos SDS; viven en el grupo mixto `0009` y no se pueden tomar por
+  grupo) → **Provisión contable**.
+- `Tipo_Gasto` individual en 14 códigos "(COSTO ESTANDAR)" más "Fletes a producción" (`conciliacion.posproceso.
+  TIPOS_COSTO_ESTANDAR`) → **Costo estándar**: salida de almacén/producción valuada a costo estándar en vez de
+  a la factura real. El grupo `0005` (Mantenimiento costo estándar) no sirve como filtro por sí solo: mezcla
+  estos tipos con su par "(CUENTA DE BALANCE)" que sí tiene CFDI (24.4 % de pureza como grupo completo); hay
+  que filtrar por `Tipo_Gasto` individual.
+
+El Tipo_Gasto (y su grupo) representativo del folio es el de la línea de mayor importe (`GASTO_TIPO_GASTO_SQL`,
+mismo patrón que el proveedor representativo). Se eligieron estos cuatro por ser 100 % (o casi) sin CFDI en
+ene-sep 2026 (42,451 folios de Gasto): Consumo interno 27,080/27,081, Nómina 974/974, Provisión contable
+97/97, Costo estándar 247/247. Con los cuatro marcados, el resto de Gasto (14,052 folios, los que sí deberían
+conciliar contra el SAT) baja de 67.9 % a solo **3.1 % sin CFDI** (436 folios). Quedan pendientes, por no ser
+igual de limpios, "No deducibles" (`Tipo_Gasto` `0092`, 85.6 % sin CFDI: el resto son compras reales, p. ej.
+gasolineras, que simplemente no son deducibles fiscalmente) e "Impuesto Sobre Nómina" (`Tipo_Gasto` `0025`,
+86 % sin CFDI: los que sí tienen CFDI son de la Secretaría de Hacienda) — ver `MEJORAS_FUTURAS.md`.
+
 ## CxP libre y CxP de orden de compra
 
 Ambas son registros de `Cuenta_X_Pagar` que **no** nacen de un documento Compra, Compra indirecta ni Gasto; se distinguen por `Cxp_Tabla`:

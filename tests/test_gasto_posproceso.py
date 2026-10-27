@@ -73,6 +73,30 @@ class Post(unittest.TestCase):
         self.assertAlmostEqual(r.SUBTOTAL_NETO.sum(), 40.0, 2)
         self.assertEqual(list(r.SUBTOTAL_NETO), [30.0, 10.0])
 
+    def test_criterio_conciliacion(self):
+        d = self.base()
+        d["ORIGEN"] = ["CONSUMO_INTERNO", "GASTO_REGISTRO_NOMINA", None]
+        d["GRUPO_TIPO_GASTO"] = [None, None, "0011"]
+        r = post(d)
+        self.assertEqual(list(r.CRITERIO_CONCILIACION), ["Consumo interno", "Nómina", "Provisión contable"])
+
+    def test_sin_criterio_conciliacion_queda_vacio(self):
+        r = post(self.base())
+        self.assertTrue(r.CRITERIO_CONCILIACION.isna().all())
+
+    def test_costo_estandar_y_provision_por_tipo_gasto_individual(self):
+        d = self.base()
+        d["TIPO_GASTO"] = ["0060", "0102", None]  # Llantas (costo estándar), Cuentas Incobrables
+        r = post(d)
+        self.assertEqual(list(r.CRITERIO_CONCILIACION)[:2], ["Costo estándar", "Provisión contable"])
+
+    def test_costo_estandar_tiene_prioridad_sobre_grupo_mixto(self):
+        d = self.base()
+        d["TIPO_GASTO"] = ["0060", None, None]
+        d["GRUPO_TIPO_GASTO"] = ["0005", None, None]  # grupo mixto (costo estándar + cuenta de balance)
+        r = post(d)
+        self.assertEqual(r.CRITERIO_CONCILIACION[0], "Costo estándar")
+
     def test_retencion_unica_sustituye_xml(self):
         d = self.base()
         d["R_N"] = [1, 1, np.nan]
