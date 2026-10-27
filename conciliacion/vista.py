@@ -59,17 +59,20 @@ def columnas(d: pd.DataFrame) -> list[dict]:
 
 
 def agrupar_cuenta(d: pd.DataFrame) -> pd.DataFrame:
-    """Suma las líneas de póliza de cada documento por cuenta contable (CECO: el único, o VARIOS)."""
+    """Suma las líneas de póliza de cada documento por cuenta contable y lado (cargo/abono), sin netear.
+
+    CECO: el único de cada grupo, o VARIOS.
+    """
     d = d.copy()
-    llave = ["Tipo", "FOLIO", "CUENTA_REGISTRO"]
-    d["_net"] = d.CARGO.fillna(0) - d.ABONO.fillna(0)
+    d["_lado"] = np.where(d.ABONO.fillna(0) > 0, "A", "C")
+    llave = ["Tipo", "FOLIO", "DOC_ID", "CUENTA_REGISTRO", "_lado"] if "DOC_ID" in d else ["Tipo", "FOLIO", "CUENTA_REGISTRO", "_lado"]
     g = d.groupby(llave, sort=False, dropna=False)
-    d["_net"] = g._net.transform("sum")
+    d["_c"] = g.CARGO.transform(lambda x: x.fillna(0).sum())
+    d["_a"] = g.ABONO.transform(lambda x: x.fillna(0).sum())
     d["CECO"] = np.where(g.CECO.transform("nunique") > 1, "VARIOS", g.CECO.transform("first"))
     d = d.drop_duplicates(llave).copy()
-    d["CARGO"] = d._net.clip(lower=0).round(2)
-    d["ABONO"] = (-d._net).clip(lower=0).round(2)
-    return d.drop(columns="_net").reset_index(drop=True)
+    d["CARGO"] = d._c.round(2); d["ABONO"] = d._a.round(2)
+    return d.drop(columns=["_c", "_a", "_lado"]).reset_index(drop=True)
 
 
 def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True) -> dict:
@@ -79,7 +82,8 @@ def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True) -> dic
         d["Tipo"] = "Gasto"
     d["_t"] = d.Tipo.map(ORDEN_TIPO).fillna(9)
     d["_g"] = d.groupby(["Tipo", "FOLIO"], sort=False).ngroup()
-    d = d.sort_values(["_t", "_g"], kind="stable").drop(columns=["_t", "_g"]).reset_index(drop=True)
+    d["_d"] = d.DOC_ID.fillna("").replace("VARIOS", "~") if "DOC_ID" in d else ""
+    d = d.sort_values(["_t", "_g", "_d"], kind="stable").drop(columns=["_t", "_g", "_d"]).reset_index(drop=True)
     if layout and agrupar:
         d = agrupar_cuenta(d)
 
@@ -87,8 +91,12 @@ def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True) -> dic
     for c in cols:
         if c["k"] not in d:
             d[c["k"]] = None
-    llave = d.Tipo.astype(str) + "|" + d.FOLIO.astype(str)
+    folio = d.Tipo.astype(str) + "|" + d.FOLIO.astype(str)
+    llave = folio + "|" + (d.DOC_ID.fillna("").astype(str) if "DOC_ID" in d else "")
     primera = (llave != llave.shift()).to_numpy()
+    primera_folio = (folio != folio.shift()).to_numpy()
+    if "DOC_ID" in d:
+        d["FOLIO"] = d.FOLIO.astype(str) + np.where(d.DOC_ID.notna(), "-" + d.DOC_ID.fillna("").astype(str), "")
     repite = d.ORIGEN.isin(REPITEN).to_numpy()
     for k in FECHAS:
         d[k] = pd.to_datetime(d[k], errors="coerce").dt.strftime("%d-%m-%Y")
@@ -104,8 +112,11 @@ def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True) -> dic
     for i, r in enumerate(d[[fuente[k] for k in ks]].itertuples(index=False)):
         fila = []
         for j, (c, v) in enumerate(zip(cols, r)):
-            if layout:
-                visible = primera[i] or c["k"] in linea_poliza or (repite[i] and c["t"] == "t" and c["k"] not in POLIZA)
+            repetible = repite[i] and c["k"] not in POLIZA
+            if c["g"] == "Pago" and not primera_folio[i]:
+                visible = False
+            elif layout:
+                visible = primera[i] or c["k"] in linea_poliza or (repetible and c["t"] == "t")
             else:
                 visible = primera[i] or c["linea"] or (repite[i] and c["k"] not in POLIZA)
             v = val(v) if visible else None
