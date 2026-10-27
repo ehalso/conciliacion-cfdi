@@ -3,6 +3,7 @@ import pandas as pd
 from sqlalchemy.engine import Engine
 
 from . import sql
+from .complemento import agregar_complemento
 from .db import parametros, tablas_temporales
 from .documentos import TIPOS, consultar_proveedores, construir_tipo
 from .gasto import construir_gasto
@@ -18,4 +19,5 @@ def construir(engine: Engine, fi: str, ff: str) -> pd.DataFrame:
         gasto["Tipo"] = "Gasto"
         proveedores = consultar_proveedores(con)
         partes = [gasto] + [construir_tipo(con, t, p, proveedores) for t in TIPOS]
-    return post(pd.concat(partes, ignore_index=True, sort=False))
+    d = post(pd.concat(partes, ignore_index=True, sort=False))
+    return agregar_complemento(d, engine)
