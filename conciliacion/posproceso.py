@@ -42,8 +42,14 @@ def _origen(o):
     return None if _vacio(o) else ORIGEN.get(o, str(o).lower())
 
 
+TIPOS_POLIZA = {1: "Ingreso", 2: "Egreso", 3: "Diario"}
+
+
 def post(d: pd.DataFrame) -> pd.DataFrame:
     d = d.copy()
+    if "TIPO_POLIZA" in d:
+        n = pd.to_numeric(d.TIPO_POLIZA, errors="coerce")
+        d["TIPO_POLIZA"] = n.map(TIPOS_POLIZA).where(n.notna(), d.TIPO_POLIZA)
     if "Tipo" not in d:
         d["Tipo"] = "Gasto"
     for c in _OPCIONALES:
@@ -84,7 +90,15 @@ def post(d: pd.DataFrame) -> pd.DataFrame:
     por_doc = d.groupby(["Tipo", "FOLIO"], sort=False)
     for c in valores:
         d["DOC_" + c] = por_doc[c].transform("sum").round(2)
+    # folios con varios documentos: cifras del documento (DX_*); VARIOS no tiene cifras propias
+    if "DOC_ID" in d:
+        multi = d.DOC_ID.notna()
+        for c in valores:
+            dx = pd.to_numeric(d["DX_" + c], errors="coerce") if "DX_" + c in d else np.nan
+            d.loc[multi, "DOC_" + c] = np.round(dx, 2)[multi] if "DX_" + c in d else np.nan
     d["DOC_TOTAL"] = (d.DOC_SUBTOTAL_NETO.fillna(0) + d[["DOC_" + c for c in imp_cols]].fillna(0).sum(axis=1)).round(2)
+    if "DOC_ID" in d:
+        d.loc[d.DOC_ID == "VARIOS", "DOC_TOTAL"] = np.nan
     for c in valores:
         d[c] = d[c].round(2)
     d["DESCUENTO"] = np.nan
@@ -95,7 +109,7 @@ def post(d: pd.DataFrame) -> pd.DataFrame:
     d["CHEQUE"] = np.where(fp.isna(), None, np.where(fp == FORMA_PAGO_CHEQUE, "SI", "NO"))
 
     # retenciones: un CFDI de retenciones sustituye al XML del documento; varios → VARIOS
-    r = d.R_N.fillna(0) >= 1
+    r = (d.R_N.fillna(0) >= 1) & (d.DOC_ID.isna() if "DOC_ID" in d else True)
     d.loc[r & (d.R_N == 1), "TIPO_COMPROBANTE"] = "R - Retenciones e información de pagos"
     d.loc[r & (d.R_N >= 2), "TIPO_COMPROBANTE"] = "VARIOS"
     uno = r & (d.R_N == 1)

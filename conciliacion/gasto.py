@@ -4,6 +4,7 @@ import pandas as pd
 from sqlalchemy.engine import Connection
 
 from . import sql
+from .atribucion import VARIOS, atribuir_documento
 from .db import consultar
 
 COLS_POLIZA = ["POLIZA", "FECHA_POLIZA", "TIPO_POLIZA", "NUMERO_POLIZA", "CONCEPTO_POLIZA"]
@@ -150,13 +151,76 @@ def construir_gasto(con: Connection, p: dict) -> pd.DataFrame:
         ceco_desc=consultar(con, sql.CENTRO_COSTO_SQL),
         sin_ceco=consultar(con, sql.GASTO_POLIZA_SIN_CECO_SQL, p))
 
+    docs = consultar(con, sql.GASTO_DOCUMENTOS_SQL)
+    xml_doc = consultar(con, sql.GASTO_XML_DOCUMENTO_SQL)
+    for t in (docs, xml_doc, reparto, subtotales_doc, por_clave):
+        for c in ("DOC_ID", "Grd_ID"):
+            if c in t:
+                t[c] = t[c].str.strip() if t[c].dtype == object else t[c]
+    docs["DOC_ID"] = docs.DOC_ID.astype(str).str.strip()
+    firmas = _firmas(docs, xml_doc)
+    base = atribuir_documento(base, reparto, docs[["FOLIO", "DOC_ID"]], firmas)
+
     proveedor = consultar(con, sql.GASTO_PROVEEDOR_SQL)
     pagos = consultar(con, sql.PAGOS_SQL)
     xml = consultar(con, sql.XML_SQL.format(origen="GASTO_REGISTRO"))
     retenciones = consultar(con, sql.GASTO_RETENCIONES_SQL).add_prefix("R_").rename(columns={"R_FOLIO": "FOLIO"})
-    return (base.merge(subtotales, on=["FOLIO", "CECO"], how="left")
-                .merge(por_clave_ceco, on=["FOLIO", "CECO"], how="left")
-                .merge(proveedor, on="FOLIO", how="left")
-                .merge(pagos, on="FOLIO", how="left")
-                .merge(xml, on="FOLIO", how="left")
-                .merge(retenciones, on="FOLIO", how="left"))
+    out = (base.merge(subtotales, on=["FOLIO", "CECO"], how="left")
+               .merge(por_clave_ceco, on=["FOLIO", "CECO"], how="left")
+               .merge(proveedor, on="FOLIO", how="left")
+               .merge(pagos, on="FOLIO", how="left")
+               .merge(xml, on="FOLIO", how="left")
+               .merge(retenciones, on="FOLIO", how="left"))
+    return _por_documento(out, docs, xml_doc, subtotales_doc, por_clave)
+
+
+def _firmas(docs: pd.DataFrame, xml_doc: pd.DataFrame) -> dict:
+    """(FOLIO, DOC_ID) → (clave de proveedor, UUID); el XML sin DOC_ID aplica a todos los documentos del folio."""
+    por_doc = {(r.FOLIO, r.DOC_ID): r.UUID for r in xml_doc.itertuples() if r.DOC_ID is not None and pd.notna(r.DOC_ID)}
+    por_folio = {r.FOLIO: r.UUID for r in xml_doc.itertuples() if r.DOC_ID is None or pd.isna(r.DOC_ID)}
+    return {(r.FOLIO, r.DOC_ID): (r.CLAVE_PROVEEDOR, por_doc.get((r.FOLIO, r.DOC_ID), por_folio.get(r.FOLIO)))
+            for r in docs.itertuples()}
+
+
+def _por_documento(d, docs, xml_doc, subtotales_doc, por_clave):
+    """En los folios con DOC_ID sustituye proveedor, XML y cifras por los del documento (VARIOS donde no se atribuye)."""
+    m = d.DOC_ID.notna()
+    if not m.any():
+        return d
+    d = d.copy()
+    prov = docs.drop(columns="CONCEPTO_GASTO").set_index(["FOLIO", "DOC_ID"])
+    cols_prov = ["CLAVE_PROVEEDOR", "RFC_PROVEEDOR", "NOMBRE_PROVEEDOR"]
+    folio_xml = xml_doc[xml_doc.DOC_ID.isna()].drop(columns="DOC_ID").set_index("FOLIO")
+    doc_xml = xml_doc[xml_doc.DOC_ID.notna()].set_index(["FOLIO", "DOC_ID"])
+    cols_xml = [c for c in xml_doc.columns if c not in ("FOLIO", "DOC_ID")]
+    for i in d.index[m]:
+        k = (d.at[i, "FOLIO"], d.at[i, "DOC_ID"])
+        if k[1] == VARIOS:
+            for c in cols_prov:
+                d.at[i, c] = VARIOS
+            for c in ("UUID", "XML_RFC_EMISOR", "XML_SERIE", "XML_FOLIO", "NUMERO_FACTURA"):
+                d.at[i, c] = VARIOS
+            d.at[i, "XML_MONTO"] = np.nan
+            continue
+        if k in prov.index:
+            for c in cols_prov:
+                d.at[i, c] = prov.at[k, c]
+        if k in doc_xml.index:
+            fila = doc_xml.loc[k]
+        elif k[0] in folio_xml.index:
+            fila = folio_xml.loc[k[0]]
+        else:
+            fila = None
+        if fila is not None:
+            for c in cols_xml:
+                d.at[i, c] = fila[c]
+        else:
+            for c in cols_xml:
+                d.at[i, c] = None
+
+    sub = subtotales_doc.rename(columns={"Grd_ID": "DOC_ID"})
+    sub = sub.rename(columns={c: "DX_" + c for c in COLS_DOC})
+    imp = por_clave.pivot_table(index=["FOLIO", "Grd_ID"], columns="CLAVE", values="IMPORTE", aggfunc="sum").fillna(0).round(2)
+    imp.columns = ["DX_IMP_" + c for c in imp.columns]
+    imp = imp.reset_index().rename(columns={"Grd_ID": "DOC_ID"})
+    return d.merge(sub, on=["FOLIO", "DOC_ID"], how="left").merge(imp, on=["FOLIO", "DOC_ID"], how="left")
