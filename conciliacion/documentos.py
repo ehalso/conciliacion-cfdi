@@ -80,6 +80,8 @@ def construir_tipo(con: Connection, t: TipoDocumento, p: dict, proveedores: pd.D
         impuestos = consultar(con, sql.DOC_IMPUESTO_SQL.format(**f), p)
         xml = consultar(con, sql.XML_SQL.format(**f))
         poliza = consultar(con, sql.DOC_POLIZA_SQL.format(**f), p)
+        vacias = consultar(con, sql.DOC_POLIZA_SIN_LINEAS_SQL.format(**f), p)
+        poliza = pd.concat([poliza, vacias[~vacias.FOLIO.isin(poliza.FOLIO)]], ignore_index=True, sort=False)
         pago = consultar(con, sql.PAGOS_SQL).drop(columns="REFERENCIA") if t.cxp else None
 
     cabecera["CLAVE_PROVEEDOR"] = cabecera.CLAVE_PROVEEDOR.astype(str).str.strip()

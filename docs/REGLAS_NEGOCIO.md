@@ -33,3 +33,9 @@ Reglas (las del reporte 05 original, `rptrv79_05_cxp_libre*`):
 - XML desde `Comprobante_Digital` (`Cd_Tabla='Cuenta_X_Pagar'`); pago desde `Pago_CXP` de la propia CxP.
 - **Póliza**: una misma póliza puede cubrir varias CxP (en ene–ago, 40 de 93 pólizas), con líneas de otros documentos. Por eso solo se toman las líneas cuya `Pd_Referencia` es el folio de la CxP o su `Cxp_Referencia` (la factura), y se omiten las cuentas 1170 (IVA), 2110 (proveedores), 2150 (retenciones) y **2130 (documentos por pagar a corto plazo)**, que en estas CxP lleva abonos grandes que no son subtotal. Con ese filtro cargo − abono cuadra con el subtotal neto en las 205 CxP de ene–ago 2026 (108 libres + 97 de OC); sin excluir 2130 descuadran 9. Cuentas típicas del cargo: 1210 (propiedades, planta y equipo), 1250 (sistemas y licencias), 1150 (rentas en garantía).
 - No se replica la corrección `aplicar_correccion_cuenta_registro` (búsqueda alterna por importe aproximado) del reporte 05 original.
+
+## Póliza, método de pago y fuentes (observaciones sep-2026)
+
+- Un documento con póliza en `Poliza_Control` cuyas líneas quedan todas filtradas (importe 0, cuentas memo/impuesto/proveedor) se muestra con la póliza y cargo 0 (`DOC_POLIZA_SIN_LINEAS_SQL`).
+- Método de pago del XML: `Cd_Metdo_Pago_CFDI` y, si está vacío, `Cd_Metodo_Pago`.
+- No se rellenan campos de una fuente con otra (registro Mpro, XML de Mpro, BD SAT). Detalle y pendientes en `REVISION_OBSERVACIONES.md`.
