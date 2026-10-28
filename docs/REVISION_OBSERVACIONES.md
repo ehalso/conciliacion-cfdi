@@ -61,7 +61,7 @@ Ejemplo (septiembre 2026): folio `01-0038228`, póliza `0000506826`. Cuatro XML 
 
 Alcance en septiembre: 35 folios con "VARIOS" (16 Registro de gasto, 19 nómina). Los de nómina y varios de gasto no tienen XML en Mpro; ahí el "VARIOS" es solo la línea de póliza sin atribuir, no varios XML. No se encontraron falsos positivos del `LIKE FOLIO+'%'`.
 
-### Por qué sale "VARIOS" (septiembre 2026: 270 líneas en 35 folios; todos de gasto)
+### Por qué sale "VARIOS" (septiembre 2026, análisis previo a la corrección de atribución: 270 líneas en 35 folios; hoy quedan 49 en 32, ver más abajo)
 
 `atribucion.py` asigna cada línea de póliza a un documento por (folio, CECO, importe). Queda `VARIOS` en dos situaciones:
 
@@ -131,7 +131,7 @@ No corregidas; falta decidir con quien captura/Contabilidad.
 - Confirmar con Ismael si quiere pólizas de egreso/cheque.
 - Definir cómo marcar facturas PPD sin complemento; revisar las 27 facturas PUE de enero que sí traen complemento real.
 - Confirmar que `ZTRV_Comprobante_Digital_Pago` esté actualizada.
-- Validar las 270 líneas `VARIOS` de septiembre y la limitación de retenciones en folios multi-documento.
+- Validar las 49 líneas `VARIOS` de septiembre (44 en enero) y la limitación de retenciones en folios multi-documento.
 - Definir "No localizados" y confirmar la tolerancia de 0.05.
 - Decidir si los CFDI EMITIDO autoemitidos entran como "Solo SAT".
 - Rotar la credencial admin de Postgres.
@@ -139,4 +139,4 @@ No corregidas; falta decidir con quien captura/Contabilidad.
 ## Referencia operativa
 
 - Mpro SQL Server `.207` (TRIVASADB; la `.205` está caída). Los ASP de Mpro están en `.200` (montaje `/mnt/win200_c`; skill `mpro-reporte-asp`).
-- Pruebas: `python3 -m unittest discover -s tests` (27 OK).
+- Pruebas: `python3 -m unittest discover -s tests` (29 OK).
