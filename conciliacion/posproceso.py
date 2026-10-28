@@ -31,7 +31,7 @@ def _forma_sat(v):
     if _vacio(v) or str(v).strip() == "":
         return None
     v = str(v).strip()
-    return v if v == "VARIOS" else f"{v} - {FORMA_SAT.get(v, '')}".rstrip(" -")
+    return v if v in ("VARIOS", "N/A") else f"{v} - {FORMA_SAT.get(v, '')}".rstrip(" -")
 
 
 def _metodo_sat(v):

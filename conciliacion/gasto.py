@@ -7,6 +7,7 @@ from . import sql
 from .atribucion import VARIOS, atribuir_documento
 from .db import consultar
 
+NO_APLICA = "N/A"
 COLS_POLIZA = ["POLIZA", "FECHA_POLIZA", "TIPO_POLIZA", "NUMERO_POLIZA", "CONCEPTO_POLIZA"]
 COLS_LINEA = COLS_POLIZA + ["CUENTA_REGISTRO", "NOMBRE_CUENTA_REGISTRO", "CARGO", "ABONO"]
 COLS_DOC = ["SUBTOTAL_16", "SUBTOTAL_0", "SUBTOTAL_EXENTA", "SUBTOTAL_NETO"]
@@ -198,7 +199,7 @@ def _firmas(docs: pd.DataFrame, xml_doc: pd.DataFrame) -> dict:
 
 
 def _por_documento(d, docs, xml_doc, subtotales_doc, por_clave):
-    """En los folios con DOC_ID sustituye proveedor, XML y cifras por los del documento (VARIOS donde no se atribuye)."""
+    """En los folios con DOC_ID sustituye proveedor, XML y cifras por los del documento (N/A en la línea VARIOS, que suma varios documentos)."""
     m = d.DOC_ID.notna()
     if not m.any():
         return d
@@ -211,10 +212,8 @@ def _por_documento(d, docs, xml_doc, subtotales_doc, por_clave):
     for i in d.index[m]:
         k = (d.at[i, "FOLIO"], d.at[i, "DOC_ID"])
         if k[1] == VARIOS:
-            for c in cols_prov:
-                d.at[i, c] = VARIOS
-            for c in ("UUID", "XML_RFC_EMISOR", "XML_SERIE", "XML_FOLIO", "NUMERO_FACTURA"):
-                d.at[i, c] = VARIOS
+            for c in cols_prov + [c for c in cols_xml if c != "XML_MONTO"]:
+                d.at[i, c] = NO_APLICA
             d.at[i, "XML_MONTO"] = np.nan
             continue
         if k in prov.index:
