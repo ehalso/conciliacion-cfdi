@@ -23,6 +23,11 @@ class AtribucionTest(unittest.TestCase):
         out = atribuir_documento(_base([("6100", "A", 100.0), ("6100", "A", 50.0)]), r, self.docs, self.firmas)
         self.assertEqual(list(out.DOC_ID), ["0001", "0002"])
 
+    def test_linea_suma_los_renglones_de_un_documento_en_el_ceco(self):
+        r = self.reparto([("F1", "0001", "A", 30.0), ("F1", "0001", "A", 20.0), ("F1", "0002", "A", 70.0)])
+        out = atribuir_documento(_base([("6100", "A", 50.0), ("6100", "A", 70.0)]), r, self.docs, self.firmas)
+        self.assertEqual(list(out.DOC_ID), ["0001", "0002"])
+
     def test_mezcla_queda_varios_y_documento_sin_linea_se_agrega(self):
         r = self.reparto([("F1", "0001", "A", 100.0), ("F1", "0002", "A", 50.0)])
         out = atribuir_documento(_base([("6100", "A", 150.0)]), r, self.docs, self.firmas)
