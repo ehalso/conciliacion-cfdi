@@ -33,6 +33,7 @@ Comparar, por documento, `SUBTOTAL_NETO` contra el cargo contable neto de la pó
 - **Pendiente para la etapa de "criterios de conciliación"**: decidir si se vuelve a filtrar en CxP lo que el reporte 05 original excluía por no ser compras: conceptos `0023`, `0019`, `0016`, `0017` y proveedor `0000000021`. Hoy el layout NO los filtra, para totalizar igual que el nativo RPCXP08 (ene–sep 2026: 364 docs / −$10.6 M de esos conceptos y 320 docs / −$5.5 M de ese proveedor en CxP libre; 2 docs de concepto 0017 / $18.7 K en CxP orden compra). Si se vuelve a filtrar, mejor como marca o columna (p. ej. "es compra") filtrable en la vista, que como exclusión en la consulta.
 - Efecto en póliza de no filtrar CxP (ene–sep 2026): de las 792 CxP libres, 329 no tienen línea de póliza que cruce por folio/referencia (320 del proveedor `0000000021`, $4.79 M; 9 del concepto 0023, $1.58 M) y 2 del concepto 0019 ($42,000) descuadran contra su póliza. Las 108 que ya entraban antes y las 101 de orden de compra cuadran al 100 %.
 - Sucursales en baja (`BA`): el layout tampoco las filtra (el nativo las incluye); si algún criterio de conciliación las requiere excluir, que sea también como marca.
+
 ## Observaciones sep-2026 y auditoría de fuentes
 
 Ver `REVISION_OBSERVACIONES.md` (documentación provisional de la rama; se pasa a `trivasa-context` cuando termine la revisión de todas las correcciones). Incluye 8 hallazgos de auditoría de fuentes aún no solicitados y la decisión pendiente de mostrar Uso CFDI, Método y Forma de pago en el bloque SAT.

@@ -11,9 +11,9 @@ Cada columna del reporte sale de una sola fuente; no se rellena un campo de una 
 |---|---|---|
 | A. Registro Mpro | Folios y tablas de Mpro (proveedor, montos, pólizas, pagos) | Registro, Póliza, Pago |
 | B. XML adjunto en Mpro | `Comprobante_Digital` | Comprobante XML (`XML_*`) |
-| C. BD SAT | Postgres `raw_sat_api.cfdi` | Base de datos SAT (`SAT_*`) y Conciliación (`CONC_*`) |
+| C. BD SAT | Postgres `raw_sat_api.cfdi` | No se usa en esta versión (pendiente de liberar) |
 
-Ejemplo: el Uso de CFDI de 23-0008989 queda vacío en el bloque XML porque el XML de Mpro no lo trae; el valor del SAT (G03) debe mostrarse en el bloque SAT, no en el XML.
+Ejemplo: el Uso de CFDI de 23-0008989 queda vacío en el bloque XML porque el XML de Mpro no lo trae; no se completa con otra fuente.
 
 ## Observaciones de Ismael (enero 2026)
 
@@ -32,7 +32,7 @@ Ejemplo: el Uso de CFDI de 23-0008989 queda vacío en el bloque XML porque el XM
 - Las dos columnas NO son equivalentes: `Cd_Metdo_Pago_CFDI` guarda el método (PUE/PPD); `Cd_Metodo_Pago` en registros nuevos guarda la forma de pago SAT (01, 03, 99) y en registros antiguos el método (PPD/PUE). También hay basura (`EFECTIVO`, `NA`, `No identificado`).
 - Corrección (`sql.py`, `XML_SQL` y `GASTO_XML_DOCUMENTO_SQL`): método = `Cd_Metdo_Pago_CFDI` si es PUE/PPD; si no, `Cd_Metodo_Pago` solo si es PUE/PPD; en otro caso vacío. Nunca se toma un código de forma de pago como método. Forma de pago sigue saliendo de `Cd_Forma_Pago`.
 - Resultado: 23-0008989 muestra PPD y "99 - Por definir". Septiembre: método solo PPD/PUE/VARIOS.
-- Uso de CFDI sigue vacío (fuente B no lo trae). **Decisión pendiente**: agregar Uso CFDI, Método y Forma de pago al bloque SAT.
+- Uso de CFDI sigue vacío (fuente B no lo trae). **Decisión pendiente**: de dónde tomarlo (BD SAT, aún no liberada).
 
 ### Roberto 2 — póliza que no aparecía en 23-0008836
 - Causa: la póliza (504996/505023) existe, pero todas sus líneas caían en los filtros de `DOC_POLIZA_SQL` (`Pd_Importe=0`, cuentas 10500/10600, y 1170/2110/2150 en Compra/Indirecto/CxP, más 2130 en CxP). Sin líneas, el documento perdía la póliza.
@@ -104,7 +104,7 @@ Implementación:
 - `vista.py`: el grupo "Pago" se muestra en la primera fila de cada documento (antes, del folio).
 - Prueba: `test_pago_por_documento`.
 
-Verificación (septiembre y enero 2026, reporte completo con SAT, antes vs después): mismas filas, columnas y orden; solo cambian columnas de pago, en 849 (sep) y 927 (ene) filas, todas de Gasto con `DOC_ID`. Compras, indirectos, NC, CxP, complemento de pago (se cruza por UUID de la factura) y SAT no cambian. La suma de pagos por documento iguala el monto cobrado por folio anterior en los 196 (sep) y 181 (ene) folios. Tiempo igual (~75 s).
+Verificación (septiembre y enero 2026, reporte, antes vs después): mismas filas, columnas y orden; solo cambian columnas de pago, en 849 (sep) y 927 (ene) filas, todas de Gasto con `DOC_ID`. Compras, indirectos, NC, CxP, complemento de pago (se cruza por UUID de la factura) no cambian. La suma de pagos por documento iguala el monto cobrado por folio anterior en los 196 (sep) y 181 (ene) folios. Tiempo igual (~75 s).
 
 Observaciones: la nómina (folios con cientos de documentos) no tiene cuenta por pagar, igual que antes. En septiembre 5 folios tienen solo un documento pagado y el resto sin pago: `01-0038924`, `09-0002104`, `13-0001345`, `14-0000535`, `23-0009477`. En Mpro solo el documento 0001 tiene cuenta por pagar; antes el folio parecía pagado completo. `14-0000535` doc 0001 vale 953.46 y se pagó 495.00 (pago parcial). Pendiente confirmarlos con Contabilidad.
 
@@ -133,7 +133,6 @@ No corregidas; falta decidir con quien captura/Contabilidad.
 - Confirmar que `ZTRV_Comprobante_Digital_Pago` esté actualizada.
 - Validar las 270 líneas `VARIOS` de septiembre y la limitación de retenciones en folios multi-documento.
 - Definir "No localizados" y confirmar la tolerancia de 0.05.
-- Decidir si los CFDI EMITIDO autoemitidos entran como "Solo SAT".
 - Rotar la credencial admin de Postgres.
 
 ## Referencia operativa
