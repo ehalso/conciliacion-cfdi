@@ -163,6 +163,8 @@ def construir_gasto(con: Connection, p: dict) -> pd.DataFrame:
 
     proveedor = consultar(con, sql.GASTO_PROVEEDOR_SQL)
     pagos = consultar(con, sql.PAGOS_SQL)
+    pagos_doc = consultar(con, sql.PAGOS_DOC_SQL).drop(columns="REFERENCIA")
+    pagos_doc[["FOLIO", "DOC_ID"]] = pagos_doc.FOLIO.str.split("|", n=1, expand=True)
     xml = consultar(con, sql.XML_SQL.format(origen="GASTO_REGISTRO"))
     retenciones = consultar(con, sql.GASTO_RETENCIONES_SQL).add_prefix("R_").rename(columns={"R_FOLIO": "FOLIO"})
     out = (base.merge(subtotales, on=["FOLIO", "CECO"], how="left")
@@ -171,7 +173,20 @@ def construir_gasto(con: Connection, p: dict) -> pd.DataFrame:
                .merge(pagos, on="FOLIO", how="left")
                .merge(xml, on="FOLIO", how="left")
                .merge(retenciones, on="FOLIO", how="left"))
+    out = _pago_por_documento(out, pagos_doc)
     return _por_documento(out, docs, xml_doc, subtotales_doc, por_clave)
+
+
+def _pago_por_documento(d, pagos_doc):
+    """En los folios con DOC_ID el pago es el de la cuenta por pagar de cada documento (VARIOS queda sin pago)."""
+    m = d.DOC_ID.notna()
+    if not m.any():
+        return d
+    cols = [c for c in pagos_doc if c not in ("FOLIO", "DOC_ID")]
+    d = d.copy()
+    d[cols] = d[cols].astype(object)
+    d.loc[m, cols] = d.loc[m, ["FOLIO", "DOC_ID"]].merge(pagos_doc, on=["FOLIO", "DOC_ID"], how="left")[cols].to_numpy()
+    return d
 
 
 def _firmas(docs: pd.DataFrame, xml_doc: pd.DataFrame) -> dict:
