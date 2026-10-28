@@ -88,7 +88,25 @@ Cambio en `atribucion.py`: se compara el importe de la línea contra la suma por
 
 Renglón+suma y solo suma difieren en 1 línea (enero, `01-0035004`, línea de 101.83 en CECO 000135: el documento 0005 coincide exacto y el 0004 solo por tolerancia de 0.01; ambos con misma firma). Ninguna línea que ya se atribuía por renglón pasó a `VARIOS`. Tiempos equivalentes (~50 s). Se adoptó solo suma por ser más simple y exacta.
 
-`VARIOS` que quedan en septiembre (49 líneas): 22 por importes idénticos entre documentos (5 folios), 10 por línea que suma varios documentos (póliza consolidada real) y 17 de nómina (`GASTO_REGISTRO_NOMINA`) cuya suma tampoco coincide; esas 17 quedan por revisar.
+`VARIOS` que quedan en septiembre (49 líneas): 22 por importes idénticos entre documentos (5 folios) y 27 por póliza consolidada real, es decir, una línea (misma cuenta y CECO) que suma 2 o más documentos del folio. De las 27, 10 suman todos los documentos del CECO y 17 un subconjunto (19 de nómina y 8 de gasto directo en total, todas verificadas: la línea es exactamente la suma de ese subconjunto). El colapso por cuenta contable de la vista no influye: la atribución trabaja con las líneas crudas de `Poliza_Detalle`. En `01-0038228` la póliza `0000506826` ya trae una sola línea (Pd_ID 0001, cuenta 2120.010.013.002.002, CECO 000073) de 75,795.48 = doc 0001 (37,661.73) + doc 0002 (38,133.75) del reparto; viene consolidada desde Mpro. Ejemplo: `01-0038342`, línea de 15,104.11 = doc 0001 (2,462.51) + doc 0003 (12,641.60), cuenta 6100.001.001.004, CECO 000165. Ya no queda ningún `VARIOS` sin explicación.
+
+### Pendiente: formato de los folios con importes idénticos (revisar con Ismael)
+
+Se deja igual, sin cambio de código. `01-0038372` (póliza `0000506739`): 6 líneas de $0.01, cada documento con su propio UUID; como los importes empatan, no se puede saber qué línea corresponde a qué documento y salen en `VARIOS`. Mismo caso: `01-0038467`, `01-0038468`, `01-0038500`, `01-0038697` (22 líneas en 5 folios en septiembre). Pendiente decidir con Ismael cómo debe presentarse este caso en el reporte.
+
+### Pago por documento en folios de gasto con varios documentos
+
+Antes el pago se unía por folio: se mostraba un solo cheque (el de mayor importe) y la suma de todos los pagos, solo en la primera fila del folio. En Mpro el enlace es por documento: cada `Grd_ID` tiene su `Cuenta_X_Pagar` (`Cxp_Tabla='Gasto_Registro:'+folio`, `Cxp_Documento=Grd_ID`) y su propio `Pago_CXP`. Ejemplo `01-0038228`: 4 documentos, 4 cuentas por pagar, 4 cheques (01-0095261, 01-0095269, 01-0095262, 01-0095277), cada pago igual al total de su documento.
+
+Implementación:
+- `sql.py`: `GASTO_DOCS_SETUP` crea `#folios_doc` y `#cxp_doc` (mismo enlace que `#cxp_d`, con llave `FOLIO|Grd_ID` tratada como folio). `PAGOS_DOC_SQL` = `PAGOS_SQL` sobre esas tablas, sin duplicar la consulta. `TEMPORALES` las incluye. Solo existen en gasto.
+- `gasto.py`: `_pago_por_documento` sustituye las columnas de pago de las filas con `DOC_ID` por las del documento; el bloque `VARIOS` queda sin pago (igual que sin XML). Los folios de un solo documento no cambian.
+- `vista.py`: el grupo "Pago" se muestra en la primera fila de cada documento (antes, del folio).
+- Prueba: `test_pago_por_documento`.
+
+Verificación (septiembre y enero 2026, reporte completo con SAT, antes vs después): mismas filas, columnas y orden; solo cambian columnas de pago, en 849 (sep) y 927 (ene) filas, todas de Gasto con `DOC_ID`. Compras, indirectos, NC, CxP, complemento de pago (se cruza por UUID de la factura) y SAT no cambian. La suma de pagos por documento iguala el monto cobrado por folio anterior en los 196 (sep) y 181 (ene) folios. Tiempo igual (~75 s).
+
+Observaciones: la nómina (folios con cientos de documentos) no tiene cuenta por pagar, igual que antes. En septiembre 5 folios tienen solo un documento pagado y el resto sin pago: `01-0038924`, `09-0002104`, `13-0001345`, `14-0000535`, `23-0009477`. En Mpro solo el documento 0001 tiene cuenta por pagar; antes el folio parecía pagado completo. `14-0000535` doc 0001 vale 953.46 y se pagó 495.00 (pago parcial). Pendiente confirmarlos con Contabilidad.
 
 ## Pendientes por revisar: anomalías de XML en gasto (septiembre 2026)
 

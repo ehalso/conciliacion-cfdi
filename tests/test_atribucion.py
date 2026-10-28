@@ -55,6 +55,16 @@ class AtribucionTest(unittest.TestCase):
         self.assertEqual([r[k.index("NOMBRE_PROVEEDOR")] for r in out["rows"]], ["P1", "P2"])
         self.assertEqual([r[k.index("TOTAL")] for r in out["rows"]], [116.0, 58.0])
 
+    def test_pago_por_documento(self):
+        from conciliacion.gasto import _pago_por_documento
+        d = pd.DataFrame({"FOLIO": ["F1", "F1", "F1", "F2"], "DOC_ID": ["0001", "0002", VARIOS, None],
+                          "MONTO_COBRADO": [300.0, 300.0, 300.0, 5.0]})
+        pagos = pd.DataFrame({"FOLIO": ["F1"], "DOC_ID": ["0001"], "MONTO_COBRADO": [100.0]})
+        out = _pago_por_documento(d, pagos)
+        self.assertEqual(out.MONTO_COBRADO.iloc[0], 100.0)
+        self.assertTrue(out.MONTO_COBRADO.iloc[1:3].isna().all())
+        self.assertEqual(out.MONTO_COBRADO.iloc[3], 5.0)
+
 
 if __name__ == "__main__":
     unittest.main()

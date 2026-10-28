@@ -94,7 +94,6 @@ def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True) -> dic
     folio = d.Tipo.astype(str) + "|" + d.FOLIO.astype(str)
     llave = folio + "|" + (d.DOC_ID.fillna("").astype(str) if "DOC_ID" in d else "")
     primera = (llave != llave.shift()).to_numpy()
-    primera_folio = (folio != folio.shift()).to_numpy()
     if "DOC_ID" in d:
         d["FOLIO"] = d.FOLIO.astype(str) + np.where(d.DOC_ID.notna(), "-" + d.DOC_ID.fillna("").astype(str), "")
     repite = d.ORIGEN.isin(REPITEN).to_numpy()
@@ -113,7 +112,7 @@ def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True) -> dic
         fila = []
         for j, (c, v) in enumerate(zip(cols, r)):
             repetible = repite[i] and c["k"] not in POLIZA
-            if c["g"] == "Pago" and not primera_folio[i]:
+            if c["g"] == "Pago" and not primera[i]:
                 visible = False
             elif layout:
                 visible = primera[i] or c["k"] in linea_poliza or (repetible and c["t"] == "t")

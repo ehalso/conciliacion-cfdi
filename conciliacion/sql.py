@@ -24,8 +24,21 @@ SELECT * INTO #cxp_d FROM (
     JOIN Cuenta_X_Pagar cxp ON cxp.Cxp_Tabla='Cuenta_X_Pagar' AND cxp.Cxp_Referencia=grd.Grd_Referencia AND cxp.Pv_Cve_Proveedor=grd.Pv_Cve_Proveedor
     WHERE grd.Grd_Referencia IS NOT NULL AND LTRIM(RTRIM(grd.Grd_Referencia))<>''
 ) u;
+-- Mismo enlace pero por documento: la llave FOLIO|Grd_ID se trata como un folio más en PAGOS_DOC_SQL.
+SELECT d.FOLIO+'|'+RTRIM(grd.Grd_ID) AS FOLIO, grd.Grd_Referencia AS Gr_Referencia INTO #folios_doc
+FROM #docs d JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=d.FOLIO;
+SELECT * INTO #cxp_doc FROM (
+    SELECT DISTINCT d.FOLIO+'|'+RTRIM(grd.Grd_ID) AS FOLIO, cxp.Cxp_Folio FROM #docs d
+    JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=d.FOLIO
+    JOIN Cuenta_X_Pagar cxp ON cxp.Cxp_Tabla='Gasto_Registro:'+d.FOLIO AND cxp.Cxp_Documento=grd.Grd_ID
+    UNION
+    SELECT DISTINCT d.FOLIO+'|'+RTRIM(grd.Grd_ID), cxp.Cxp_Folio FROM #docs d
+    JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=d.FOLIO
+    JOIN Cuenta_X_Pagar cxp ON cxp.Cxp_Tabla='Cuenta_X_Pagar' AND cxp.Cxp_Referencia=grd.Grd_Referencia AND cxp.Pv_Cve_Proveedor=grd.Pv_Cve_Proveedor
+    WHERE grd.Grd_Referencia IS NOT NULL AND LTRIM(RTRIM(grd.Grd_Referencia))<>''
+) u;
 """
-TEMPORALES = ("#docs", "#folios", "#cxp_d")
+TEMPORALES = ("#docs", "#folios", "#cxp_d", "#folios_doc", "#cxp_doc")
 
 GASTO_ORIGEN_SQL = "SELECT FOLIO, ORIGEN FROM #docs"
 
@@ -298,6 +311,8 @@ LEFT JOIN Banco_Cuenta bc ON bc.Bc_Cve_Banco_Cuenta=COALESCE(ch.Bc_Cve_Banco_Cue
 LEFT JOIN Banco bn ON bn.Bn_Cve_Banco=bc.Bn_Cve_Banco
 LEFT JOIN monto m ON m.FOLIO=f.FOLIO
 """
+# Pagos por documento de gasto (llave FOLIO|Grd_ID); solo existe en GASTO_DOCS_SETUP.
+PAGOS_DOC_SQL = PAGOS_SQL.replace("#cxp_d", "#cxp_doc").replace("#folios", "#folios_doc")
 
 # ----------------------------------------------------------------------------------------------
 # Compras, indirectos, NC de proveedor y CxP: plantillas por tipo (ver documentos.py)
