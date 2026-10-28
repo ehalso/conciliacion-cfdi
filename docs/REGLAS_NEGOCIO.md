@@ -44,6 +44,23 @@ igual de limpios, "No deducibles" (`Tipo_Gasto` `0092`, 85.6 % sin CFDI: el rest
 gasolineras, que simplemente no son deducibles fiscalmente) e "Impuesto Sobre Nómina" (`Tipo_Gasto` `0025`,
 86 % sin CFDI: los que sí tienen CFDI son de la Secretaría de Hacienda) — ver `MEJORAS_FUTURAS.md`.
 
+## Resumen de conciliación: Σ movimientos Mpro vs. Σ importe SAT (punto 5)
+
+`vista.resumen_conciliacion` arma, para **todo el reporte** (los 6 tipos de documento, no solo Gasto), una
+tabla de totales: cuánto se excluye por cada criterio del punto anterior (solo aplica a Gasto; Compra,
+Indirecto, NC proveedor y CxP entran completos al "Resto"), y del "Resto" (lo que sí debería tener CFDI),
+cuánto aparece realmente cruzado contra el SAT (`SAT_IMPORTE`, sumado por UUID único — no por documento: un
+mismo CFDI puede cubrir varios folios, p. ej. una factura consolidada de PASE repetida en 59 folios de
+Gasto). Las filas "Solo SAT" (CFDI del SAT sin folio en Mpro) se excluyen del universo: no son un movimiento
+de Mpro. Se expone en el JSON de `/api/reporte` como `resumen` (lista de `{criterio, mpro, pct, sub}`) y se
+renderiza en la interfaz como una tabla aparte, siempre sobre el periodo completo (no cambia con los filtros
+de tipo/búsqueda de la tabla principal).
+
+Validado contra Mpro + SAT real (septiembre 2026, los 6 tipos): Consumo interno $6.52M (8.7 %), Nómina
+$10.85M (14.4 %), Provisión contable $2.37M (3.1 %), Costo estándar $3.23M (4.3 %), Resto $52.16M (69.4 %,
+lo que debería conciliar) — de ese resto, el SAT confirma $45.99M (88.2 %), con una diferencia de $6.17M
+(11.8 %) sin encontrar en el SAT ese mes.
+
 ## CxP libre y CxP de orden de compra
 
 Ambas son registros de `Cuenta_X_Pagar` que **no** nacen de un documento Compra, Compra indirecta ni Gasto; se distinguen por `Cxp_Tabla`:

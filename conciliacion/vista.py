@@ -61,6 +61,49 @@ def columnas(d: pd.DataFrame) -> list[dict]:
     return base[:i] + extra + base[i:]
 
 
+CRITERIOS_ORDEN = ("Consumo interno", "Nómina", "Provisión contable", "Costo estándar")
+
+
+TIPO_SOLO_SAT = "Solo SAT"
+
+
+def resumen_conciliacion(d: pd.DataFrame) -> list[dict]:
+    """Suma de todo el reporte (Gasto, Compra, Indirecto, NC proveedor, CxP) por CRITERIO_CONCILIACION vs. lo
+    cruzado contra el SAT (punto 5 de criterios de conciliación): cuánto se excluye por cada criterio (hoy solo
+    aplica a Gasto; el resto de tipos no tiene criterio y entra completo al "Resto") y, de lo que sí debería
+    tener CFDI, cuánto aparece realmente en el SAT. "Solo SAT" (CFDI del SAT sin folio en Mpro) se excluye del
+    universo: no es un movimiento de Mpro. `DOC_TOTAL` (Mpro, con impuestos) es comparable contra `SAT_IMPORTE`
+    (el total del CFDI). Una fila por documento (Tipo, FOLIO) para Mpro, pero el SAT se suma por UUID único: un
+    mismo CFDI puede cubrir muchos folios (p. ej. PASE consolida muchos cruces de caseta en una sola factura),
+    y sumarlo por folio infla la cifra (un caso real llegó a repetirse en 59 folios)."""
+    if "Tipo" not in d or "DOC_TOTAL" not in d:
+        return []
+    por_doc = d[d.Tipo != TIPO_SOLO_SAT].drop_duplicates(["Tipo", "FOLIO"])
+    if por_doc.empty:
+        return []
+    criterio = por_doc.CRITERIO_CONCILIACION if "CRITERIO_CONCILIACION" in por_doc else pd.Series(np.nan, index=por_doc.index)
+    total = float(por_doc.DOC_TOTAL.sum())
+
+    def pct(monto, base):
+        return round(100 * monto / base, 1) if base else None
+
+    filas = []
+    for c in CRITERIOS_ORDEN:
+        monto = float(round(por_doc.loc[criterio == c, "DOC_TOTAL"].sum(), 2))
+        filas.append({"criterio": c, "mpro": monto, "pct": pct(monto, total), "sub": False})
+
+    resto = por_doc[criterio.isna()]
+    monto_resto = float(round(resto.DOC_TOTAL.sum(), 2))
+    filas.append({"criterio": "Resto (debe conciliar)", "mpro": monto_resto, "pct": pct(monto_resto, total), "sub": False})
+
+    if "SAT_IMPORTE" in resto and "UUID" in resto:
+        monto_sat = float(round(resto.dropna(subset=["UUID"]).drop_duplicates("UUID").SAT_IMPORTE.sum(), 2))
+        filas.append({"criterio": "Σ SAT cruzado", "mpro": monto_sat, "pct": pct(monto_sat, monto_resto), "sub": True})
+        dif = float(round(monto_resto - monto_sat, 2))
+        filas.append({"criterio": "Diferencia", "mpro": dif, "pct": pct(abs(dif), monto_resto), "sub": True})
+    return filas
+
+
 def agrupar_cuenta(d: pd.DataFrame) -> pd.DataFrame:
     """Suma las líneas de póliza de cada documento por cuenta contable (CECO: el único, o VARIOS)."""
     d = d.copy()
@@ -80,6 +123,7 @@ def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True) -> dic
     d = d.reset_index(drop=True).copy()
     if "Tipo" not in d:
         d["Tipo"] = "Gasto"
+    resumen = resumen_conciliacion(d)
     d["_t"] = d.Tipo.map(ORDEN_TIPO).fillna(9)
     d["_g"] = d.groupby(["Tipo", "FOLIO"], sort=False).ngroup()
     d = d.sort_values(["_t", "_g"], kind="stable").drop(columns=["_t", "_g"]).reset_index(drop=True)
@@ -124,4 +168,4 @@ def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True) -> dic
             cols = [cols[j] for j in usar]
             filas = [[f[j] for j in usar] for f in filas]
     return {"cols": [{k: c[k] for k in ("k", "l", "g", "t")} for c in cols], "rows": filas,
-            "vista": vista, "agrupar": bool(layout and agrupar)}
+            "vista": vista, "agrupar": bool(layout and agrupar), "resumen": resumen}

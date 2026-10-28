@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from conciliacion.vista import a_datos, agrupar_cuenta, val
+from conciliacion.vista import CRITERIOS_ORDEN, a_datos, agrupar_cuenta, resumen_conciliacion, val
 
 
 class Val(unittest.TestCase):
@@ -28,6 +28,64 @@ class Agrupar(unittest.TestCase):
         self.assertEqual(r.loc["6100", "CECO"], "VARIOS")
         self.assertEqual(r.loc["1140", "ABONO"], 15.0)
         self.assertEqual(r.loc["1140", "CECO"], "C")
+
+
+class ResumenConciliacion(unittest.TestCase):
+    def base(self):
+        # G1: consumo interno (2 líneas, mismo folio, no debe duplicarse); G2: sin criterio, con CFDI en el SAT
+        return pd.DataFrame({
+            "Tipo": ["Gasto", "Gasto", "Gasto"], "FOLIO": ["G1", "G1", "G2"],
+            "CRITERIO_CONCILIACION": ["Consumo interno", "Consumo interno", None],
+            "DOC_TOTAL": [100.0, 100.0, 50.0], "SAT_IMPORTE": [None, None, 45.0], "UUID": [None, None, "U1"]})
+
+    def test_sin_columna_criterio_no_hay_resumen(self):
+        self.assertEqual(resumen_conciliacion(pd.DataFrame({"Tipo": ["Gasto"], "FOLIO": ["G1"]})), [])
+
+    def test_agrupa_por_folio_sin_duplicar_lineas(self):
+        r = {f["criterio"]: f for f in resumen_conciliacion(self.base())}
+        self.assertEqual(r["Consumo interno"]["mpro"], 100.0)
+        self.assertEqual(r["Nómina"]["mpro"], 0.0)
+
+    def test_resto_y_cruce_sat(self):
+        r = {f["criterio"]: f for f in resumen_conciliacion(self.base())}
+        self.assertEqual(r["Resto (debe conciliar)"]["mpro"], 50.0)
+        self.assertEqual(r["Σ SAT cruzado"]["mpro"], 45.0)
+        self.assertEqual(r["Σ SAT cruzado"]["sub"], True)
+        self.assertEqual(r["Diferencia"]["mpro"], 5.0)
+
+    def test_porcentaje_sobre_total(self):
+        r = {f["criterio"]: f for f in resumen_conciliacion(self.base())}
+        self.assertAlmostEqual(r["Consumo interno"]["pct"], 66.7, places=1)
+
+    def test_incluye_otros_tipos_en_el_resto(self):
+        # Compra/Indirecto/NC/CxP no tienen CRITERIO_CONCILIACION (solo aplica a Gasto): entran completos al resto.
+        d = pd.concat([self.base(), pd.DataFrame({
+            "Tipo": ["Compra"], "FOLIO": ["C1"], "CRITERIO_CONCILIACION": [None], "DOC_TOTAL": [1000.0],
+            "SAT_IMPORTE": [None]})], ignore_index=True)
+        r = {f["criterio"]: f for f in resumen_conciliacion(d)}
+        self.assertEqual(r["Resto (debe conciliar)"]["mpro"], 1050.0)
+
+    def test_solo_sat_no_cuenta_como_movimiento_mpro(self):
+        d = pd.concat([self.base(), pd.DataFrame({
+            "Tipo": ["Solo SAT"], "FOLIO": ["SAT-ABC"], "CRITERIO_CONCILIACION": [None], "DOC_TOTAL": [9999.0],
+            "SAT_IMPORTE": [9999.0], "UUID": [None]})], ignore_index=True)
+        r = {f["criterio"]: f for f in resumen_conciliacion(d)}
+        self.assertEqual(r["Resto (debe conciliar)"]["mpro"], 50.0)
+
+    def test_sin_criterio_conciliacion_todo_va_al_resto(self):
+        d = pd.DataFrame({"Tipo": ["Compra"], "FOLIO": ["C1"], "DOC_TOTAL": [1000.0]})
+        r = {f["criterio"]: f for f in resumen_conciliacion(d)}
+        self.assertEqual(r["Resto (debe conciliar)"]["mpro"], 1000.0)
+        self.assertEqual(r["Consumo interno"]["mpro"], 0.0)
+
+    def test_mismo_uuid_en_varios_folios_no_se_duplica_en_sat(self):
+        # Un solo CFDI (p. ej. factura consolidada de PASE) puede cubrir varios folios de Gasto distintos.
+        d = pd.DataFrame({
+            "Tipo": ["Gasto"] * 3, "FOLIO": ["G1", "G2", "G3"], "CRITERIO_CONCILIACION": [None, None, None],
+            "DOC_TOTAL": [50.0, 30.0, 20.0], "SAT_IMPORTE": [45.0, 45.0, 45.0], "UUID": ["U1", "U1", "U1"]})
+        r = {f["criterio"]: f for f in resumen_conciliacion(d)}
+        self.assertEqual(r["Resto (debe conciliar)"]["mpro"], 100.0)
+        self.assertEqual(r["Σ SAT cruzado"]["mpro"], 45.0)
 
 
 class ADatos(unittest.TestCase):
@@ -66,6 +124,12 @@ class ADatos(unittest.TestCase):
         ks = [c["k"] for c in a_datos(self.d)["cols"]]
         self.assertNotIn("UUID", ks)
         self.assertIn("TOTAL", ks)
+
+    def test_incluye_resumen_de_conciliacion(self):
+        self.d["CRITERIO_CONCILIACION"] = [None, None, None]
+        r = a_datos(self.d)
+        self.assertIn("resumen", r)
+        self.assertEqual({f["criterio"] for f in r["resumen"]}, {*CRITERIOS_ORDEN, "Resto (debe conciliar)"})
 
 
 if __name__ == "__main__":
