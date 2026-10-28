@@ -74,6 +74,22 @@ Hallazgo: en los 35 folios todos los documentos tienen el mismo proveedor (clave
 
 Propuesta (no implementada, no solicitada): en `_por_documento`, si todos los documentos del folio comparten proveedor, mostrar ese proveedor en vez de `VARIOS`; y distinguir en UUID "VARIOS (póliza consolidada)" de "sin XML" (vacío).
 
+### Corrección de la atribución: suma por (folio, CECO, documento)
+
+Causa de buena parte de los `VARIOS`: la póliza trae una línea por (cuenta, CECO) con **todo lo que el documento reparte en ese CECO sumado**, pero la atribución comparaba contra cada renglón individual de `Gasto_Registro_Control`. Ejemplo `01-0038624`: las 23 líneas en `VARIOS` coincidían exacto con la suma de un solo documento en su CECO (no eran impuestos; el folio no tiene IVA).
+
+Cambio en `atribucion.py`: se compara el importe de la línea contra la suma por (FOLIO, CECO, Grd_ID). Se probaron tres métodos en septiembre y enero de 2026:
+
+| Método | Sep: VARIOS (folios) | Ene: VARIOS (folios) |
+|---|---|---|
+| Renglón (anterior) | 270 (35) | 261 (28) |
+| Renglón y, si no coincide, suma | 49 (32) | 44 (25) |
+| Solo suma (adoptado) | 49 (32) | 44 (25) |
+
+Renglón+suma y solo suma difieren en 1 línea (enero, `01-0035004`, línea de 101.83 en CECO 000135: el documento 0005 coincide exacto y el 0004 solo por tolerancia de 0.01; ambos con misma firma). Ninguna línea que ya se atribuía por renglón pasó a `VARIOS`. Tiempos equivalentes (~50 s). Se adoptó solo suma por ser más simple y exacta.
+
+`VARIOS` que quedan en septiembre (49 líneas): 22 por importes idénticos entre documentos (5 folios), 10 por línea que suma varios documentos (póliza consolidada real) y 17 de nómina (`GASTO_REGISTRO_NOMINA`) cuya suma tampoco coincide; esas 17 quedan por revisar.
+
 ## Pendientes por revisar: anomalías de XML en gasto (septiembre 2026)
 
 No corregidas; falta decidir con quien captura/Contabilidad.

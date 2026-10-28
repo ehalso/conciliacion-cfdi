@@ -1,8 +1,8 @@
 """Folios de Gasto con varios documentos: asigna cada línea de póliza a su documento (Grd_ID).
 
 La póliza trae una línea por (cuenta, CECO) sin indicar de qué documento proviene. `Gasto_Registro_Control`
-reparte cada documento por CECO, así que una línea se atribuye al documento cuyo renglón coincide por
-(FOLIO, CECO, |importe|). Si hay más de un candidato con distinto proveedor/UUID, o la línea mezcla documentos,
+reparte cada documento por CECO en varios renglones, y la póliza los suma, así que una línea se atribuye al
+documento cuya suma en ese CECO coincide por (FOLIO, CECO, documento, |importe|). Si hay más de un candidato con distinto proveedor/UUID, o la línea mezcla documentos,
 queda como VARIOS.
 """
 import numpy as np
@@ -35,7 +35,8 @@ def atribuir_documento(base: pd.DataFrame, reparto: pd.DataFrame, docs: pd.DataF
     if not aplica.any():
         return base
 
-    rep = {k: g for k, g in reparto.assign(ABS=reparto.Grc_Importe.abs()).groupby(["FOLIO", "CECO"])}
+    suma = reparto.groupby(["FOLIO", "CECO", "Grd_ID"], as_index=False).Grc_Importe.sum().assign(ABS=lambda x: x.Grc_Importe.abs())
+    rep = {k: g for k, g in suma.groupby(["FOLIO", "CECO"])}
     neto = (base.CARGO.fillna(0) - base.ABONO.fillna(0)).abs()
     asignado = []
     for i, r in base[aplica].iterrows():
