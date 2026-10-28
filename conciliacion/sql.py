@@ -172,7 +172,7 @@ GROUP BY gr.Gr_Folio, grd.Grd_ID, gri.Im_Cve_Impuesto, grd.Grd_Tipo_Cambio
 XML_SQL = """
 WITH xml AS (
     SELECT d.FOLIO, cd.Cd_Timbre_UUID, cd.Cd_RFC_Emisor, cd.Cd_Monto, cd.Cd_Serie, cd.Cd_Serie_Folio,
-           cd.Cd_Uso_CFDI, cd.Cd_Tipo_CFDI, COALESCE(cd.Cd_Metdo_Pago_CFDI, cd.Cd_Metodo_Pago) AS METODO_PAGO, cd.Cd_Forma_Pago
+           cd.Cd_Uso_CFDI, cd.Cd_Tipo_CFDI, CASE WHEN RTRIM(cd.Cd_Metdo_Pago_CFDI) IN ('PUE','PPD') THEN RTRIM(cd.Cd_Metdo_Pago_CFDI) WHEN RTRIM(cd.Cd_Metodo_Pago) IN ('PUE','PPD') THEN RTRIM(cd.Cd_Metodo_Pago) END AS METODO_PAGO, cd.Cd_Forma_Pago
     FROM #docs d JOIN Comprobante_Digital cd
       ON cd.Cd_Tabla='{origen}' AND cd.Cd_Documento LIKE d.FOLIO+'%' AND cd.Es_Cve_Estado='AC'
 ),
@@ -216,7 +216,7 @@ GASTO_XML_DOCUMENTO_SQL = """
 WITH xml AS (
     SELECT d.FOLIO, CASE WHEN LEN(RTRIM(cd.Cd_Documento))>=18 THEN SUBSTRING(cd.Cd_Documento,11,4) END AS DOC_ID,
            cd.Cd_Timbre_UUID, cd.Cd_RFC_Emisor, cd.Cd_Monto, cd.Cd_Serie, cd.Cd_Serie_Folio,
-           cd.Cd_Uso_CFDI, cd.Cd_Tipo_CFDI, COALESCE(cd.Cd_Metdo_Pago_CFDI, cd.Cd_Metodo_Pago) AS METODO_PAGO, cd.Cd_Forma_Pago
+           cd.Cd_Uso_CFDI, cd.Cd_Tipo_CFDI, CASE WHEN RTRIM(cd.Cd_Metdo_Pago_CFDI) IN ('PUE','PPD') THEN RTRIM(cd.Cd_Metdo_Pago_CFDI) WHEN RTRIM(cd.Cd_Metodo_Pago) IN ('PUE','PPD') THEN RTRIM(cd.Cd_Metodo_Pago) END AS METODO_PAGO, cd.Cd_Forma_Pago
     FROM #docs d JOIN Comprobante_Digital cd
       ON cd.Cd_Tabla='GASTO_REGISTRO' AND cd.Cd_Documento LIKE d.FOLIO+'%' AND cd.Es_Cve_Estado='AC'
 ),
@@ -358,4 +358,15 @@ LEFT JOIN Centro_Costo cco ON cco.Cc_Cve_Centro_Costo=pd.Pd_Centro_Costo
 WHERE ISNULL(pd.Pd_Importe,0)<>0 {filtro05}
   AND LEFT(pd.Cc_Cve_Cuenta_Contable,5) NOT IN ('10500','10600')
   AND LEFT(pd.Cc_Cve_Cuenta_Contable,4) NOT IN ('1170','2110','2150'{excl_pol})
+"""
+
+# Pólizas de documentos cuyas líneas quedan todas fuera de DOC_POLIZA_SQL (importe 0 o solo inventario/proveedores):
+# se muestra la póliza sin líneas para que el documento no aparezca sin póliza.
+DOC_POLIZA_SIN_LINEAS_SQL = """
+SELECT DISTINCT d.FOLIO, pl.Pl_Folio AS POLIZA, pl.Pl_Fecha AS FECHA_POLIZA, pl.Pl_Tipo AS TIPO_POLIZA, pl.Pl_Numero AS NUMERO_POLIZA,
+       pl.Pl_Comentario AS CONCEPTO_POLIZA
+FROM #docs d
+JOIN Poliza_Control plc ON plc.Pc_Tabla='{pc}' AND plc.Pc_Documento=d.FOLIO AND plc.Es_Cve_Estado<>'CA'
+JOIN Poliza pl ON pl.Pl_Folio=plc.Pl_Folio AND pl.Es_Cve_Estado<>'CA'
+JOIN Poliza_Detalle pd ON pd.Pl_Folio=plc.Pl_Folio AND {pol_ref}
 """
