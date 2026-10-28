@@ -37,7 +37,7 @@ class SoloSat(unittest.TestCase):
     def test_agrega_los_que_no_estan_en_mpro(self):
         crudo = pd.DataFrame({"uuid": [U1, U2, "BBBBBBBB-0000-0000-0000-000000000003"], "serie": "A", "folio": "1", "tipo_comprobante": "I",
                               "fecha": "2026-01-08T10:00:00Z", "rfc_emisor": "XAXX", "nombre_emisor": "P",
-                              "total": [1.0, 2.0, 3.0], "cancelado": False, "concepto": "&amp;X"})
+                              "total": [1.0, 2.0, 3.0], "cancelado": False, "concepto": "&amp;X", "uso_cfdi": "G03"})
         lecturas = iter([crudo, pd.DataFrame({"uuid": [U1]})])
         engine = mock.MagicMock()
         with mock.patch.object(sat.pd, "read_sql", lambda *a, **k: next(lecturas)):

@@ -24,8 +24,21 @@ SELECT * INTO #cxp_d FROM (
     JOIN Cuenta_X_Pagar cxp ON cxp.Cxp_Tabla='Cuenta_X_Pagar' AND cxp.Cxp_Referencia=grd.Grd_Referencia AND cxp.Pv_Cve_Proveedor=grd.Pv_Cve_Proveedor
     WHERE grd.Grd_Referencia IS NOT NULL AND LTRIM(RTRIM(grd.Grd_Referencia))<>''
 ) u;
+-- Mismo enlace pero por documento: la llave FOLIO|Grd_ID se trata como un folio más en PAGOS_DOC_SQL.
+SELECT d.FOLIO+'|'+RTRIM(grd.Grd_ID) AS FOLIO, grd.Grd_Referencia AS Gr_Referencia INTO #folios_doc
+FROM #docs d JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=d.FOLIO;
+SELECT * INTO #cxp_doc FROM (
+    SELECT DISTINCT d.FOLIO+'|'+RTRIM(grd.Grd_ID) AS FOLIO, cxp.Cxp_Folio FROM #docs d
+    JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=d.FOLIO
+    JOIN Cuenta_X_Pagar cxp ON cxp.Cxp_Tabla='Gasto_Registro:'+d.FOLIO AND cxp.Cxp_Documento=grd.Grd_ID
+    UNION
+    SELECT DISTINCT d.FOLIO+'|'+RTRIM(grd.Grd_ID), cxp.Cxp_Folio FROM #docs d
+    JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=d.FOLIO
+    JOIN Cuenta_X_Pagar cxp ON cxp.Cxp_Tabla='Cuenta_X_Pagar' AND cxp.Cxp_Referencia=grd.Grd_Referencia AND cxp.Pv_Cve_Proveedor=grd.Pv_Cve_Proveedor
+    WHERE grd.Grd_Referencia IS NOT NULL AND LTRIM(RTRIM(grd.Grd_Referencia))<>''
+) u;
 """
-TEMPORALES = ("#docs", "#folios", "#cxp_d")
+TEMPORALES = ("#docs", "#folios", "#cxp_d", "#folios_doc", "#cxp_doc")
 
 GASTO_ORIGEN_SQL = "SELECT FOLIO, ORIGEN FROM #docs"
 
@@ -185,7 +198,7 @@ GROUP BY gr.Gr_Folio, grd.Grd_ID, gri.Im_Cve_Impuesto, grd.Grd_Tipo_Cambio
 XML_SQL = """
 WITH xml AS (
     SELECT d.FOLIO, cd.Cd_Timbre_UUID, cd.Cd_RFC_Emisor, cd.Cd_Monto, cd.Cd_Serie, cd.Cd_Serie_Folio,
-           cd.Cd_Uso_CFDI, cd.Cd_Tipo_CFDI, COALESCE(cd.Cd_Metdo_Pago_CFDI, cd.Cd_Metodo_Pago) AS METODO_PAGO, cd.Cd_Forma_Pago
+           cd.Cd_Uso_CFDI, cd.Cd_Tipo_CFDI, CASE WHEN RTRIM(cd.Cd_Metdo_Pago_CFDI) IN ('PUE','PPD') THEN RTRIM(cd.Cd_Metdo_Pago_CFDI) WHEN RTRIM(cd.Cd_Metodo_Pago) IN ('PUE','PPD') THEN RTRIM(cd.Cd_Metodo_Pago) END AS METODO_PAGO, cd.Cd_Forma_Pago
     FROM #docs d JOIN Comprobante_Digital cd
       ON cd.Cd_Tabla='{origen}' AND cd.Cd_Documento LIKE d.FOLIO+'%' AND cd.Es_Cve_Estado='AC'
 ),
@@ -213,6 +226,51 @@ SELECT d.FOLIO, d.COM AS CONCEPTO_GASTO,
          WHEN x.TIPO_CFDI='D' THEN 'Diario' ELSE NULL END AS TIPO_COMPROBANTE,
     CASE WHEN x.N_UUID>=2 THEN 'VARIOS' ELSE x.SERIE_FOLIO END AS NUMERO_FACTURA
 FROM #docs d LEFT JOIN xa x ON x.FOLIO=d.FOLIO LEFT JOIN uso u ON u.FOLIO=d.FOLIO LEFT JOIN Uso_CFDI uc ON uc.Uc_Cve_Uso_CFDI=u.USO
+"""
+
+# Folios con varios documentos: proveedor, concepto y XML por documento (Grd_ID). Un XML cuyo Cd_Documento
+# no trae el Grd_ID (14 caracteres, folio + '0001') llega con DOC_ID nulo y aplica a todo el folio.
+GASTO_DOCUMENTOS_SQL = """
+SELECT d.FOLIO, grd.Grd_ID AS DOC_ID, grd.Pv_Cve_Proveedor AS CLAVE_PROVEEDOR, p.Pv_R_F_C AS RFC_PROVEEDOR,
+       p.Pv_Descripcion AS NOMBRE_PROVEEDOR,
+       COALESCE(NULLIF(LTRIM(RTRIM(CONVERT(varchar(500), grd.Grd_Comentario))),''), CONVERT(varchar(500), d.COM)) AS CONCEPTO_GASTO
+FROM #docs d JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=d.FOLIO
+LEFT JOIN Proveedor p ON p.Pv_Cve_Proveedor=grd.Pv_Cve_Proveedor
+"""
+
+GASTO_XML_DOCUMENTO_SQL = """
+WITH xml AS (
+    SELECT d.FOLIO, CASE WHEN LEN(RTRIM(cd.Cd_Documento))>=18 THEN SUBSTRING(cd.Cd_Documento,11,4) END AS DOC_ID,
+           cd.Cd_Timbre_UUID, cd.Cd_RFC_Emisor, cd.Cd_Monto, cd.Cd_Serie, cd.Cd_Serie_Folio,
+           cd.Cd_Uso_CFDI, cd.Cd_Tipo_CFDI, CASE WHEN RTRIM(cd.Cd_Metdo_Pago_CFDI) IN ('PUE','PPD') THEN RTRIM(cd.Cd_Metdo_Pago_CFDI) WHEN RTRIM(cd.Cd_Metodo_Pago) IN ('PUE','PPD') THEN RTRIM(cd.Cd_Metodo_Pago) END AS METODO_PAGO, cd.Cd_Forma_Pago
+    FROM #docs d JOIN Comprobante_Digital cd
+      ON cd.Cd_Tabla='GASTO_REGISTRO' AND cd.Cd_Documento LIKE d.FOLIO+'%' AND cd.Es_Cve_Estado='AC'
+),
+xa AS (
+    SELECT FOLIO, DOC_ID, COUNT(DISTINCT Cd_Timbre_UUID) AS N_UUID, MIN(Cd_Timbre_UUID) AS UUID_UNICO, MIN(Cd_RFC_Emisor) AS RFC_EMISOR,
+           MIN(Cd_Monto) AS MONTO, MIN(Cd_Serie) AS SERIE, MIN(Cd_Serie_Folio) AS SERIE_FOLIO, MIN(METODO_PAGO) AS METODO,
+           MIN(Cd_Forma_Pago) AS FORMA, MIN(Cd_Tipo_CFDI) AS TIPO_CFDI
+    FROM xml GROUP BY FOLIO, DOC_ID
+),
+uso AS (
+    SELECT FOLIO, DOC_ID, COUNT(DISTINCT Cd_Uso_CFDI) AS N_USO, MIN(Cd_Uso_CFDI) AS USO FROM xml
+    WHERE Cd_Uso_CFDI IS NOT NULL AND LTRIM(RTRIM(Cd_Uso_CFDI))<>'' GROUP BY FOLIO, DOC_ID
+)
+SELECT x.FOLIO, x.DOC_ID,
+    CASE WHEN u.N_USO>=2 THEN 'VARIOS' ELSE u.USO END AS CLAVE_USO_BIEN_SERVICIO,
+    CASE WHEN u.N_USO>=2 THEN 'VARIOS' ELSE uc.Uc_Descripcion END AS DESCRIPCION_USO_BIEN_SERVICIO,
+    CASE WHEN x.N_UUID>=2 THEN 'VARIOS' ELSE x.UUID_UNICO END AS UUID,
+    CASE WHEN x.N_UUID>=2 THEN 'VARIOS' ELSE x.RFC_EMISOR END AS XML_RFC_EMISOR,
+    CASE WHEN x.N_UUID>=2 THEN NULL ELSE x.MONTO END AS XML_MONTO,
+    CASE WHEN x.N_UUID>=2 THEN 'VARIOS' ELSE x.SERIE END AS XML_SERIE,
+    CASE WHEN x.N_UUID>=2 THEN 'VARIOS' ELSE x.SERIE_FOLIO END AS XML_FOLIO,
+    CASE WHEN x.N_UUID>=2 THEN 'VARIOS' ELSE x.METODO END AS XML_METODO_PAGO,
+    CASE WHEN x.N_UUID>=2 THEN 'VARIOS' ELSE x.FORMA END AS XML_FORMA_PAGO,
+    CASE WHEN x.N_UUID>=2 THEN 'VARIOS' WHEN x.TIPO_CFDI='I' THEN 'Ingreso' WHEN x.TIPO_CFDI='E' THEN 'Egreso'
+         WHEN x.TIPO_CFDI='D' THEN 'Diario' ELSE NULL END AS TIPO_COMPROBANTE,
+    CASE WHEN x.N_UUID>=2 THEN 'VARIOS' ELSE x.SERIE_FOLIO END AS NUMERO_FACTURA
+FROM xa x LEFT JOIN uso u ON u.FOLIO=x.FOLIO AND ISNULL(u.DOC_ID,'')=ISNULL(x.DOC_ID,'')
+LEFT JOIN Uso_CFDI uc ON uc.Uc_Cve_Uso_CFDI=u.USO
 """
 
 GASTO_RETENCIONES_SQL = """
@@ -246,11 +304,6 @@ formas AS (
 monto AS (
     SELECT cd.FOLIO, SUM(pc.Pc_Importe*ISNULL(pc.Pc_Tipo_Cambio,1)) AS MONTO_COBRADO
     FROM #cxp_d cd JOIN Pago_CXP pc ON pc.Cxp_Folio=cd.Cxp_Folio AND pc.Es_Cve_Estado<>'CA' GROUP BY cd.FOLIO
-),
-cpago AS (
-    SELECT cd.FOLIO, COUNT(DISTINCT pcc.Pcc_Timbre_UUID) n, MIN(pcc.Pcc_Timbre_UUID) u,
-           (SELECT MIN(cdg.Cd_Timbre_Fecha) FROM Comprobante_Digital cdg WHERE cdg.Cd_Timbre_UUID=MIN(pcc.Pcc_Timbre_UUID)) AS fc
-    FROM #cxp_d cd JOIN Pago_Cxp_Comprobante pcc ON pcc.Cxp_Folio=cd.Cxp_Folio GROUP BY cd.FOLIO
 )
 SELECT f.FOLIO, f.Gr_Referencia AS REFERENCIA,
   fm.FORMA_PAGO,
@@ -260,9 +313,7 @@ SELECT f.FOLIO, f.Gr_Referencia AS REFERENCIA,
   ch.Ch_Fecha AS FECHA_CHEQUE,
   COALESCE(ch.Ch_Folio, NULLIF(LTRIM(RTRIM(r.Pc_Documento)),'')) AS FOLIO_PAGO,
   COALESCE(NULLIF(LTRIM(RTRIM(r.Pc_Referencia)),''), NULLIF(LTRIM(RTRIM(ch.Ch_Referencia)),'')) AS NO_CHEQUE_TRANSF,
-  m.MONTO_COBRADO,
-  CASE WHEN cp.n>=2 THEN 'VARIOS' ELSE cp.u END AS COMPLEMENTO_PAGO,
-  CASE WHEN cp.n>=2 THEN NULL ELSE cp.fc END AS FECHA_COMPLEMENTO_PAGO
+  m.MONTO_COBRADO
 FROM #folios f
 LEFT JOIN rep r ON r.FOLIO=f.FOLIO
 LEFT JOIN formas fm ON fm.FOLIO=f.FOLIO
@@ -272,8 +323,9 @@ LEFT JOIN Cheque ch ON ch.Ch_Folio = CASE WHEN r.Pc_Tabla='Cheque' THEN r.Pc_Doc
 LEFT JOIN Banco_Cuenta bc ON bc.Bc_Cve_Banco_Cuenta=COALESCE(ch.Bc_Cve_Banco_Cuenta, an.Bc_Cve_Banco_Cuenta)
 LEFT JOIN Banco bn ON bn.Bn_Cve_Banco=bc.Bn_Cve_Banco
 LEFT JOIN monto m ON m.FOLIO=f.FOLIO
-LEFT JOIN cpago cp ON cp.FOLIO=f.FOLIO
 """
+# Pagos por documento de gasto (llave FOLIO|Grd_ID); solo existe en GASTO_DOCS_SETUP.
+PAGOS_DOC_SQL = PAGOS_SQL.replace("#cxp_d", "#cxp_doc").replace("#folios", "#folios_doc")
 
 # ----------------------------------------------------------------------------------------------
 # Compras, indirectos, NC de proveedor y CxP: plantillas por tipo (ver documentos.py)
@@ -334,4 +386,15 @@ LEFT JOIN Centro_Costo cco ON cco.Cc_Cve_Centro_Costo=pd.Pd_Centro_Costo
 WHERE ISNULL(pd.Pd_Importe,0)<>0 {filtro05}
   AND LEFT(pd.Cc_Cve_Cuenta_Contable,5) NOT IN ('10500','10600')
   AND LEFT(pd.Cc_Cve_Cuenta_Contable,4) NOT IN ('1170','2110','2150'{excl_pol})
+"""
+
+# Pólizas de documentos cuyas líneas quedan todas fuera de DOC_POLIZA_SQL (importe 0 o solo inventario/proveedores):
+# se muestra la póliza sin líneas para que el documento no aparezca sin póliza.
+DOC_POLIZA_SIN_LINEAS_SQL = """
+SELECT DISTINCT d.FOLIO, pl.Pl_Folio AS POLIZA, pl.Pl_Fecha AS FECHA_POLIZA, pl.Pl_Tipo AS TIPO_POLIZA, pl.Pl_Numero AS NUMERO_POLIZA,
+       pl.Pl_Comentario AS CONCEPTO_POLIZA
+FROM #docs d
+JOIN Poliza_Control plc ON plc.Pc_Tabla='{pc}' AND plc.Pc_Documento=d.FOLIO AND plc.Es_Cve_Estado<>'CA'
+JOIN Poliza pl ON pl.Pl_Folio=plc.Pl_Folio AND pl.Es_Cve_Estado<>'CA'
+JOIN Poliza_Detalle pd ON pd.Pl_Folio=plc.Pl_Folio AND {pol_ref}
 """

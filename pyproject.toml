@@ -1,6 +1,6 @@
 [project]
 name = "conciliacion"
-version = "3.1.0"
+version = "3.1.1"
 description = "Reporte de gastos, compras y CxP de Mpro con layout de póliza"
 requires-python = ">=3.10"
 dependencies = ["pandas>=2.0", "sqlalchemy>=2.0", "pymssql>=2.3", "psycopg2-binary>=2.9"]

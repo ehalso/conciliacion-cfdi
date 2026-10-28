@@ -497,6 +497,13 @@
   "linea": false
  },
  {
+  "k": "SAT_USO_CFDI",
+  "l": "Uso CFDI",
+  "g": "Base de datos SAT",
+  "t": "t",
+  "linea": false
+ },
+ {
   "k": "SAT_FECHA",
   "l": "Fecha UUID",
   "g": "Base de datos SAT",

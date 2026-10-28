@@ -59,3 +59,7 @@ Comparar, por documento, `SUBTOTAL_NETO` contra el cargo contable neto de la pó
 - Efecto en póliza de no filtrar CxP (ene–sep 2026): de las 792 CxP libres, 329 no tienen línea de póliza que cruce por folio/referencia (320 del proveedor `0000000021`, $4.79 M; 9 del concepto 0023, $1.58 M) y 2 del concepto 0019 ($42,000) descuadran contra su póliza. Las 108 que ya entraban antes y las 101 de orden de compra cuadran al 100 %.
 - Sucursales en baja (`BA`): el layout tampoco las filtra (el nativo las incluye); si algún criterio de conciliación las requiere excluir, que sea también como marca.
 - **Cruce SAT**: definir "No localizados" (hoy vacío; la intención es marcar los UUID de Mpro que no están en la BD del SAT, que ya cubre "Existe UUID en SAT" = No) y confirmar la tolerancia de importes (0.05). Los folios con UUID "VARIOS" no se cruzan.
+
+## Observaciones sep-2026 y auditoría de fuentes
+
+Ver `REVISION_OBSERVACIONES.md` (documentación provisional de la rama; se pasa a `trivasa-context` cuando termine la revisión de todas las correcciones). Incluye 8 hallazgos de auditoría de fuentes aún no solicitados y la decisión pendiente de mostrar Uso CFDI, Método y Forma de pago en el bloque SAT.

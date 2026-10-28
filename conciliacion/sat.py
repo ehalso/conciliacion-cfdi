@@ -18,7 +18,8 @@ TIPO_SOLO_SAT = "Solo SAT"
 SQL_CFDI = """
 SELECT upper(c.uuid) AS uuid, c.serie, c.folio, c.tipo_comprobante, c.fecha, c.rfc_emisor, c.nombre_emisor, c.total,
        (k.uuid IS NOT NULL) AS cancelado,
-       substring(c.xml::text from 'Concepto[^>]*?Descripcion="([^"]*)"') AS concepto
+       substring(c.xml::text from 'Concepto[^>]*?Descripcion="([^"]*)"') AS concepto,
+       substring(c.xml::text from 'UsoCFDI="([^"]*)"') AS uso_cfdi
 FROM raw_sat_api.cfdi c
 LEFT JOIN (SELECT DISTINCT upper(uuid) AS uuid FROM raw_sat_api.cancelados WHERE estatus = '0') k ON k.uuid = upper(c.uuid)
 WHERE (c.tipo = 'RECIBIDO' OR (c.tipo = 'EMITIDO' AND c.rfc_emisor = c.rfc_receptor)) AND upper(c.uuid) = ANY(:uuids)
@@ -55,6 +56,7 @@ def _formatear(d: pd.DataFrame) -> pd.DataFrame:
         "SAT_FOLIO": d.folio,
         "SAT_ESTATUS": d.cancelado.map({True: "Cancelado", False: "Activo"}),
         "SAT_TIPO_CFDI": d.tipo_comprobante.map(TIPOS_CFDI).fillna(d.tipo_comprobante),
+        "SAT_USO_CFDI": d.uso_cfdi,
         "SAT_FECHA": pd.to_datetime(d.fecha, utc=True).dt.tz_convert(None),
         "SAT_CONCEPTO": d.concepto.map(lambda c: html.unescape(c).strip() if isinstance(c, str) else None),
         "SAT_RFC": d.rfc_emisor,
