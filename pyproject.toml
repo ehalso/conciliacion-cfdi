@@ -3,7 +3,7 @@ name = "conciliacion"
 version = "2.3.0"
 description = "Reporte de gastos, compras y CxP de Mpro con layout de póliza"
 requires-python = ">=3.10"
-dependencies = ["pandas>=2.0", "sqlalchemy>=2.0", "pymssql>=2.3"]
+dependencies = ["pandas>=2.0", "sqlalchemy>=2.0", "pymssql>=2.3", "psycopg2-binary>=2.9"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

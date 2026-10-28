@@ -8,9 +8,10 @@ from .db import parametros, tablas_temporales
 from .documentos import TIPOS, consultar_proveedores, construir_tipo
 from .gasto import construir_gasto
 from .posproceso import post
+from .uso_cfdi_sat import completar_uso_cfdi
 
 
-def construir(engine: Engine, fi: str, ff: str) -> pd.DataFrame:
+def construir(engine: Engine, fi: str, ff: str, engine_sat: Engine | None = None) -> pd.DataFrame:
     """DataFrame final (ya posprocesado): una fila por línea de póliza, columna `Tipo`."""
     p = parametros(fi, ff)
     with engine.connect() as con:
@@ -20,4 +21,4 @@ def construir(engine: Engine, fi: str, ff: str) -> pd.DataFrame:
         proveedores = consultar_proveedores(con)
         partes = [gasto] + [construir_tipo(con, t, p, proveedores) for t in TIPOS]
     d = post(pd.concat(partes, ignore_index=True, sort=False))
-    return agregar_complemento(d, engine)
+    return completar_uso_cfdi(agregar_complemento(d, engine), engine_sat, engine)
