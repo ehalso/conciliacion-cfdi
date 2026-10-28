@@ -21,7 +21,7 @@ ERROR_BD = "Error consultando la base de Mpro; reintenta o avisa a TI."
 
 
 class Cache:
-    """DataFrame por (ini, fin) con TTL; JSON comprimido por (vista, agrupar)."""
+    """DataFrame por (ini, fin) con TTL; JSON comprimido por (vista, agrupar, excluidos)."""
 
     def __init__(self, engine: Engine, etiqueta: str, ttl_seg: int, maximo: int, engine_sat: Engine | None = None):
         self.engine, self.etiqueta, self.ttl, self.maximo = engine, etiqueta, ttl_seg, maximo
@@ -29,13 +29,14 @@ class Cache:
         self._items: dict = {}
         self._lock = threading.Lock()
 
-    def reporte(self, ini: str, fin: str, vista: str, agrupar: bool, refrescar: bool) -> tuple[bytes, bool]:
+    def reporte(self, ini: str, fin: str, vista: str, agrupar: bool, excluidos: bool, refrescar: bool) -> tuple[bytes, bool]:
         """Devuelve (JSON gzip, vino_de_caché)."""
         with self._lock:
             c = self._items.get((ini, fin))
             vigente = c is not None and not refrescar and time.time() - c["t"] < self.ttl
-            if vigente and (vista, agrupar) in c["gz"]:
-                return c["gz"][(vista, agrupar)], True
+            clave = (vista, agrupar, excluidos)
+            if vigente and clave in c["gz"]:
+                return c["gz"][clave], True
             if not vigente:
                 t0 = time.time()
                 ff = (dt.date.fromisoformat(fin) + dt.timedelta(days=1)).isoformat()
@@ -44,16 +45,16 @@ class Cache:
                 self._items[(ini, fin)] = c
                 while len(self._items) > self.maximo:
                     self._items.pop(min(self._items, key=lambda k: self._items[k]["t"]))
-            datos = a_datos(c["d"], vista, agrupar)
+            datos = a_datos(c["d"], vista, agrupar, excluidos)
             datos["meta"] = {"fuente": self.etiqueta, "ini": ini, "fin": fin, "filas": len(datos["rows"]),
-                             "vista": vista, "agrupar": datos["agrupar"], "generado": c["generado"],
+                             "vista": vista, "agrupar": datos["agrupar"], "excluidos": excluidos, "generado": c["generado"],
                              "seg_consulta": c["seg"], "sat": "SAT_UUID" in c["d"]}
             gz = gzip.compress(json.dumps(datos, ensure_ascii=False, separators=(",", ":")).encode(), 5)
-            c["gz"][(vista, agrupar)] = gz
+            c["gz"][clave] = gz
             return gz, vigente
 
 
-def _parametros(q: dict) -> tuple[str, str, str, bool]:
+def _parametros(q: dict) -> tuple[str, str, str, bool, bool]:
     ini, fin = q["ini"][0], q["fin"][0]
     a, z = dt.date.fromisoformat(ini), dt.date.fromisoformat(fin)
     if z < a or (z - a).days > MAX_DIAS:
@@ -61,7 +62,7 @@ def _parametros(q: dict) -> tuple[str, str, str, bool]:
     vista = q.get("vista", ["layout"])[0]
     if vista not in VISTAS:
         raise ValueError("vista debe ser layout o ceco.")
-    return ini, fin, vista, q.get("agrupar", ["1"])[0] != "0"
+    return ini, fin, vista, q.get("agrupar", ["1"])[0] != "0", q.get("excluidos", ["0"])[0] == "1"
 
 
 def crear_servidor(cfg: Servidor, mpro: Mpro, engine: Engine, engine_sat: Engine | None = None) -> ThreadingHTTPServer:
@@ -96,11 +97,11 @@ def crear_servidor(cfg: Servidor, mpro: Mpro, engine: Engine, engine_sat: Engine
                 return self._enviar(404, b"No encontrado", "text/plain; charset=utf-8")
             q = parse_qs(u.query)
             try:
-                ini, fin, vista, agrupar = _parametros(q)
+                ini, fin, vista, agrupar, excluidos = _parametros(q)
             except (KeyError, ValueError) as e:
                 return self._enviar(400, str(e).encode(), "text/plain; charset=utf-8")
             try:
-                gz, hit = cache.reporte(ini, fin, vista, agrupar, "refresh" in q)
+                gz, hit = cache.reporte(ini, fin, vista, agrupar, excluidos, "refresh" in q)
             except Exception as e:
                 print("ERROR", repr(e), flush=True)
                 return self._enviar(500, ERROR_BD.encode(), "text/plain; charset=utf-8")

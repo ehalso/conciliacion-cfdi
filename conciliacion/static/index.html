@@ -76,11 +76,7 @@ tr.r:hover td{background:var(--hl)}
  <div class="sub" id="sub" style="margin-top:10px"></div></div>
  <div class="kpis" id="kpis"></div>
 </header>
-<div id="resumenWrap" style="display:none;border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:10px 14px">
- <b style="font-size:12.5px">Resumen de conciliación: Mpro vs. SAT</b>
- <table id="resumenTbl" style="width:auto;margin-top:6px"><thead><tr><th>Criterio</th><th class="n">Σ Mpro</th><th class="n">% del total</th></tr></thead><tbody id="resumenBody"></tbody></table>
-</div>
-<div class="bar" id="ctl"><label class="t">Fecha inicio <input type="date" id="fi" value="2026-01-01"></label><label class="t">Fecha final <input type="date" id="ff" value="2026-01-31"></label><label class="t" id="agrl"><input type="checkbox" id="agr" checked> Agrupar por cuenta contable</label><button class="btn" id="go">Consultar</button><button class="chip" id="rf" title="Ignora el caché y vuelve a consultar .207">Actualizar desde .207</button><span class="st" id="st"></span></div>
+<div class="bar" id="ctl"><label class="t">Fecha inicio <input type="date" id="fi" value="2026-01-01"></label><label class="t">Fecha final <input type="date" id="ff" value="2026-01-31"></label><label class="t" id="agrl"><input type="checkbox" id="agr" checked> Agrupar por cuenta contable</label><label class="t"><input type="checkbox" id="exc"> Mostrar excluidos (sin CFDI por criterio)</label><button class="btn" id="go">Consultar</button><button class="chip" id="rf" title="Ignora el caché y vuelve a consultar .207">Actualizar desde .207</button><span class="st" id="st"></span></div>
 <div class="bar" role="group" aria-label="Filtrar por tipo"><span id="chips" style="display:contents"></span></div>
 <div class="bar">
  <input type="search" id="q" placeholder="Buscar folio, proveedor, RFC, UUID, cuenta…" aria-label="Buscar">
@@ -125,7 +121,7 @@ document.getElementById('tb').style.width=total+'px';
  hd.innerHTML=g+'</tr>'+h+'</tr>'})();
 const fmt=new Intl.NumberFormat('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
 const money=v=>fmt.format(v);
-const ti=ix.Tipo,fi=ix.FOLIO,ci=ix.CARGO,ai=ix.ABONO,si=ix.SUBTOTAL_NETO,toi=ix.TOTAL;
+const ti=ix.Tipo,fi=ix.FOLIO,ci=ix.CARGO,ai=ix.ABONO,si=ix.SUBTOTAL_NETO,toi=ix.TOTAL,sui=ix.SAT_UUID,sii=ix.SAT_IMPORTE;
 // llave de documento = Tipo + folio (un folio puede repetirse entre tipos)
 const kOf=rows.map(r=>r[ti]+'|'+r[fi]);
 const first=new Uint8Array(rows.length);let last=null;kOf.forEach((k,i)=>{if(k!==last){first[i]=1;last=k}});
@@ -153,9 +149,10 @@ function apply(){mkChips();ori.value=selO;const q=query.toLowerCase();view=[];
   if(useO&&t!='Gasto'&&!selT.has(t))continue;
   if(useO&&t=='Gasto'&&oOf[i]!==selO)continue;
   if(ok&&!ok.has(kOf[i]))continue;if(only&&!first[i])continue;view.push(i)}
- let c=0,a=0,s=0,tt=0,fs=new Set();view.forEach(i=>{const r=rows[i];c+=r[ci]||0;a+=r[ai]||0;s+=r[si]||0;tt+=toi==null?0:r[toi]||0;fs.add(kOf[i])});
+ let c=0,a=0,s=0,tt=0,tm=0,sat=0,fs=new Set(),us=new Set();view.forEach(i=>{const r=rows[i];c+=r[ci]||0;a+=r[ai]||0;s+=r[si]||0;const t=toi==null?0:r[toi]||0;tt+=t;fs.add(kOf[i]);
+  if(tOf[i]=='Solo SAT')return;tm+=t;const u=sui==null?null:r[sui];if(u&&!us.has(u)){us.add(u);sat+=r[sii]||0}});
  let okc=0;fs.forEach(f=>{const x=fol.get(f);if(Math.abs(x.c-x.a-x.s)<=0.05)okc++});
- $('kpis').innerHTML=[['Documentos',fs.size.toLocaleString('es-MX')],['Líneas',view.length.toLocaleString('es-MX')],['Σ Cargo',money(c)],['Σ Abono',money(a)],['Σ Subtotal neto',money(s)],['Σ Total',money(tt)],['Documentos cuadrados',okc+' / '+fs.size]].map(k=>'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span></div>').join('');
+ $('kpis').innerHTML=[['Documentos',fs.size.toLocaleString('es-MX')],['Líneas',view.length.toLocaleString('es-MX')],['Σ Cargo',money(c)],['Σ Abono',money(a)],['Σ Subtotal neto',money(s)],['Σ Total',money(tt)],['Documentos cuadrados',okc+' / '+fs.size]].concat(sui==null?[]:[['Σ En BD SAT (UUID únicos)',money(sat)],['% Conciliación',tm?(100*sat/tm).toFixed(1)+'%':'—']]).map(k=>'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span></div>').join('');
  page=0;$('count').textContent=view.length.toLocaleString('es-MX')+' filas';draw()}
 const vp=document.getElementById('vp'),body=document.getElementById('body'),PS=300;let page=0;
 function draw(){const pages=Math.max(1,Math.ceil(view.length/PS));page=Math.min(page,pages-1);
@@ -176,15 +173,6 @@ function draw(){const pages=Math.max(1,Math.ceil(view.length/PS));page=Math.min(
 document.getElementById('q').oninput=e=>{query=e.target.value.trim();clearTimeout(window._t);window._t=setTimeout(apply,200)};
 document.getElementById('only').onchange=e=>{only=e.target.checked;apply()};
 $('foot').innerHTML='<span><b>Tipo</b>: Gasto (con su origen), Compra, Indirecto, NC proveedor o CxP (Libre u Orden Compra: inversión que parte de una OC y genera CxP). Las notas de crédito van en negativo.</span><span><b>Subtotal neto</b> ya descuenta descuentos; <b>Cargo</b> = importes positivos de la póliza y <b>Abono</b> = negativos en valor absoluto.</span>'+'<span>Los importes del documento aparecen solo en su primera fila, por lo que las sumas de columna no duplican.</span>'+'<span>Solo se muestran las columnas con algún dato en el periodo.</span>';
-function renderResumen(){
- const res=D.resumen||[];
- $('resumenWrap').style.display=res.length?'':'none';
- if(!res.length)return;
- $('resumenBody').innerHTML=res.map(f=>{
-  const neg=f.mpro<0?' neg':'';
-  return '<tr'+(f.sub?' style="color:var(--mute)"':'')+'><td>'+(f.sub?'↳ ':'')+f.criterio+'</td>'+
-   '<td class="n'+neg+'">'+money(f.mpro)+'</td><td class="n">'+(f.pct==null?'':f.pct+'%')+'</td></tr>'}).join('')}
-renderResumen();
 apply();
 
 function exportar(){
@@ -226,7 +214,7 @@ async function cargar(refresh){
  btn.disabled=true;st.className='st busy';st.textContent='Consultando .207…';
  const t0=performance.now();
  try{
-  const r=await fetch('api/reporte?ini='+ini+'&fin='+fin+'&agrupar='+($('agr').checked?1:0)+(refresh?'&refresh=1':''),{cache:'no-store'});
+  const r=await fetch('api/reporte?ini='+ini+'&fin='+fin+'&agrupar='+($('agr').checked?1:0)+'&excluidos='+($('exc').checked?1:0)+(refresh?'&refresh=1':''),{cache:'no-store'});
   if(!r.ok)throw new Error((await r.text())||r.status);
   const t1=performance.now(),D=await r.json(),t2=performance.now();
   init(D);const t3=performance.now(),m=D.meta||{};
@@ -236,6 +224,7 @@ async function cargar(refresh){
  }catch(e){st.className='st err';st.textContent='Error: '+e.message}
  btn.disabled=false}
 $('agr').onchange=()=>cargar(false);
+$('exc').onchange=()=>cargar(false);
 $('go').onclick=()=>cargar(false);$('rf').onclick=()=>cargar(true);
 if(PRE){$('ctl').hidden=true;init(PRE)}else{const q=new URLSearchParams(location.search);if(q.get('ini'))$('fi').value=q.get('ini');if(q.get('fin'))$('ff').value=q.get('fin');cargar(false)}
 </script>
