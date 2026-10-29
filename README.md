@@ -17,6 +17,7 @@ conciliacion/
   documentos.py   Compra, Indirecto, NC proveedor, CxP libre, CxP orden compra
   posproceso.py   cargo/abono, prorrateo, totales, catálogos SAT
   reporte.py      construir(engine, fi, ff) -> DataFrame unificado
+  resumen.py      DataFrame -> resumen SAT vs Mpro por tipo de CFDI y lista de diferencias
   vista.py        DataFrame -> JSON de la interfaz (layout / ceco, agrupado por cuenta)
   servidor.py     http.server con auth básica, caché por periodo y /api/reporte
   static/         index.html (SheetJS) y columnas.json
@@ -46,6 +47,10 @@ Con credenciales de Postgres (`SAT_PG_USER`/`SAT_PG_PASSWORD` o `POSTGRES_DW_RO_
 **Solo SAT:** además se agregan, con Tipo "Solo SAT", los CFDI recibidos vigentes (no cancelados) del periodo, por fecha del CFDI, cuyo UUID no existe en `Comprobante_Digital` de Mpro (cualquier módulo y fecha de registro). Solo llevan el bloque SAT y la conciliación (Existe en Mpro = No, en SAT = Sí, existencia = No, importes = No); el folio es `SAT-<inicio del UUID>`.
 
 La sesión a Postgres es de solo lectura. Si no hay credenciales o el SAT falla, el reporte sale sin esas columnas (`meta.sat = false`).
+
+## Resumen SAT vs Mpro
+
+Pestaña "Resumen SAT vs Mpro" (`/api/resumen?ini=&fin=[&refresh=1]`, mismo caché del reporte): cantidad y monto de CFDI por tipo, SAT, Mpro y diferencia. El lado **SAT** se consulta directo a `raw_sat_api.cfdi` por periodo (fecha del CFDI, uno por UUID, sin cancelados de `raw_sat_api.cancelados`); en complementos de pago el monto es `pagos_monto_total`. **Recibidos** (Ingreso, Egreso, Traslado, Pago, Retención): Mpro = un documento por UUID con su `XML_MONTO` (NC proveedor = Egreso, el resto = Ingreso); Pago = complementos únicos adjuntos a cheques, sin monto (n/d). **Emitidos** (incluye Nómina, autoemitidos): solo lado SAT, Mpro "n/d" porque no vive en Mpro. Retención no tiene fuente aún (0). "Exportar diferencias a Excel" baja el resumen y la lista de documentos con diferencia de existencia o de importe.
 
 ## Pruebas
 

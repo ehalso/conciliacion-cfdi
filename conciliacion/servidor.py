@@ -14,6 +14,7 @@ from sqlalchemy.engine import Engine
 
 from .config import Mpro, Servidor
 from .reporte import construir
+from .resumen import consultar_sat, resumir
 from .vista import VISTAS, a_datos
 
 MAX_DIAS = 366
@@ -29,21 +30,34 @@ class Cache:
         self._items: dict = {}
         self._lock = threading.Lock()
 
+    def _entrada(self, ini: str, fin: str, refrescar: bool) -> tuple[dict, bool]:
+        """Entrada de caché del periodo (la construye si falta o venció). Llamar con el candado tomado."""
+        c = self._items.get((ini, fin))
+        vigente = c is not None and not refrescar and time.time() - c["t"] < self.ttl
+        if not vigente:
+            t0 = time.time()
+            ff = (dt.date.fromisoformat(fin) + dt.timedelta(days=1)).isoformat()
+            c = {"t": time.time(), "d": construir(self.engine, ini, ff, self.engine_sat), "gz": {},
+                 "seg": round(time.time() - t0, 1), "generado": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+            self._items[(ini, fin)] = c
+            while len(self._items) > self.maximo:
+                self._items.pop(min(self._items, key=lambda k: self._items[k]["t"]))
+        return c, vigente
+
+    def resumen(self, ini: str, fin: str, refrescar: bool) -> dict:
+        with self._lock:
+            c, vigente = self._entrada(ini, fin, refrescar)
+            if "resumen" not in c:
+                ff = (dt.date.fromisoformat(fin) + dt.timedelta(days=1)).isoformat()
+                c["resumen"] = resumir(c["d"], consultar_sat(self.engine_sat, ini, ff) if self.engine_sat is not None else None)
+            return {**c["resumen"], "meta": {"fuente": self.etiqueta, "ini": ini, "fin": fin, "generado": c["generado"], "cache": vigente}}
+
     def reporte(self, ini: str, fin: str, vista: str, agrupar: bool, refrescar: bool) -> tuple[bytes, bool]:
         """Devuelve (JSON gzip, vino_de_caché)."""
         with self._lock:
-            c = self._items.get((ini, fin))
-            vigente = c is not None and not refrescar and time.time() - c["t"] < self.ttl
+            c, vigente = self._entrada(ini, fin, refrescar)
             if vigente and (vista, agrupar) in c["gz"]:
                 return c["gz"][(vista, agrupar)], True
-            if not vigente:
-                t0 = time.time()
-                ff = (dt.date.fromisoformat(fin) + dt.timedelta(days=1)).isoformat()
-                c = {"t": time.time(), "d": construir(self.engine, ini, ff, self.engine_sat), "gz": {},
-                     "seg": round(time.time() - t0, 1), "generado": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-                self._items[(ini, fin)] = c
-                while len(self._items) > self.maximo:
-                    self._items.pop(min(self._items, key=lambda k: self._items[k]["t"]))
             datos = a_datos(c["d"], vista, agrupar)
             datos["meta"] = {"fuente": self.etiqueta, "ini": ini, "fin": fin, "filas": len(datos["rows"]),
                              "vista": vista, "agrupar": datos["agrupar"], "generado": c["generado"],
@@ -53,11 +67,16 @@ class Cache:
             return gz, vigente
 
 
-def _parametros(q: dict) -> tuple[str, str, str, bool]:
+def _periodo(q: dict) -> tuple[str, str]:
     ini, fin = q["ini"][0], q["fin"][0]
     a, z = dt.date.fromisoformat(ini), dt.date.fromisoformat(fin)
     if z < a or (z - a).days > MAX_DIAS:
         raise ValueError("Rango inválido (máx. 1 año, fin >= inicio).")
+    return ini, fin
+
+
+def _parametros(q: dict) -> tuple[str, str, str, bool]:
+    ini, fin = _periodo(q)
     vista = q.get("vista", ["layout"])[0]
     if vista not in VISTAS:
         raise ValueError("vista debe ser layout o ceco.")
@@ -92,9 +111,21 @@ def crear_servidor(cfg: Servidor, mpro: Mpro, engine: Engine, engine_sat: Engine
             u = urlparse(self.path)
             if u.path in ("/", "/index.html"):
                 return self._enviar(200, pagina, "text/html; charset=utf-8")
-            if u.path != "/api/reporte":
+            if u.path not in ("/api/reporte", "/api/resumen"):
                 return self._enviar(404, b"No encontrado", "text/plain; charset=utf-8")
             q = parse_qs(u.query)
+            if u.path == "/api/resumen":
+                try:
+                    ini, fin = _periodo(q)
+                except (KeyError, ValueError) as e:
+                    return self._enviar(400, str(e).encode(), "text/plain; charset=utf-8")
+                try:
+                    r = cache.resumen(ini, fin, "refresh" in q)
+                except Exception as e:
+                    print("ERROR", repr(e), flush=True)
+                    return self._enviar(500, ERROR_BD.encode(), "text/plain; charset=utf-8")
+                return self._enviar(200, json.dumps(r, ensure_ascii=False, separators=(",", ":")).encode(),
+                                    "application/json; charset=utf-8", [("Cache-Control", "no-store")])
             try:
                 ini, fin, vista, agrupar = _parametros(q)
             except (KeyError, ValueError) as e:

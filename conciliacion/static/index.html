@@ -68,6 +68,9 @@ tr.r:hover td{background:var(--hl)}
 .pg button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:4px 12px;cursor:pointer}
 .pg button:disabled{opacity:.4;cursor:default}
 .st{color:var(--mute);font:12px "Roboto Mono",monospace}.st.busy{color:var(--accent)}.st.err{color:var(--neg)}select{font:inherit;padding:5px 8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}input[type=date]{font:inherit;padding:5px 8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}.btn:disabled{opacity:.5;cursor:wait}
+.rs h2{margin:0 0 6px;font-size:13px}.rs table{table-layout:auto;width:auto;min-width:760px}.rs td,.rs th{padding:4px 12px;height:auto;white-space:normal}
+.rs td.n,.rs th.n{white-space:nowrap}.rs tr.sec td{background:var(--band);font-weight:700}.rs td.nota{color:var(--mute);max-width:46ch}.rs td.nd{color:var(--mute)}
+.rs .wr{overflow:auto;border:1px solid var(--line);border-radius:6px;background:var(--panel)}.rs tr.dz td{color:var(--mute)}
 </style>
 <div class="top"><div class="l"><span class="burger"><i></i></span>Trivasa</div><div class="u">ESTEBAN HERNAN ALCOCER SOUZA</div></div>
 <div class="wrap"><div class="card">
@@ -77,6 +80,8 @@ tr.r:hover td{background:var(--hl)}
  <div class="kpis" id="kpis"></div>
 </header>
 <div class="bar" id="ctl"><label class="t">Fecha inicio <input type="date" id="fi" value="2026-01-01"></label><label class="t">Fecha final <input type="date" id="ff" value="2026-01-31"></label><label class="t" id="agrl"><input type="checkbox" id="agr" checked> Agrupar por cuenta contable</label><button class="btn" id="go">Consultar</button><button class="chip" id="rf" title="Ignora el caché y vuelve a consultar .207">Actualizar desde .207</button><span class="st" id="st"></span></div>
+<div class="bar" role="tablist" aria-label="Vista"><button class="chip" role="tab" id="tdet" aria-pressed="true">Detalle</button><button class="chip" role="tab" id="tres" aria-pressed="false">Resumen SAT vs Mpro</button></div>
+<div id="det" style="display:contents">
 <div class="bar" role="group" aria-label="Filtrar por tipo"><span id="chips" style="display:contents"></span></div>
 <div class="bar">
  <input type="search" id="q" placeholder="Buscar folio, proveedor, RFC, UUID, cuenta…" aria-label="Buscar">
@@ -85,6 +90,8 @@ tr.r:hover td{background:var(--hl)}
 </div>
 <div class="grid"><div class="vp" id="vp" tabindex="0"><table id="tb"><colgroup id="cg"></colgroup><thead id="hd"></thead><tbody id="body"></tbody></table></div><div class="pg" id="pg"></div></div>
 <footer id="foot"></footer>
+</div>
+<section id="rs" hidden></section>
 </div></div>
 <div class="foot">Sistema Trivasa © 2025</div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -92,6 +99,7 @@ tr.r:hover td{background:var(--hl)}
 const PRE=/*DATA*/null;
 const $=id=>document.getElementById(id);
 function init(D){
+window.__ETIQ=Object.fromEntries(D.cols.map(c=>[c.k,c.l]));
 const RH=26,meta=D.meta||{},agrupado=!!D.agrupar;
 const TIPO={'Gasto':'#06707D','Compra':'#A16207','Indirecto':'#C2410C','NC proveedor':'#BE185D','CxP libre':'#7A4EA3','CxP orden compra':'#78350F','Solo SAT':'#475569'};
 // Gasto: rampa de 8 pasos (teal oscuro a lila claro); los 4 pasos claros llevan texto oscuro (3.er valor = 1)
@@ -119,7 +127,6 @@ document.getElementById('tb').style.width=total+'px';
  while(i<cols.length){let j=i;while(j<cols.length&&cols[j].g==cols[i].g)j++;g+='<th colspan="'+(j-i)+'">'+cols[i].g+'</th>';i=j}
  cols.forEach(c=>{const s=c.k in stk?' stk" style="left:'+stk[c.k]+'px':'';h+='<th class="'+(c.t=='n'?'n':'')+s+'">'+c.l+'</th>'});
  hd.innerHTML=g+'</tr>'+h+'</tr>'})();
-const fmt=new Intl.NumberFormat('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
 const money=v=>fmt.format(v);
 const ti=ix.Tipo,fi=ix.FOLIO,ci=ix.CARGO,ai=ix.ABONO,si=ix.SUBTOTAL_NETO,toi=ix.TOTAL;
 // llave de documento = Tipo + folio (un folio puede repetirse entre tipos)
@@ -216,13 +223,48 @@ async function cargar(refresh){
   const r=await fetch('api/reporte?ini='+ini+'&fin='+fin+'&agrupar='+($('agr').checked?1:0)+(refresh?'&refresh=1':''),{cache:'no-store'});
   if(!r.ok)throw new Error((await r.text())||r.status);
   const t1=performance.now(),D=await r.json(),t2=performance.now();
-  init(D);const t3=performance.now(),m=D.meta||{};
+  detKey=ini+'|'+fin;init(D);const t3=performance.now(),m=D.meta||{};
   st.className='st';
   st.textContent=(m.cache?'Desde caché del servidor':'Consulta en vivo a '+m.fuente)+' · datos de '+m.generado+(m.cache?'':' ('+m.seg_consulta+' s de consulta')+(m.cache?'':')')+' · descarga '+((t1-t0)/1000).toFixed(2)+' s · render '+((t3-t2)/1000).toFixed(2)+' s';
   window.__tiempos={fetch_ms:Math.round(t1-t0),parse_ms:Math.round(t2-t1),render_ms:Math.round(t3-t2),total_ms:Math.round(t3-t0),cache:!!m.cache,filas:D.rows.length};
  }catch(e){st.className='st err';st.textContent='Error: '+e.message}
  btn.disabled=false}
+const fmt=new Intl.NumberFormat('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
+const esc=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+let RES=null,vistaRes=false,resSeq=0,detKey='';
+function setVista(r){vistaRes=r;$('rs').hidden=!r;$('det').style.display=r?'none':'contents';$('kpis').hidden=r;$('agrl').hidden=r;
+ $('tdet').setAttribute('aria-pressed',!r);$('tres').setAttribute('aria-pressed',r);if(r)resumen(false);else if(detKey!==$('fi').value+'|'+$('ff').value)cargar(false)}
+function pintaResumen(R){const rs=$('rs');rs.className='rs';
+ if(!R.disponible){rs.innerHTML='<div class="empty">El cruce con el SAT no está disponible; sin él no se puede armar el resumen.</div>';return}
+ const nd='<td class="n nd">n/d</td>',n=v=>v==null?nd:'<td class="n'+(v<0?' neg':'')+'">'+fmt.format(v)+'</td>',q=v=>v==null?nd:'<td class="n'+(v<0?' neg':'')+'">'+v.toLocaleString('es-MX')+'</td>';
+ const sec=(tit,F)=>{let h='<h2>'+tit+'</h2><div class="wr"><table><thead><tr><th>Tipo de CFDI</th><th></th><th class="n">SAT</th><th class="n">Mpro</th><th class="n">Diferencia</th><th>Observación</th></tr></thead><tbody>';
+  F.forEach(f=>{const z=!f.sat.n&&!f.mpro.n;
+   h+='<tr class="sec'+(z?' dz':'')+'"><td rowspan="2">'+esc(f.tipo)+'</td><td>Cantidad</td>'+q(f.sat.n)+q(f.mpro.n)+q(f.dif.n)+'<td class="nota" rowspan="2">'+esc(f.nota)+'</td></tr>'+
+      '<tr'+(z?' class="dz"':'')+'><td>Montos</td>'+n(f.sat.monto)+n(f.mpro.monto)+n(f.dif.monto)+'</tr>'});
+  return h+'</tbody></table></div>'};
+ let h=sec('Recibidos',R.recibidos)+'<div style="height:14px"></div>'+sec('Emitidos',R.emitidos);
+ h+='</tbody></table></div><p class="sub">SAT: base Postgres <b>raw_sat_api</b>, CFDI vigentes (sin cancelados) del periodo por fecha del CFDI, uno por UUID; en pagos el monto es el de los pagos del complemento. Mpro: un documento por UUID con su XML monto, en recibidos. <b>n/d</b> = Mpro no tiene el dato (emitidos y nómina no se registran en este reporte; el complemento de pago no guarda monto).</p>'+
+  '<div class="bar"><button class="btn" id="xr">Exportar diferencias a Excel</button><span class="st">'+R.diferencias.rows.length.toLocaleString('es-MX')+' documentos con diferencia de existencia o de importe</span></div>';
+ rs.innerHTML=h;$('xr').onclick=()=>exportaResumen(R)}
+function exportaResumen(R){const m=R.meta||{},A=[['Empresa:','TRIVASA S.A. DE C.V.'],['Fecha inicial:',m.ini],['Fecha final:',m.fin],[],
+  ];
+ [['Recibidos',R.recibidos],['Emitidos',R.emitidos]].forEach(([t,F])=>{A.push([t,'','SAT','Mpro','Diferencia','Observación']);
+  F.forEach(f=>{A.push([f.tipo,'Cantidad',f.sat.n,f.mpro.n,f.dif.n,f.nota]);A.push(['','Montos',f.sat.monto,f.mpro.monto,f.dif.monto,''])});A.push([])});
+ const D=[R.diferencias.cols.slice()].concat(R.diferencias.rows),nom='resumen_conciliacion_'+m.ini+'_'+m.fin;
+ const L=window.__ETIQ||{};D[0]=D[0].map(k=>L[k]||k);
+ if(!window.XLSX){alert('No se pudo cargar la librería de Excel.');return}
+ const w1=XLSX.utils.aoa_to_sheet(A),w2=XLSX.utils.aoa_to_sheet(D);w1['!cols']=[{wch:14},{wch:10},{wch:16},{wch:16},{wch:16},{wch:70}];
+ for(let r=4;r<A.length;r++)if(A[r][1]=='Montos')[2,3,4].forEach(c=>{const x=w1[XLSX.utils.encode_cell({r,c})];if(x)x.z='#,##0.00'});
+ w2['!cols']=D[0].map(()=>({wch:22}));w2['!autofilter']={ref:XLSX.utils.encode_range({s:{r:0,c:0},e:{r:Math.max(0,D.length-1),c:D[0].length-1}})};
+ const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,w1,'Resumen');XLSX.utils.book_append_sheet(wb,w2,'Diferencias');XLSX.writeFile(wb,nom+'.xlsx')}
+async function resumen(refresh){
+ const ini=$('fi').value,fin=$('ff').value,rs=$('rs'),seq=++resSeq;
+ if(!ini||!fin)return;rs.className='rs';rs.innerHTML='<div class="empty">Calculando resumen…</div>';
+ try{const r=await fetch('api/resumen?ini='+ini+'&fin='+fin+(refresh?'&refresh=1':''),{cache:'no-store'});
+  if(!r.ok)throw new Error((await r.text())||r.status);const R=await r.json();if(seq!==resSeq||!vistaRes)return;RES=R;pintaResumen(R)}
+ catch(e){if(seq===resSeq)rs.innerHTML='<div class="empty">Error: '+esc(e.message)+(e.message=='Failed to fetch'?' (se perdió la conexión con el servidor; pulsa Consultar para reintentar, el primer cálculo de un periodo puede tardar ~1 min)':'')+'</div>'}}
+$('tdet').onclick=()=>setVista(false);$('tres').onclick=()=>setVista(true);
 $('agr').onchange=()=>cargar(false);
-$('go').onclick=()=>cargar(false);$('rf').onclick=()=>cargar(true);
-if(PRE){$('ctl').hidden=true;init(PRE)}else{const q=new URLSearchParams(location.search);if(q.get('ini'))$('fi').value=q.get('ini');if(q.get('fin'))$('ff').value=q.get('fin');cargar(false)}
+$('go').onclick=()=>vistaRes?resumen(false):cargar(false);$('rf').onclick=()=>vistaRes?resumen(true):cargar(true);
+if(PRE){$('ctl').hidden=true;$('tdet').parentNode.hidden=true;init(PRE)}else{const q=new URLSearchParams(location.search);if(q.get('ini'))$('fi').value=q.get('ini');if(q.get('fin'))$('ff').value=q.get('fin');setVista(true)}
 </script>
