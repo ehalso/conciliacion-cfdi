@@ -121,7 +121,7 @@ document.getElementById('tb').style.width=total+'px';
  hd.innerHTML=g+'</tr>'+h+'</tr>'})();
 const fmt=new Intl.NumberFormat('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
 const money=v=>fmt.format(v);
-const ti=ix.Tipo,fi=ix.FOLIO,ci=ix.CARGO,ai=ix.ABONO,si=ix.SUBTOTAL_NETO,toi=ix.TOTAL,sui=ix.SAT_UUID,sii=ix.SAT_IMPORTE;
+const ti=ix.Tipo,fi=ix.FOLIO,ci=ix.CARGO,ai=ix.ABONO,si=ix.SUBTOTAL_NETO,toi=ix.TOTAL,sui=ix.SAT_UUID,sii=ix.SAT_IMPORTE,sci=ix.SAT_IMPORTE_COMPLEMENTO;
 // llave de documento = Tipo + folio (un folio puede repetirse entre tipos)
 const kOf=rows.map(r=>r[ti]+'|'+r[fi]);
 const first=new Uint8Array(rows.length);let last=null;kOf.forEach((k,i)=>{if(k!==last){first[i]=1;last=k}});
@@ -150,7 +150,7 @@ function apply(){mkChips();ori.value=selO;const q=query.toLowerCase();view=[];
   if(useO&&t=='Gasto'&&oOf[i]!==selO)continue;
   if(ok&&!ok.has(kOf[i]))continue;if(only&&!first[i])continue;view.push(i)}
  let c=0,a=0,s=0,tt=0,tm=0,sat=0,fs=new Set(),us=new Set();view.forEach(i=>{const r=rows[i];c+=r[ci]||0;a+=r[ai]||0;s+=r[si]||0;const t=toi==null?0:r[toi]||0;tt+=t;fs.add(kOf[i]);
-  if(tOf[i]=='Solo SAT')return;tm+=t;const u=sui==null?null:r[sui];if(u&&!us.has(u)){us.add(u);sat+=r[sii]||0}});
+  if(tOf[i]=='Solo SAT')return;tm+=t;const u=sui==null?null:r[sui];if(u&&!us.has(u)){us.add(u);sat+=(r[sii]||0)+(sci==null?0:r[sci]||0)}});
  let okc=0;fs.forEach(f=>{const x=fol.get(f);if(Math.abs(x.c-x.a-x.s)<=0.05)okc++});
  $('kpis').innerHTML=[['Documentos',fs.size.toLocaleString('es-MX')],['Líneas',view.length.toLocaleString('es-MX')],['Σ Cargo',money(c)],['Σ Abono',money(a)],['Σ Subtotal neto',money(s)],['Σ Total',money(tt)],['Documentos cuadrados',okc+' / '+fs.size]].concat(sui==null?[]:[['Σ En BD SAT (UUID únicos)',money(sat)],['% Conciliación',tm?(100*sat/tm).toFixed(1)+'%':'—']]).map(k=>'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span></div>').join('');
  page=0;$('count').textContent=view.length.toLocaleString('es-MX')+' filas';draw()}

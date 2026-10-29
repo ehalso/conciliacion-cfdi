@@ -532,6 +532,13 @@
   "linea": false
  },
  {
+  "k": "SAT_IMPORTE_COMPLEMENTO",
+  "l": "Importe complemento combustible",
+  "g": "Base de datos SAT",
+  "t": "n",
+  "linea": false
+ },
+ {
   "k": "SAT_NO_LOCALIZADOS",
   "l": "No localizados",
   "g": "Base de datos SAT",
@@ -564,6 +571,13 @@
   "l": "Coincide importes",
   "g": "Conciliación SAT",
   "t": "t",
+  "linea": false
+ },
+ {
+  "k": "DIF_IMPORTE_UUID",
+  "l": "Diferencia importes (UUID)",
+  "g": "Conciliación SAT",
+  "t": "n",
   "linea": false
  }
 ]
