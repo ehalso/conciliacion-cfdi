@@ -14,7 +14,7 @@ from sqlalchemy.engine import Engine
 
 from .config import Mpro, Servidor
 from .reporte import construir
-from .resumen import consultar_mpro_emitidos, consultar_retenciones, consultar_sat, resumir
+from .resumen import consultar_mpro, consultar_retenciones, consultar_sat, diferencias, resumir
 from .vista import VISTAS, a_datos
 
 MAX_DIAS = 366
@@ -28,7 +28,9 @@ class Cache:
         self.engine, self.etiqueta, self.ttl, self.maximo = engine, etiqueta, ttl_seg, maximo
         self.engine_sat = engine_sat
         self._items: dict = {}
+        self._res: dict = {}
         self._lock = threading.Lock()
+        self._lock_res = threading.Lock()
 
     def _entrada(self, ini: str, fin: str, refrescar: bool) -> tuple[dict, bool]:
         """Entrada de caché del periodo (la construye si falta o venció). Llamar con el candado tomado."""
@@ -45,14 +47,25 @@ class Cache:
         return c, vigente
 
     def resumen(self, ini: str, fin: str, refrescar: bool) -> dict:
-        with self._lock:
-            c, vigente = self._entrada(ini, fin, refrescar)
-            if "resumen" not in c:
+        """Agregados directos (Postgres SAT + Comprobante_Digital); no construye el reporte completo."""
+        with self._lock_res:
+            c = self._res.get((ini, fin))
+            vigente = c is not None and not refrescar and time.time() - c["t"] < self.ttl
+            if not vigente:
                 ff = (dt.date.fromisoformat(fin) + dt.timedelta(days=1)).isoformat()
                 sat = self.engine_sat
-                c["resumen"] = resumir(c["d"], consultar_sat(sat, ini, ff) if sat is not None else None, consultar_mpro_emitidos(self.engine, ini, ff),
-                                       consultar_retenciones(sat, ini, ff) if sat is not None else None)
-            return {**c["resumen"], "meta": {"fuente": self.etiqueta, "ini": ini, "fin": fin, "generado": c["generado"], "cache": vigente}}
+                r = resumir(consultar_sat(sat, ini, ff) if sat is not None else None, consultar_mpro(self.engine, ini, ff, False),
+                            consultar_mpro(self.engine, ini, ff, True), consultar_retenciones(sat, ini, ff) if sat is not None else None)
+                c = self._res[(ini, fin)] = {"t": time.time(), "r": r, "generado": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+                while len(self._res) > self.maximo:
+                    self._res.pop(min(self._res, key=lambda k: self._res[k]["t"]))
+            return {**c["r"], "meta": {"fuente": self.etiqueta, "ini": ini, "fin": fin, "generado": c["generado"], "cache": vigente}}
+
+    def diferencias(self, ini: str, fin: str) -> dict:
+        """Lista de documentos con diferencia (requiere el reporte completo del periodo; es lo lento)."""
+        with self._lock:
+            c, _ = self._entrada(ini, fin, False)
+            return diferencias(c["d"])
 
     def reporte(self, ini: str, fin: str, vista: str, agrupar: bool, refrescar: bool) -> tuple[bytes, bool]:
         """Devuelve (JSON gzip, vino_de_caché)."""
@@ -113,16 +126,16 @@ def crear_servidor(cfg: Servidor, mpro: Mpro, engine: Engine, engine_sat: Engine
             u = urlparse(self.path)
             if u.path in ("/", "/index.html"):
                 return self._enviar(200, pagina, "text/html; charset=utf-8")
-            if u.path not in ("/api/reporte", "/api/resumen"):
+            if u.path not in ("/api/reporte", "/api/resumen", "/api/diferencias"):
                 return self._enviar(404, b"No encontrado", "text/plain; charset=utf-8")
             q = parse_qs(u.query)
-            if u.path == "/api/resumen":
+            if u.path in ("/api/resumen", "/api/diferencias"):
                 try:
                     ini, fin = _periodo(q)
                 except (KeyError, ValueError) as e:
                     return self._enviar(400, str(e).encode(), "text/plain; charset=utf-8")
                 try:
-                    r = cache.resumen(ini, fin, "refresh" in q)
+                    r = cache.resumen(ini, fin, "refresh" in q) if u.path == "/api/resumen" else cache.diferencias(ini, fin)
                 except Exception as e:
                     print("ERROR", repr(e), flush=True)
                     return self._enviar(500, ERROR_BD.encode(), "text/plain; charset=utf-8")

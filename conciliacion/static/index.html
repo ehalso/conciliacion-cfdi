@@ -79,7 +79,7 @@ tr.r:hover td{background:var(--hl)}
  <div class="sub" id="sub" style="margin-top:10px"></div></div>
  <div class="kpis" id="kpis"></div>
 </header>
-<div class="bar" id="ctl"><label class="t">Fecha inicio <input type="date" id="fi" value="2026-01-01"></label><label class="t">Fecha final <input type="date" id="ff" value="2026-01-31"></label><label class="t" id="agrl"><input type="checkbox" id="agr" checked> Agrupar por cuenta contable</label><button class="btn" id="go">Consultar</button><button class="chip" id="rf" title="Ignora el caché y vuelve a consultar .207">Actualizar desde .207</button><span class="st" id="st"></span></div>
+<div class="bar" id="ctl"><span id="psel" hidden><label class="t">Año <select id="sy"></select></label><label class="t">Mes <select id="sm"></select></label></span><span id="dsel"><label class="t">Fecha inicio <input type="date" id="fi" value="2026-01-01"></label><label class="t">Fecha final <input type="date" id="ff" value="2026-01-31"></label></span><label class="t" id="agrl"><input type="checkbox" id="agr" checked> Agrupar por cuenta contable</label><button class="btn" id="go">Consultar</button><button class="chip" id="rf" title="Ignora el caché y vuelve a consultar .207">Actualizar desde .207</button><span class="st" id="st"></span></div>
 <div class="bar" role="tablist" aria-label="Vista"><button class="chip" role="tab" id="tdet" aria-pressed="true">Detalle</button><button class="chip" role="tab" id="tres" aria-pressed="false">Resumen SAT vs Mpro</button></div>
 <div id="det" style="display:contents">
 <div class="bar" role="group" aria-label="Filtrar por tipo"><span id="chips" style="display:contents"></span></div>
@@ -232,7 +232,7 @@ async function cargar(refresh){
 const fmt=new Intl.NumberFormat('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
 const esc=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;');
 let RES=null,vistaRes=false,resSeq=0,detKey='';
-function setVista(r){vistaRes=r;$('rs').hidden=!r;$('det').style.display=r?'none':'contents';$('kpis').hidden=r;$('agrl').hidden=r;
+function setVista(r){vistaRes=r;$('psel').hidden=!r;$('dsel').hidden=r;$('go').hidden=r;if(r)selDesdeFechas();$('rs').hidden=!r;$('det').style.display=r?'none':'contents';$('kpis').hidden=r;$('agrl').hidden=r;
  $('tdet').setAttribute('aria-pressed',!r);$('tres').setAttribute('aria-pressed',r);if(r)resumen(false);else if(detKey!==$('fi').value+'|'+$('ff').value)cargar(false)}
 function pintaResumen(R){const rs=$('rs');rs.className='rs';
  if(!R.disponible){rs.innerHTML='<div class="empty">El cruce con el SAT no está disponible; sin él no se puede armar el resumen.</div>';return}
@@ -243,14 +243,17 @@ function pintaResumen(R){const rs=$('rs');rs.className='rs';
       '<tr'+(z?' class="dz"':'')+'><td>Montos</td>'+n(f.sat.monto)+n(f.mpro.monto)+n(f.dif.monto)+'</tr>'});
   return h+'</tbody></table></div>'};
  let h=sec('Recibidos',R.recibidos)+'<div style="height:14px"></div>'+sec('Emitidos',R.emitidos);
- h+='</tbody></table></div><p class="sub">SAT: base Postgres <b>raw_sat_api</b>, CFDI vigentes (sin cancelados) del periodo por fecha del CFDI, uno por UUID; en pagos el monto es el de los pagos del complemento. Mpro: un documento por UUID; recibidos con su XML monto, emitidos de Comprobante_Digital con RFC emisor propio (sin cancelados). <b>n/d</b> = Mpro no tiene el dato (nómina se timbra en Nominpaq; el complemento de pago no guarda monto; retención del SAT sin permiso de lectura).</p>'+
-  '<div class="bar"><button class="btn" id="xr">Exportar diferencias a Excel</button><span class="st">'+R.diferencias.rows.length.toLocaleString('es-MX')+' documentos con diferencia de existencia o de importe</span></div>';
- rs.innerHTML=h;$('xr').onclick=()=>exportaResumen(R)}
-function exportaResumen(R){const m=R.meta||{},A=[['Empresa:','TRIVASA S.A. DE C.V.'],['Fecha inicial:',m.ini],['Fecha final:',m.fin],[],
+ h+='</tbody></table></div><p class="sub">SAT: base Postgres <b>raw_sat_api</b>, CFDI vigentes (sin cancelados) del periodo por fecha del CFDI, uno por UUID; en pagos el monto es el de los pagos del complemento. Mpro: Comprobante_Digital por fecha de timbre, un documento por UUID, sin cancelados; emitidos = RFC emisor propio, recibidos = el resto. <b>n/d</b> = Mpro no tiene el dato (nómina se timbra en Nominpaq; el complemento de pago no guarda monto; retención del SAT sin permiso de lectura).</p>'+
+  '<div class="bar"><button class="btn" id="xr">Exportar diferencias a Excel</button><span class="st" id="xs">La lista de documentos con diferencia se calcula al exportar (puede tardar ~1 min por mes).</span></div>';
+ rs.innerHTML=h;$('xr').onclick=async()=>{const b=$('xr'),t=$('xs');b.disabled=true;t.textContent='Calculando diferencias…';
+  try{const m=R.meta,r=await fetch('api/diferencias?ini='+m.ini+'&fin='+m.fin,{cache:'no-store'});if(!r.ok)throw new Error((await r.text())||r.status);
+   const Dif=await r.json();t.textContent=Dif.rows.length.toLocaleString('es-MX')+' documentos con diferencia de existencia o de importe';exportaResumen(R,Dif)}
+  catch(e){t.textContent='Error: '+e.message}finally{b.disabled=false}}}
+function exportaResumen(R,Dif){const m=R.meta||{},A=[['Empresa:','TRIVASA S.A. DE C.V.'],['Fecha inicial:',m.ini],['Fecha final:',m.fin],[],
   ];
  [['Recibidos',R.recibidos],['Emitidos',R.emitidos]].forEach(([t,F])=>{A.push([t,'','SAT','Mpro','Diferencia','Observación']);
   F.forEach(f=>{A.push([f.tipo,'Cantidad',f.sat.n,f.mpro.n,f.dif.n,f.nota]);A.push(['','Montos',f.sat.monto,f.mpro.monto,f.dif.monto,''])});A.push([])});
- const D=[R.diferencias.cols.slice()].concat(R.diferencias.rows),nom='resumen_conciliacion_'+m.ini+'_'+m.fin;
+ const D=[Dif.cols.slice()].concat(Dif.rows),nom='resumen_conciliacion_'+m.ini+'_'+m.fin;
  const L=window.__ETIQ||{};D[0]=D[0].map(k=>L[k]||k);
  if(!window.XLSX){alert('No se pudo cargar la librería de Excel.');return}
  const w1=XLSX.utils.aoa_to_sheet(A),w2=XLSX.utils.aoa_to_sheet(D);w1['!cols']=[{wch:14},{wch:10},{wch:16},{wch:16},{wch:16},{wch:70}];
@@ -262,7 +265,15 @@ async function resumen(refresh){
  if(!ini||!fin)return;rs.className='rs';rs.innerHTML='<div class="empty">Calculando resumen…</div>';
  try{const r=await fetch('api/resumen?ini='+ini+'&fin='+fin+(refresh?'&refresh=1':''),{cache:'no-store'});
   if(!r.ok)throw new Error((await r.text())||r.status);const R=await r.json();if(seq!==resSeq||!vistaRes)return;RES=R;pintaResumen(R)}
- catch(e){if(seq===resSeq)rs.innerHTML='<div class="empty">Error: '+esc(e.message)+(e.message=='Failed to fetch'?' (se perdió la conexión con el servidor; pulsa Consultar para reintentar, el primer cálculo de un periodo puede tardar ~1 min)':'')+'</div>'}}
+ catch(e){if(seq===resSeq)rs.innerHTML='<div class="empty">Error: '+esc(e.message)+(e.message=='Failed to fetch'?' (se perdió la conexión con el servidor; vuelve a elegir el periodo)':'')+'</div>'}}
+const MESES=['Todo el año','Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+(function(){const y=new Date().getFullYear();$('sy').innerHTML='';for(let a=y;a>=2022;a--)$('sy').add(new Option(a,a));$('sm').innerHTML='';MESES.forEach((m,i)=>$('sm').add(new Option(m,i)))})();
+function selDesdeFechas(){const f=$('fi').value,g=$('ff').value;if(!f)return;const a=f.slice(0,4),m=+f.slice(5,7),full=f.slice(5)=='01-01'&&g==a+'-12-31';
+ if(![...$('sy').options].some(o=>o.value==a))$('sy').add(new Option(a,a),0);$('sy').value=a;$('sm').value=full?0:m}
+function fechasDesdeSel(){const a=+$('sy').value,m=+$('sm').value,p=n=>String(n).padStart(2,'0');
+ if(m==0){$('fi').value=a+'-01-01';$('ff').value=a+'-12-31'}else{$('fi').value=a+'-'+p(m)+'-01';$('ff').value=a+'-'+p(m)+'-'+p(new Date(a,m,0).getDate())}
+ resumen(false)}
+$('sy').onchange=$('sm').onchange=fechasDesdeSel;
 $('tdet').onclick=()=>setVista(false);$('tres').onclick=()=>setVista(true);
 $('agr').onchange=()=>cargar(false);
 $('go').onclick=()=>vistaRes?resumen(false):cargar(false);$('rf').onclick=()=>vistaRes?resumen(true):cargar(true);

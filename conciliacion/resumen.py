@@ -1,13 +1,10 @@
-"""Vista resumen: cantidad y monto de CFDI por tipo, SAT (Postgres raw_sat_api) vs Mpro, más el detalle de diferencias."""
+"""Vista resumen: cantidad y monto de CFDI por tipo, SAT (Postgres raw_sat_api) vs Mpro, con agregados directos."""
 import os
 
 import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from .sat import TIPO_SOLO_SAT
-
-UUID_RE = r"[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}"
 TIPOS_REC = (
     ("Ingreso", "I", "Compras, gastos, indirectos y CxP"),
     ("Egreso", "E", "Notas de crédito de proveedor"),
@@ -29,11 +26,13 @@ WHERE k.uuid IS NULL
 GROUP BY c.tipo, c.tipo_comprobante
 """
 RFC_PROPIO = os.environ.get("RFC_PROPIO", "TRI970922TL2")
-# CFDI emitidos registrados en Mpro (Comprobante_Digital, RFC emisor propio); se excluyen los UUID con todos sus documentos cancelados (CA).
-SQL_MPRO_EMITIDOS = """
+# CFDI registrados en Mpro (Comprobante_Digital) por fecha de timbre, igual que el SAT; {sentido} separa emitidos (emisor propio) de recibidos.
+# Se excluyen los UUID con todos sus documentos cancelados (CA).
+SQL_MPRO = """
 SELECT upper(Cd_Timbre_UUID) AS uuid, max(Cd_Tipo_CFDI) AS tipo, max(Cd_Tabla) AS tabla, max(Cd_Monto) AS monto
 FROM Comprobante_Digital
-WHERE Cd_Timbre_Fecha >= :fi AND Cd_Timbre_Fecha < :ff AND Cd_RFC_Emisor = :rfc AND Cd_Timbre_UUID IS NOT NULL AND Cd_Timbre_UUID <> ''
+WHERE Cd_Timbre_Fecha >= :fi AND Cd_Timbre_Fecha < :ff AND coalesce(Cd_RFC_Emisor, '') {sentido} :rfc
+  AND Cd_Timbre_UUID IS NOT NULL AND Cd_Timbre_UUID <> ''
 GROUP BY upper(Cd_Timbre_UUID)
 HAVING sum(CASE WHEN Es_Cve_Estado = 'CA' THEN 0 ELSE 1 END) > 0
 """
@@ -45,23 +44,8 @@ DIFERENCIAS = ("Tipo", "FOLIO", "UUID", "NOMBRE_PROVEEDOR", "XML_MONTO", "SAT_UU
                "CONC_EXISTE_MPRO", "CONC_EXISTE_SAT", "CONC_EXISTENCIA", "CONC_IMPORTES")
 
 
-def _uuid(s: pd.Series) -> pd.Series:
-    return s.astype("string").str.strip().str.upper().where(lambda x: x.str.fullmatch(UUID_RE, na=False))
-
-
 def _cifras(n: int, monto) -> dict:
     return {"n": int(n), "monto": None if monto is None else round(float(monto), 2)}
-
-
-def _mpro(d: pd.DataFrame) -> dict[str, dict]:
-    """Documentos de Mpro con UUID (uno por UUID): NC proveedor = Egreso, el resto = Ingreso; Pago por complemento."""
-    m = d[d.Tipo != TIPO_SOLO_SAT].assign(_u=lambda x: _uuid(x.UUID) if "UUID" in x else pd.NA).dropna(subset=["_u"]).drop_duplicates("_u")
-    m = m.assign(_t=m.Tipo.map(lambda t: "Egreso" if t == "NC proveedor" else "Ingreso"),
-                 _m=pd.to_numeric(m.XML_MONTO, errors="coerce").fillna(0) if "XML_MONTO" in m else 0.0)
-    out = {t: _cifras(g.shape[0], g._m.sum()) for t, g in m.groupby("_t")}
-    comp = _uuid(d.COMPLEMENTO_PAGO).dropna().unique() if "COMPLEMENTO_PAGO" in d else []
-    out["Pago"] = _cifras(len(comp), None)
-    return out
 
 
 def consultar_sat(engine: Engine, fi: str, ff: str) -> pd.DataFrame:
@@ -69,10 +53,10 @@ def consultar_sat(engine: Engine, fi: str, ff: str) -> pd.DataFrame:
         return pd.read_sql(text(SQL_SAT), con, params={"fi": fi, "ff": ff})
 
 
-def consultar_mpro_emitidos(engine: Engine, fi: str, ff: str) -> dict[str, dict]:
-    """Emitidos de Mpro por tipo de CFDI (un documento por UUID). Constancias de retención y Gasto_Registro 'RETENCIONES' = Retención."""
+def consultar_mpro(engine: Engine, fi: str, ff: str, emitidos: bool) -> dict[str, dict]:
+    """Cifras de Mpro por tipo de CFDI (un documento por UUID). Constancias de retención y Gasto_Registro 'RETENCIONES' = Retención."""
     with engine.connect() as con:
-        e = pd.read_sql(text(SQL_MPRO_EMITIDOS), con, params={"fi": fi, "ff": ff, "rfc": RFC_PROPIO})
+        e = pd.read_sql(text(SQL_MPRO.format(sentido="=" if emitidos else "<>")), con, params={"fi": fi, "ff": ff, "rfc": RFC_PROPIO})
     letra = {"I": "Ingreso", "E": "Egreso", "T": "Traslado", "P": "Pago", "N": "Nómina"}
     e["t"] = [("Retención" if (a == "CONSTANCIA_RETENCION" or (t or "").strip().upper() == "RETENCIONES") else letra.get((t or "").strip().upper()))
               for t, a in zip(e.tipo, e.tabla)]
@@ -118,14 +102,21 @@ def _seccion(tipos, sat: dict, mpro: dict | None) -> list[dict]:
     return filas
 
 
-def resumir(d: pd.DataFrame, sat: pd.DataFrame | None, emitidos: dict | None = None, ret: pd.DataFrame | None = None) -> dict:
-    """Recibidos y emitidos (SAT de raw_sat_api vs Mpro) más la lista de diferencias del cruce por UUID."""
-    if sat is None or "SAT_UUID" not in d:
+def resumir(sat: pd.DataFrame | None, recibidos: dict, emitidos: dict, ret: pd.DataFrame | None = None) -> dict:
+    """Recibidos y emitidos: SAT (raw_sat_api) vs Mpro, por tipo de CFDI."""
+    if sat is None:
         return {"disponible": False}
-    recibidos = _seccion(TIPOS_REC, {**_sat(sat, "RECIBIDO"), **_ret(ret, "RECIBIDO")}, _mpro(d))
-    emitidos = _seccion(TIPOS_EMI, {**_sat(sat, "EMITIDO"), **_ret(ret, "EMITIDO")}, emitidos)
+    return {"disponible": True,
+            "recibidos": _seccion(TIPOS_REC, {**_sat(sat, "RECIBIDO"), **_ret(ret, "RECIBIDO")}, recibidos),
+            "emitidos": _seccion(TIPOS_EMI, {**_sat(sat, "EMITIDO"), **_ret(ret, "EMITIDO")}, emitidos)}
+
+
+def diferencias(d: pd.DataFrame) -> dict:
+    """Documentos con diferencia de existencia o de importe en el cruce por UUID con el SAT."""
+    if "SAT_UUID" not in d:
+        return {"cols": [], "rows": []}
     malo = d[(d.CONC_EXISTENCIA == "No") | (d.CONC_IMPORTES == "No")]
     cols = [c for c in DIFERENCIAS if c in d]
     malo = malo.sort_values(["Tipo", "FOLIO"], kind="stable")[cols]
     rows = [[None if pd.isna(v) else (v.item() if hasattr(v, "item") else v) for v in r] for r in malo.itertuples(index=False)]
-    return {"disponible": True, "recibidos": recibidos, "emitidos": emitidos, "diferencias": {"cols": cols, "rows": rows}}
+    return {"cols": cols, "rows": rows}
