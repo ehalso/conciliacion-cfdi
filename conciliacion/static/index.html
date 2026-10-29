@@ -243,7 +243,7 @@ function pintaResumen(R){const rs=$('rs');rs.className='rs';
       '<tr'+(z?' class="dz"':'')+'><td>Montos</td>'+n(f.sat.monto)+n(f.mpro.monto)+n(f.dif.monto)+'</tr>'});
   return h+'</tbody></table></div>'};
  let h=sec('Recibidos',R.recibidos)+'<div style="height:14px"></div>'+sec('Emitidos',R.emitidos);
- h+='</tbody></table></div><p class="sub">SAT: base Postgres <b>raw_sat_api</b>, CFDI vigentes (sin cancelados) del periodo por fecha del CFDI, uno por UUID; en pagos el monto es el de los pagos del complemento. Mpro: un documento por UUID con su XML monto, en recibidos. <b>n/d</b> = Mpro no tiene el dato (emitidos y nómina no se registran en este reporte; el complemento de pago no guarda monto).</p>'+
+ h+='</tbody></table></div><p class="sub">SAT: base Postgres <b>raw_sat_api</b>, CFDI vigentes (sin cancelados) del periodo por fecha del CFDI, uno por UUID; en pagos el monto es el de los pagos del complemento. Mpro: un documento por UUID; recibidos con su XML monto, emitidos de Comprobante_Digital con RFC emisor propio (sin cancelados). <b>n/d</b> = Mpro no tiene el dato (nómina se timbra en Nominpaq; el complemento de pago no guarda monto; retención del SAT sin permiso de lectura).</p>'+
   '<div class="bar"><button class="btn" id="xr">Exportar diferencias a Excel</button><span class="st">'+R.diferencias.rows.length.toLocaleString('es-MX')+' documentos con diferencia de existencia o de importe</span></div>';
  rs.innerHTML=h;$('xr').onclick=()=>exportaResumen(R)}
 function exportaResumen(R){const m=R.meta||{},A=[['Empresa:','TRIVASA S.A. DE C.V.'],['Fecha inicial:',m.ini],['Fecha final:',m.fin],[],

@@ -14,7 +14,7 @@ from sqlalchemy.engine import Engine
 
 from .config import Mpro, Servidor
 from .reporte import construir
-from .resumen import consultar_sat, resumir
+from .resumen import consultar_mpro_emitidos, consultar_retenciones, consultar_sat, resumir
 from .vista import VISTAS, a_datos
 
 MAX_DIAS = 366
@@ -49,7 +49,9 @@ class Cache:
             c, vigente = self._entrada(ini, fin, refrescar)
             if "resumen" not in c:
                 ff = (dt.date.fromisoformat(fin) + dt.timedelta(days=1)).isoformat()
-                c["resumen"] = resumir(c["d"], consultar_sat(self.engine_sat, ini, ff) if self.engine_sat is not None else None)
+                sat = self.engine_sat
+                c["resumen"] = resumir(c["d"], consultar_sat(sat, ini, ff) if sat is not None else None, consultar_mpro_emitidos(self.engine, ini, ff),
+                                       consultar_retenciones(sat, ini, ff) if sat is not None else None)
             return {**c["resumen"], "meta": {"fuente": self.etiqueta, "ini": ini, "fin": fin, "generado": c["generado"], "cache": vigente}}
 
     def reporte(self, ini: str, fin: str, vista: str, agrupar: bool, refrescar: bool) -> tuple[bytes, bool]:

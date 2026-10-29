@@ -53,6 +53,17 @@ class Resumen(unittest.TestCase):
         self.assertEqual(resumir(self.d.drop(columns="SAT_UUID"), self.sat), {"disponible": False})
         self.assertEqual(resumir(self.d, None), {"disponible": False})
 
+    def test_emitidos_con_mpro_y_retencion(self):
+        emi = {"Ingreso": {"n": 5, "monto": 90.0}, "Pago": {"n": 2, "monto": None}}
+        ret = pd.DataFrame({"tipo": ["EMITIDO"], "n": [3], "monto": [30.0]})
+        e = {f["tipo"]: f for f in resumir(self.d, self.sat, emi, ret)["emitidos"]}
+        self.assertEqual(e["Retención"]["sat"], {"n": 3, "monto": 30.0})
+        self.assertEqual(e["Retención"]["mpro"], {"n": 0, "monto": 0})
+        self.assertEqual(e["Pago"]["dif"]["monto"], None)
+        self.assertIsNone(e["Nómina"]["mpro"]["n"])
+        sin = {f["tipo"]: f for f in resumir(self.d, self.sat, emi, None)["emitidos"]}["Retención"]
+        self.assertEqual((sin["sat"]["n"], sin["dif"]["n"]), (None, None))
+
 
 if __name__ == "__main__":
     unittest.main()
