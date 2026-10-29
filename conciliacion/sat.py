@@ -92,10 +92,11 @@ def agregar_sat(d: pd.DataFrame, engine: Engine) -> pd.DataFrame:
 def _conciliar_importes(out: pd.DataFrame, evaluable: pd.Series) -> tuple[pd.Series, pd.Series]:
     """Diferencia y Sí/No por UUID: |Σ TOTAL de los folios| vs el importe del SAT (cuerpo + complemento de combustible).
 
-    Las filas CxP se excluyen de la suma porque repiten el dinero de los folios de gasto/compra con el mismo UUID.
+    Las filas "CxP libre" se excluyen de la suma porque repiten el dinero de los folios de gasto con el mismo UUID;
+    "CxP orden compra" sí suma: es un documento propio (con o sin Compra que cubra el resto del CFDI).
     El resultado se repite en cada línea del UUID.
     """
-    es_cxp = out.Tipo.astype("string").str.startswith("CxP", na=False)
+    es_cxp = out.Tipo.astype("string").eq("CxP libre").fillna(False)
     base = out.assign(_t=pd.to_numeric(out.TOTAL, errors="coerce").where(~es_cxp, 0).fillna(0), _f=(~es_cxp).astype(int))
     g = base[evaluable].groupby("SAT_UUID")
     suma = g._t.sum().abs()

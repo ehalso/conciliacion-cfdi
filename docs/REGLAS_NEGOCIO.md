@@ -45,7 +45,7 @@ Reglas (las del reporte 05 original, `rptrv79_05_cxp_libre*`):
 Se evalúa por UUID, no por línea, y el resultado (Sí/No) y `DIF_IMPORTE_UUID` se repiten en todas las líneas del UUID.
 
 - Se compara |Σ `TOTAL` de los folios con ese UUID| contra el importe del SAT = `SAT_IMPORTE` (total del cuerpo) + `SAT_IMPORTE_COMPLEMENTO`.
-- Se excluyen las filas Tipo "CxP libre" / "CxP orden compra": llevan el mismo UUID y repiten el dinero de los folios de gasto/compra (se duplicaría).
+- Se excluyen las filas Tipo "CxP libre": llevan el mismo UUID y repiten el dinero de los folios de gasto (se duplicaría). "CxP orden compra" sí suma: no es copia, es un documento propio (sept 2026: una Compra de $589.99 + su CxP orden compra de $34,350.00 = CFDI de $34,940.00).
 - Valor absoluto de la suma: las NC proveedor llevan signo negativo y el SAT positivo.
 - Tolerancia: 0.05 + 0.01 por cada folio adicional del UUID (redondeo acumulado).
 - `SAT_IMPORTE_COMPLEMENTO`: atributo `Total` del complemento `ecc12:EstadoDeCuentaCombustible` (consumo real de la factura consolidada de Control Integral de Combustibles). En Mpro el UUID agrupa los folios de consumo más el folio de comisión (cuerpo del CFDI), por eso se compara contra cuerpo + complemento.
