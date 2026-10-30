@@ -54,12 +54,23 @@ TIPOS = [
 ]
 
 
+_SIN_INTERFAZ_GASOMATIC = "AND NOT EXISTS (SELECT 1 FROM Zfb_Interface_Gasomatic g WHERE g.Cxp_Folio = c.Cxp_Folio)"
+
+
+def _filtro_doc(t: TipoDocumento) -> str:
+    if not t.es_cxp:
+        return ""
+    f = f"AND c.Cxp_Tabla='{t.cxp_tabla}'"
+    # CxP libres que genera la interfaz Gasomatic: duplican al gasto de control_combustible
+    return f + " " + _SIN_INTERFAZ_GASOMATIC if t.cxp_tabla == "Cuenta_X_Pagar" else f
+
+
 def _plantillas(t: TipoDocumento) -> dict:
     return dict(
         p=t.p, tabla=t.tabla, imp=t.impuesto, origen=t.origen_xml, pc=t.origen_xml, neto=t.neto, cxp=t.cxp,
         imp_join=(_IMP_JOIN_CXP if t.es_cxp else _IMP_JOIN_ESTANDAR).format(p=t.p),
         imp_col="Cxpi_Importe" if t.es_cxp else "Im_Importe",
-        filtro_doc=f"AND c.Cxp_Tabla='{t.cxp_tabla}'" if t.es_cxp else "",
+        filtro_doc=_filtro_doc(t),
         pol_ref=_POL_REF_CXP if t.es_cxp else "pd.Pd_Referencia=d.FOLIO",
         excl_pol=",'2130'" if t.es_cxp else "",
         filtro05="AND ISNULL(cc.cc_titulo,'')<>'05'" if t.c05 else "",

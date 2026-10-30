@@ -9,6 +9,7 @@ from sqlalchemy.engine import Engine
 log = logging.getLogger(__name__)
 
 TOLERANCIA = 0.05
+TOLERANCIA_FOLIO = 0.01  # redondeo acumulado por cada folio adicional del mismo UUID
 LOTE = 5000
 TIPOS_CFDI = {"I": "Ingreso", "E": "Egreso", "P": "Pago", "T": "Traslado", "N": "Nómina"}
 SI, NO = "Sí", "No"
@@ -19,7 +20,8 @@ SQL_CFDI = """
 SELECT upper(c.uuid) AS uuid, c.serie, c.folio, c.tipo_comprobante, c.fecha, c.rfc_emisor, c.nombre_emisor, c.total,
        (k.uuid IS NOT NULL) AS cancelado,
        substring(c.xml::text from 'Concepto[^>]*?Descripcion="([^"]*)"') AS concepto,
-       substring(c.xml::text from 'UsoCFDI="([^"]*)"') AS uso_cfdi
+       substring(c.xml::text from 'UsoCFDI="([^"]*)"') AS uso_cfdi,
+       substring(c.xml::text from '<ecc12:EstadoDeCuentaCombustible[^>]*? Total="([0-9.]+)"') AS complemento
 FROM raw_sat_api.cfdi c
 LEFT JOIN (SELECT DISTINCT upper(uuid) AS uuid FROM raw_sat_api.cancelados WHERE estatus = '0') k ON k.uuid = upper(c.uuid)
 WHERE (c.tipo = 'RECIBIDO' OR (c.tipo = 'EMITIDO' AND c.rfc_emisor = c.rfc_receptor)) AND upper(c.uuid) = ANY(:uuids)
@@ -62,6 +64,7 @@ def _formatear(d: pd.DataFrame) -> pd.DataFrame:
         "SAT_RFC": d.rfc_emisor,
         "SAT_PROVEEDOR": d.nombre_emisor,
         "SAT_IMPORTE": pd.to_numeric(d.total, errors="coerce"),
+        "SAT_IMPORTE_COMPLEMENTO": pd.to_numeric(d.complemento, errors="coerce"),
     })
 
 
@@ -78,13 +81,33 @@ def agregar_sat(d: pd.DataFrame, engine: Engine) -> pd.DataFrame:
 
     en_mpro = uuid.notna()
     en_sat = out.SAT_UUID.notna()
-    dif = (pd.to_numeric(out.XML_MONTO, errors="coerce") - out.SAT_IMPORTE).abs()
     out["CONC_EXISTE_MPRO"] = _si_no(en_mpro)
     out["CONC_EXISTE_SAT"] = _si_no(en_sat, en_mpro)
     out["CONC_EXISTENCIA"] = _si_no(en_mpro == en_sat, en_mpro)
-    out["CONC_IMPORTES"] = _si_no(dif <= TOLERANCIA, en_mpro & en_sat & dif.notna())
+    out["DIF_IMPORTE_UUID"], out["CONC_IMPORTES"] = _conciliar_importes(out, en_mpro & en_sat)
     out["SAT_NO_LOCALIZADOS"] = None
     return out
+
+
+def _conciliar_importes(out: pd.DataFrame, evaluable: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """Diferencia y Sí/No por UUID: |Σ TOTAL de los folios| vs el importe del SAT (cuerpo + complemento de combustible).
+
+    Las filas "CxP libre" se excluyen de la suma porque repiten el dinero de los folios de gasto con el mismo UUID;
+    "CxP orden compra" sí suma: es un documento propio (con o sin Compra que cubra el resto del CFDI).
+    El resultado se repite en cada línea del UUID.
+    """
+    es_cxp = out.Tipo.astype("string").eq("CxP libre").fillna(False)
+    base = out.assign(_t=pd.to_numeric(out.TOTAL, errors="coerce").where(~es_cxp, 0).fillna(0), _f=(~es_cxp).astype(int))
+    g = base[evaluable].groupby("SAT_UUID")
+    suma = g._t.sum().abs()
+    n = g._f.sum()
+    esperado = out.drop_duplicates("SAT_UUID").set_index("SAT_UUID")
+    esperado = esperado.SAT_IMPORTE + esperado.SAT_IMPORTE_COMPLEMENTO.fillna(0)
+    dif = (suma - esperado.reindex(suma.index)).round(2)
+    tol = TOLERANCIA + TOLERANCIA_FOLIO * (n - 1).clip(lower=0)
+    dif_fila = out.SAT_UUID.map(dif).where(evaluable)
+    ok = (dif.abs() <= tol).reindex(out.SAT_UUID).set_axis(out.index)
+    return dif_fila, _si_no(ok.astype(bool), evaluable & dif_fila.notna())
 
 
 def _si_no(cond: pd.Series, donde: pd.Series | None = None) -> pd.Series:

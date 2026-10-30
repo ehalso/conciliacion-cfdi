@@ -28,6 +28,7 @@ Ambas son registros de `Cuenta_X_Pagar` que **no** nacen de un documento Compra,
 
 Reglas (las del reporte 05 original, `rptrv79_05_cxp_libre*`):
 - Fecha: `Cxp_Fecha`; se excluyen canceladas (`Es_Cve_Estado='CA'`) y se filtra por empresa de la sucursal.
+- **Excepción: CxP generadas por la interfaz Gasomatic.** El módulo personalizado `Zfb_Interface_Gasomatic` (columna `Cxp_Folio`) crea como CxP libre el consumo y la comisión de cada factura de combustible; esos importes ya están en los gastos `control_combustible`, por lo que la CxP duplicaría el dinero. Se excluyen en el origen (`documentos._filtro_doc`, `AND NOT EXISTS (… Zfb_Interface_Gasomatic g WHERE g.Cxp_Folio = c.Cxp_Folio)`) y no llegan a ninguna vista. Solo aplica a `CxP libre`, no a `CxP orden compra`. Ene–sep 2026: 792 → 499 CxP libres (293 excluidas); sep-2026: 56 → 25.
 - **No se excluye ningún concepto ni proveedor**, para que el layout totalice igual que el reporte nativo RPCXP08 (filtrado por `Cxp_Tabla`). El reporte 05 original sí excluía los conceptos `0023` (carga de glosa FONACOT), `0019` (depósitos en garantía), `0016` (primas de seguro y fianzas), `0017` (placas, tenencias y otros) y el proveedor `0000000021` (Control Integral de Combustibles) por no ser compras; ese criterio queda para la etapa de criterios de conciliación (ver `MEJORAS_FUTURAS.md`).
 - Una fila por `Cxp_Folio` (único; los folios empiezan en `01-` o `05-`). Subtotal neto = `Cxp_Precio_Descontado_Importe × tipo de cambio`; total = `Cxp_Precio_Neto_Importe × tipo de cambio`; impuestos desde `Cuenta_X_Pagar_Impuesto` (`Cxpi_Importe`, por clave `Im_Cve_Impuesto`). Subtotal + impuestos = total en el 100 % de los documentos (ene–ago 2026).
 - XML desde `Comprobante_Digital` (`Cd_Tabla='Cuenta_X_Pagar'`); pago desde `Pago_CXP` de la propia CxP.
@@ -39,3 +40,15 @@ Reglas (las del reporte 05 original, `rptrv79_05_cxp_libre*`):
 - Un documento con póliza en `Poliza_Control` cuyas líneas quedan todas filtradas (importe 0, cuentas memo/impuesto/proveedor) se muestra con la póliza y cargo 0 (`DOC_POLIZA_SIN_LINEAS_SQL`).
 - Método de pago del XML: `Cd_Metdo_Pago_CFDI` y, si está vacío, `Cd_Metodo_Pago`.
 - No se rellenan campos de una fuente con otra (registro Mpro, XML de Mpro, BD SAT). Detalle y pendientes en `REVISION_OBSERVACIONES.md`.
+
+## Conciliación de importes por UUID (`CONC_IMPORTES`)
+
+Se evalúa por UUID, no por línea, y el resultado (Sí/No) y `DIF_IMPORTE_UUID` se repiten en todas las líneas del UUID.
+
+- Se compara |Σ `TOTAL` de los folios con ese UUID| contra el importe del SAT = `SAT_IMPORTE` (total del cuerpo) + `SAT_IMPORTE_COMPLEMENTO`.
+- Se excluyen las filas Tipo "CxP libre": llevan el mismo UUID y repiten el dinero de los folios de gasto (se duplicaría). "CxP orden compra" sí suma: no es copia, es un documento propio (sept 2026: una Compra de $589.99 + su CxP orden compra de $34,350.00 = CFDI de $34,940.00).
+- Valor absoluto de la suma: las NC proveedor llevan signo negativo y el SAT positivo.
+- Tolerancia: 0.05 + 0.01 por cada folio adicional del UUID (redondeo acumulado).
+- `SAT_IMPORTE_COMPLEMENTO`: atributo `Total` del complemento `ecc12:EstadoDeCuentaCombustible` (consumo real de la factura consolidada de Control Integral de Combustibles). En Mpro el UUID agrupa los folios de consumo más el folio de comisión (cuerpo del CFDI), por eso se compara contra cuerpo + complemento.
+- El KPI "% Conciliación" suma por UUID cuerpo + complemento.
+- Sept 2026: 1,586 de 1,698 UUID cuadran (93.4 %); combustible 25/28 (los 3 restantes no tienen el folio de comisión en el mes).

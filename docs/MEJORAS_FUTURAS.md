@@ -38,3 +38,14 @@ Comparar, por documento, `SUBTOTAL_NETO` contra el cargo contable neto de la pó
 ## Observaciones sep-2026 y auditoría de fuentes
 
 Ver `REVISION_OBSERVACIONES.md` (documentación provisional de la rama; se pasa a `trivasa-context` cuando termine la revisión de todas las correcciones). Incluye 8 hallazgos de auditoría de fuentes aún no solicitados y la decisión pendiente de mostrar Uso CFDI, Método y Forma de pago en el bloque SAT.
+
+## Pendiente: posible reversión de `CONC_IMPORTES` (commit "Solo CxP libre se excluye…")
+
+Ese commit hace que "CxP orden compra" sume en la conciliación por UUID (antes se excluía junto con "CxP libre"). Está en análisis: si resulta que CxP orden compra repite el mismo documento de una Compra/Gasto con importes iguales, habrá que revertirlo (`git revert`) y volver a excluir todo "CxP*". Caso de sept 2026 que lo motivó: UUID `3288907B…` (Compra $589.99 + CxP orden compra $34,350.00 = CFDI $34,940.00).
+
+## Pendiente: CxP libres tras excluir la interfaz Gasomatic
+
+- Medir CxP libres excluidas cuyo gasto está cancelado (12 renglones de interfaz ene–sep 2026 apuntan a un `Gasto_Registro` en estado `CA`): la CxP sigue activa y hoy no se ve en el reporte.
+- Quedan CxP libres con contraparte de gasto fuera de Gasomatic (p. ej. rentas extraordinarias proveedor 0000006407, arrendamiento 0000006354/5, 0000002992); resolver con criterio propio en la vista filtrada.
+- 25 CxP libres de sep-2026 sin contraparte (GPS, seguro, Fonacot, etc.) y las exclusiones históricas (concepto 0023, proveedor 0000000021): decidir su tratamiento en la vista filtrada.
+- Verificar cuántas CxP libres no tienen renglón en la interfaz pero sí referencia J8 de combustible (102 renglones de interfaz sin `Cxp_Folio`).
