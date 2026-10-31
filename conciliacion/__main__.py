@@ -12,7 +12,7 @@ def main() -> None:
     if BACKEND == "postgres":
         if not sat:
             raise RuntimeError("CONC_BACKEND=postgres requiere SAT_PG_USER/SAT_PG_PASSWORD (o POSTGRES_DW_RO_*).")
-        fuente, engine = SimpleNamespace(etiqueta=f"Postgres {sat.base} (raw)"), crear_engine_dw(sat)
+        fuente, engine = SimpleNamespace(etiqueta="Postgres (espejo de TRIVASADB · .207)"), crear_engine_dw(sat)
     else:
         fuente = mpro_desde_entorno()
         engine = crear_engine(fuente)

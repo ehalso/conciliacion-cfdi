@@ -72,7 +72,7 @@ tr.r:hover td{background:var(--hl)}
 <div class="top"><div class="l"><span class="burger"><i></i></span>Trivasa</div><div class="u">ESTEBAN HERNAN ALCOCER SOUZA</div></div>
 <div class="wrap"><div class="card">
 <header>
- <div><h1>Reporte de Auditoria</h1><div style="margin-top:10px;display:flex;gap:40px;flex-wrap:wrap"><div><b>Empresa:</b> TRIVASA S.A. DE C.V.<br><b>Origen:</b> TODOS</div><div><b>Fuente:</b> .207 · TRIVASADB (producción)</div></div>
+ <div><h1>Reporte de Auditoria</h1><div style="margin-top:10px;display:flex;gap:40px;flex-wrap:wrap"><div><b>Empresa:</b> TRIVASA S.A. DE C.V.<br><b>Origen:</b> TODOS</div><div><b>Fuente:</b> <span id="fte">.207 · TRIVASADB (producción)</span></div></div>
  <div class="sub" id="sub" style="margin-top:10px"></div></div>
  <div class="kpis" id="kpis"></div>
 </header>
@@ -218,6 +218,7 @@ async function cargar(){
   const t1=performance.now(),D=await r.json(),t2=performance.now();
   init(D);const t3=performance.now(),m=D.meta||{};
   st.className='st';
+  if(m.fuente)$('fte').textContent=m.fuente;
   st.textContent=(m.cache?'Desde caché del servidor':'Consulta a '+m.fuente)+' · generado '+m.generado+(m.cache?'':' ('+m.seg_consulta+' s de consulta)')+' · descarga '+((t1-t0)/1000).toFixed(2)+' s · render '+((t3-t2)/1000).toFixed(2)+' s';
   window.__tiempos={fetch_ms:Math.round(t1-t0),parse_ms:Math.round(t2-t1),render_ms:Math.round(t3-t2),total_ms:Math.round(t3-t0),cache:!!m.cache,filas:D.rows.length};
  }catch(e){st.className='st err';st.textContent='Error: '+e.message}
