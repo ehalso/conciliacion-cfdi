@@ -70,6 +70,8 @@ def _plantillas(t: TipoDocumento) -> dict:
         p=t.p, tabla=t.tabla, imp=t.impuesto, origen=t.origen_xml.upper(), pc=t.origen_xml.upper(), neto=t.neto, cxp=t.cxp,
         imp_join=(_IMP_JOIN_CXP if t.es_cxp else _IMP_JOIN_ESTANDAR).format(p=t.p),
         imp_col="Cxpi_Importe" if t.es_cxp else "Im_Importe",
+        imp_cols_k="i.Cxp_Folio" if t.es_cxp else f"i.{t.p}_Folio, i.{t.p}_ID",
+        imp_on_k="k.Cxp_Folio=c.Cxp_Folio" if t.es_cxp else f"k.{t.p}_Folio=c.{t.p}_Folio AND k.{t.p}_ID=c.{t.p}_ID",
         filtro_doc=_filtro_doc(t),
         pol_ref=_POL_REF_CXP if t.es_cxp else "pd.Pd_Referencia=d.FOLIO",
         excl_pol=",'2130'" if t.es_cxp else "",

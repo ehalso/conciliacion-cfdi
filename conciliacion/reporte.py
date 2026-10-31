@@ -18,11 +18,13 @@ def construir(engine: Engine, fi: str, ff: str, engine_sat: Engine | None = None
     """
     p = parametros(fi, ff)
     with engine.connect() as con:
-        with tablas_temporales(con, sql.GASTO_DOCS_SETUP, p, *sql.TEMPORALES):
-            gasto = construir_gasto(con, p)
-        gasto["Tipo"] = "Gasto"
-        proveedores = consultar_proveedores(con)
-        partes = [gasto] + [construir_tipo(con, t, p, proveedores) for t in TIPOS]
+        # Postgres: las tablas grandes se leen una sola vez (TEMP de precarga); en mssql no hay precarga
+        with tablas_temporales(con, getattr(sql, "PRECARGA_SETUP", ""), p, *getattr(sql, "PRECARGA_TEMPORALES", ())):
+            with tablas_temporales(con, sql.GASTO_DOCS_SETUP, p, *sql.TEMPORALES):
+                gasto = construir_gasto(con, p)
+            gasto["Tipo"] = "Gasto"
+            proveedores = consultar_proveedores(con)
+            partes = [gasto] + [construir_tipo(con, t, p, proveedores) for t in TIPOS]
     d = post(pd.concat(partes, ignore_index=True, sort=False))
     d = agregar_complemento(d, engine)
     if engine_sat is None:

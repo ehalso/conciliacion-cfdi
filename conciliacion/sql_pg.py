@@ -7,6 +7,52 @@ Las plantillas con {llaves} se completan con str.format (solo identificadores in
 """
 
 # ----------------------------------------------------------------------------------------------
+# Precarga (una vez por reporte). Las tablas grandes de raw no tienen índices (solo _dlt_id), así que cada
+# consulta que las toca es un seq scan: Poliza_Control (6.4 M filas, 922 MB), Poliza_Detalle (3.9 M),
+# Comprobante_Digital (0.9 M). Se leen UNA sola vez, ya filtradas al universo del periodo, y todas las demás
+# consultas (gasto, compras, indirectos, NC, CxP) leen estas TEMP pequeñas. Son TEMP de la sesión (no objetos en la base).
+# folios_all es un superconjunto (folios de cualquier tipo en el periodo): las consultas vuelven a unir con `docs`.
+# Los folios de documento miden siempre 10 caracteres y Cd_Documento = folio (+ sufijo), de modo que
+# LEFT(Cd_Documento,10)=FOLIO equivale al LIKE FOLIO||'%' original y permite un hash join.
+# ----------------------------------------------------------------------------------------------
+PRECARGA_SETUP = """
+CREATE TEMP TABLE folios_all AS
+SELECT gr.Gr_Folio AS FOLIO FROM Gasto_Registro gr JOIN Sucursal s ON gr.Sc_Cve_Sucursal=s.Sc_Cve_Sucursal
+ WHERE gr.Gr_Fecha>=:fi AND gr.Gr_Fecha<:ff AND gr.Es_Cve_Estado<>'CA' AND s.Em_Cve_Empresa=:emp
+UNION SELECT c.Co_Folio FROM Compra c JOIN Sucursal s ON s.Sc_Cve_Sucursal=c.Sc_Cve_Sucursal
+ WHERE c.Es_Cve_Estado<>'CA' AND c.Co_Fecha>=:fi AND c.Co_Fecha<:ff AND s.Em_Cve_Empresa=:emp
+UNION SELECT c.Ci_Folio FROM Compra_Indirecto c JOIN Sucursal s ON s.Sc_Cve_Sucursal=c.Sc_Cve_Sucursal
+ WHERE c.Es_Cve_Estado<>'CA' AND c.Ci_Fecha>=:fi AND c.Ci_Fecha<:ff AND s.Em_Cve_Empresa=:emp
+UNION SELECT c.Nc_Folio FROM Nota_Credito_Proveedor c JOIN Sucursal s ON s.Sc_Cve_Sucursal=c.Sc_Cve_Sucursal
+ WHERE c.Es_Cve_Estado<>'CA' AND c.Nc_Fecha>=:fi AND c.Nc_Fecha<:ff AND s.Em_Cve_Empresa=:emp
+UNION SELECT c.Cxp_Folio FROM Cuenta_X_Pagar c JOIN Sucursal s ON s.Sc_Cve_Sucursal=c.Sc_Cve_Sucursal
+ WHERE c.Es_Cve_Estado<>'CA' AND c.Cxp_Fecha>=:fi AND c.Cxp_Fecha<:ff AND s.Em_Cve_Empresa=:emp;
+CREATE TEMP TABLE plc_p AS
+SELECT plc.Pc_Tabla, plc.Pc_Documento, plc.Pl_Folio FROM Poliza_Control plc
+WHERE plc.Es_Cve_Estado<>'CA'
+  AND plc.Pc_Tabla IN ('GASTO_REGISTRO','COMPRA','COMPRA_INDIRECTO','NOTA_CREDITO_PROVEEDOR','CUENTA_X_PAGAR')
+  AND plc.Pc_Documento IN (SELECT FOLIO FROM folios_all);
+CREATE TEMP TABLE pl_p AS
+SELECT pl.Pl_Folio, pl.Pl_Fecha, pl.Pl_Tipo, pl.Pl_Numero, pl.Pl_Comentario, pl.Pl_Configuracion FROM Poliza pl
+WHERE pl.Es_Cve_Estado<>'CA'
+  AND (pl.Pl_Folio IN (SELECT Pl_Folio FROM plc_p)
+       OR (pl.Pl_Configuracion IN ('0295','0414') AND pl.Pl_Fecha>=:fi AND pl.Pl_Fecha<:ff));
+CREATE TEMP TABLE pd_p AS
+SELECT pd.Pl_Folio, pd.Pd_ID, pd.Pd_Referencia, pd.Cc_Cve_Cuenta_Contable, pd.Pd_Centro_Costo, pd.Pd_Tipo, pd.Pd_Importe
+FROM Poliza_Detalle pd WHERE pd.Pl_Folio IN (SELECT Pl_Folio FROM pl_p);
+CREATE TEMP TABLE cd_p AS
+SELECT cd.Cd_Tabla, LEFT(cd.Cd_Documento,10) AS FOLIO, cd.Cd_Documento, cd.Cd_Timbre_UUID, cd.Cd_RFC_Emisor, cd.Cd_Monto,
+       cd.Cd_Serie, cd.Cd_Serie_Folio, cd.Cd_Uso_CFDI, cd.Cd_Tipo_CFDI, cd.Cd_Forma_Pago,
+       CASE WHEN RTRIM(cd.Cd_Metdo_Pago_CFDI) IN ('PUE','PPD') THEN RTRIM(cd.Cd_Metdo_Pago_CFDI)
+            WHEN RTRIM(cd.Cd_Metodo_Pago) IN ('PUE','PPD') THEN RTRIM(cd.Cd_Metodo_Pago) END AS METODO_PAGO
+FROM Comprobante_Digital cd
+WHERE cd.Es_Cve_Estado='AC'
+  AND cd.Cd_Tabla IN ('GASTO_REGISTRO','COMPRA','COMPRA_INDIRECTO','NOTA_CREDITO_PROVEEDOR','CUENTA_X_PAGAR')
+  AND LEFT(cd.Cd_Documento,10) IN (SELECT FOLIO FROM folios_all);
+"""
+PRECARGA_TEMPORALES = ("folios_all", "plc_p", "pl_p", "pd_p", "cd_p")
+
+# ----------------------------------------------------------------------------------------------
 # Gasto: universo de documentos (tablas temporales de la sesión)
 # ----------------------------------------------------------------------------------------------
 GASTO_DOCS_SETUP = """
@@ -16,45 +62,36 @@ SELECT gr.Gr_Folio AS FOLIO, gr.Gr_Referencia AS REF, gr.Gr_Comentario AS COM, g
 FROM Gasto_Registro gr JOIN Sucursal s ON gr.Sc_Cve_Sucursal=s.Sc_Cve_Sucursal
 WHERE gr.Gr_Fecha>=:fi AND gr.Gr_Fecha<:ff AND gr.Es_Cve_Estado<>'CA' AND s.Em_Cve_Empresa=:emp;
 CREATE TEMP TABLE folios AS SELECT FOLIO, REF AS Gr_Referencia FROM docs;
-CREATE TEMP TABLE cxp_d AS SELECT * FROM (
-    SELECT DISTINCT d.FOLIO, cxp.Cxp_Folio FROM docs d
-    JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=d.FOLIO
-    JOIN Cuenta_X_Pagar cxp ON cxp.Cxp_Tabla='Gasto_Registro:'||d.FOLIO AND cxp.Cxp_Documento=grd.Grd_ID
-    UNION
-    SELECT DISTINCT d.FOLIO, cxp.Cxp_Folio FROM docs d
-    JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=d.FOLIO
-    JOIN Cuenta_X_Pagar cxp ON cxp.Cxp_Tabla='Cuenta_X_Pagar' AND cxp.Cxp_Referencia=grd.Grd_Referencia AND cxp.Pv_Cve_Proveedor=grd.Pv_Cve_Proveedor
-    WHERE grd.Grd_Referencia IS NOT NULL AND BTRIM(grd.Grd_Referencia)<>''
-) u;
--- Mismo enlace pero por documento: la llave FOLIO|Grd_ID se trata como un folio más en PAGOS_DOC_SQL.
-CREATE TEMP TABLE folios_doc AS
-SELECT d.FOLIO||'|'||RTRIM(grd.Grd_ID) AS FOLIO, grd.Grd_Referencia AS Gr_Referencia
+-- Documentos de cada folio: Gasto_Registro_Documento (1.5 M filas) se lee una sola vez.
+CREATE TEMP TABLE grd_d AS
+SELECT d.FOLIO, grd.Grd_ID, grd.Grd_Referencia, grd.Pv_Cve_Proveedor, grd.Mn_Cve_Moneda, grd.Grd_Precio_Neto_Importe,
+       grd.Grd_Precio_Descontado_Importe, grd.Grd_Tipo_Cambio, grd.Grd_Comentario
 FROM docs d JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=d.FOLIO;
-CREATE TEMP TABLE cxp_doc AS SELECT * FROM (
-    SELECT DISTINCT d.FOLIO||'|'||RTRIM(grd.Grd_ID) AS FOLIO, cxp.Cxp_Folio FROM docs d
-    JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=d.FOLIO
-    JOIN Cuenta_X_Pagar cxp ON cxp.Cxp_Tabla='Gasto_Registro:'||d.FOLIO AND cxp.Cxp_Documento=grd.Grd_ID
-    UNION
-    SELECT DISTINCT d.FOLIO||'|'||RTRIM(grd.Grd_ID), cxp.Cxp_Folio FROM docs d
-    JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=d.FOLIO
-    JOIN Cuenta_X_Pagar cxp ON cxp.Cxp_Tabla='Cuenta_X_Pagar' AND cxp.Cxp_Referencia=grd.Grd_Referencia AND cxp.Pv_Cve_Proveedor=grd.Pv_Cve_Proveedor
-    WHERE grd.Grd_Referencia IS NOT NULL AND BTRIM(grd.Grd_Referencia)<>''
-) u;
+-- CxP de cada documento (llave FOLIO|Grd_ID, que PAGOS_DOC_SQL trata como un folio más); cxp_d es lo mismo agregado por folio.
+CREATE TEMP TABLE cxp_doc0 AS
+SELECT g.FOLIO AS F0, g.FOLIO||'|'||RTRIM(g.Grd_ID) AS FOLIO, cxp.Cxp_Folio
+FROM grd_d g JOIN Cuenta_X_Pagar cxp ON cxp.Cxp_Tabla='Gasto_Registro:'||g.FOLIO AND cxp.Cxp_Documento=g.Grd_ID
+UNION
+SELECT g.FOLIO, g.FOLIO||'|'||RTRIM(g.Grd_ID), cxp.Cxp_Folio
+FROM grd_d g JOIN Cuenta_X_Pagar cxp ON cxp.Cxp_Tabla='Cuenta_X_Pagar' AND cxp.Cxp_Referencia=g.Grd_Referencia AND cxp.Pv_Cve_Proveedor=g.Pv_Cve_Proveedor
+WHERE g.Grd_Referencia IS NOT NULL AND BTRIM(g.Grd_Referencia)<>'';
+CREATE TEMP TABLE cxp_doc AS SELECT FOLIO, Cxp_Folio FROM cxp_doc0;
+CREATE TEMP TABLE cxp_d AS SELECT DISTINCT F0 AS FOLIO, Cxp_Folio FROM cxp_doc0;
+CREATE TEMP TABLE folios_doc AS SELECT FOLIO||'|'||RTRIM(Grd_ID) AS FOLIO, Grd_Referencia AS Gr_Referencia FROM grd_d;
 """
-TEMPORALES = ("docs", "folios", "cxp_d", "folios_doc", "cxp_doc")
+TEMPORALES = ("docs", "folios", "grd_d", "cxp_doc0", "cxp_doc", "cxp_d", "folios_doc")
 
 GASTO_ORIGEN_SQL = "SELECT FOLIO, ORIGEN FROM docs"
 
 # Proveedor representativo: el documento de mayor importe del folio.
 GASTO_PROVEEDOR_SQL = """
 WITH doc_rank AS (
-    SELECT d.FOLIO, grd.Mn_Cve_Moneda, grd.Pv_Cve_Proveedor,
-           ROW_NUMBER() OVER (PARTITION BY d.FOLIO ORDER BY grd.Grd_Precio_Neto_Importe DESC, grd.Grd_ID) AS rn
-    FROM docs d JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=d.FOLIO
+    SELECT g.FOLIO, g.Mn_Cve_Moneda, g.Pv_Cve_Proveedor,
+           ROW_NUMBER() OVER (PARTITION BY g.FOLIO ORDER BY g.Grd_Precio_Neto_Importe DESC, g.Grd_ID) AS rn
+    FROM grd_d g
 ),
 n_prov AS (
-    SELECT d.FOLIO, COUNT(DISTINCT grd.Pv_Cve_Proveedor) AS n
-    FROM docs d JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=d.FOLIO GROUP BY d.FOLIO
+    SELECT g.FOLIO, COUNT(DISTINCT g.Pv_Cve_Proveedor) AS n FROM grd_d g GROUP BY g.FOLIO
 )
 SELECT d.FOLIO, d.FECHA, r.Mn_Cve_Moneda AS MONEDA, r.Pv_Cve_Proveedor AS CLAVE_PROVEEDOR,
        p.Pv_R_F_C AS RFC_PROVEEDOR, p.Pv_Descripcion AS NOMBRE_PROVEEDOR,
@@ -72,29 +109,26 @@ _COLS_POLIZA = """pl.Pl_Folio AS POLIZA, pl.Pl_Fecha AS FECHA_POLIZA, pl.Pl_Tipo
        pl.Pl_Numero AS NUMERO_POLIZA, pl.Pl_Comentario AS CONCEPTO_POLIZA"""
 
 GASTO_POLIZA_SQL = f"""
-SELECT gr.Gr_Folio AS FOLIO,
-       CASE WHEN COALESCE(gr.Gr_Tabla,'')='' THEN 'GASTO_DIRECTO' ELSE gr.Gr_Tabla END AS ORIGEN,
+SELECT gr.FOLIO AS FOLIO, gr.ORIGEN AS ORIGEN,
        {_COLS_POLIZA},
        pd.Cc_Cve_Cuenta_Contable AS CUENTA_REGISTRO, cc.Cc_Descripcion AS NOMBRE_CUENTA_REGISTRO,
        pd.Pd_Centro_Costo AS CECO, cco.Cc_Descripcion AS CECO_DESCRIPCION,
        CASE WHEN pd.Pd_Tipo=1 THEN pd.Pd_Importe ELSE 0 END AS CARGO,
        CASE WHEN pd.Pd_Tipo=2 THEN pd.Pd_Importe ELSE 0 END AS ABONO
-FROM Gasto_Registro gr
-JOIN Sucursal s ON gr.Sc_Cve_Sucursal=s.Sc_Cve_Sucursal
-JOIN Poliza_Control plc ON plc.Pc_Tabla='GASTO_REGISTRO' AND plc.Pc_Documento=gr.Gr_Folio AND plc.Es_Cve_Estado<>'CA'
-JOIN Poliza pl ON pl.Pl_Folio=plc.Pl_Folio AND pl.Es_Cve_Estado<>'CA'
-JOIN Poliza_Detalle pd ON pd.Pl_Folio=plc.Pl_Folio AND pd.Pd_Referencia=gr.Gr_Folio
+FROM docs gr
+JOIN plc_p plc ON plc.Pc_Tabla='GASTO_REGISTRO' AND plc.Pc_Documento=gr.FOLIO
+JOIN pl_p pl ON pl.Pl_Folio=plc.Pl_Folio
+JOIN pd_p pd ON pd.Pl_Folio=plc.Pl_Folio AND pd.Pd_Referencia=gr.FOLIO
 LEFT JOIN Cuenta_Contable cc ON cc.Cc_Cve_Cuenta_Contable=pd.Cc_Cve_Cuenta_Contable
 LEFT JOIN Centro_Costo cco ON cco.Cc_Cve_Centro_Costo=pd.Pd_Centro_Costo
-WHERE gr.Gr_Fecha>=:fi AND gr.Gr_Fecha<:ff AND gr.Es_Cve_Estado<>'CA' AND s.Em_Cve_Empresa=:emp
-  AND pd.Pd_Centro_Costo<>''
+WHERE pd.Pd_Centro_Costo<>''
   -- CONSUMO_INTERNO genera 2 pólizas paralelas por folio (memo de inventario vs. gasto real):
   -- se descarta la de memo por comentario.
-  AND (COALESCE(gr.Gr_Tabla,'')<>'CONSUMO_INTERNO'
+  AND (gr.ORIGEN<>'CONSUMO_INTERNO'
        OR (UPPER(COALESCE(pl.Pl_Comentario,'')) NOT LIKE '%CUENTAS DE ORDEN%'
        AND UPPER(COALESCE(pl.Pl_Comentario,'')) NOT LIKE '%CTS ORDEN%'
        AND UPPER(COALESCE(pl.Pl_Comentario,'')) NOT LIKE '%CUENTA ORDEN%'))
-ORDER BY gr.Gr_Folio, pd.Pl_Folio, pd.Pd_ID
+ORDER BY gr.FOLIO, pd.Pl_Folio, pd.Pd_ID
 """
 
 # Capitalización de activo fijo de CONSUMO_INTERNO (configuraciones 0295/0414): su Pd_Referencia es el
@@ -103,40 +137,37 @@ GASTO_ACTIVO_FIJO_POLIZA_SQL = f"""
 SELECT {_COLS_POLIZA}, pd.Pd_Referencia AS REFERENCIA,
        pd.Cc_Cve_Cuenta_Contable AS CUENTA_REGISTRO, cc.Cc_Descripcion AS NOMBRE_CUENTA_REGISTRO,
        pd.Pd_Centro_Costo AS CECO, cco.Cc_Descripcion AS CECO_DESCRIPCION, pd.Pd_Importe AS IMPORTE_PD
-FROM Poliza pl
-JOIN Poliza_Detalle pd ON pd.Pl_Folio=pl.Pl_Folio
+FROM pl_p pl
+JOIN pd_p pd ON pd.Pl_Folio=pl.Pl_Folio
 LEFT JOIN Cuenta_Contable cc ON cc.Cc_Cve_Cuenta_Contable=pd.Cc_Cve_Cuenta_Contable
 LEFT JOIN Centro_Costo cco ON cco.Cc_Cve_Centro_Costo=pd.Pd_Centro_Costo
-WHERE pl.Es_Cve_Estado<>'CA' AND pl.Pl_Configuracion IN ('0295','0414')
+WHERE pl.Pl_Configuracion IN ('0295','0414')
   AND pl.Pl_Fecha>=:fi AND pl.Pl_Fecha<:ff AND pd.Pd_Tipo=1 AND pd.Pd_Centro_Costo<>''
 """
 
 GASTO_ACTIVO_FIJO_FOLIOS_SQL = """
-SELECT gr.Gr_Folio AS FOLIO, gr.Gr_Referencia AS REFERENCIA, plc.Pl_Folio AS POLIZA,
+SELECT gr.FOLIO AS FOLIO, gr.REF AS REFERENCIA, plc.Pl_Folio AS POLIZA,
        ABS(SUM(grd.Grd_Precio_Descontado_Importe*grd.Grd_Tipo_Cambio)) AS VALOR_CMP
-FROM Gasto_Registro gr
-JOIN Sucursal s ON gr.Sc_Cve_Sucursal=s.Sc_Cve_Sucursal
-JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=gr.Gr_Folio
-JOIN Poliza_Control plc ON plc.Pc_Tabla='GASTO_REGISTRO' AND plc.Pc_Documento=gr.Gr_Folio AND plc.Es_Cve_Estado<>'CA'
-JOIN Poliza pl ON pl.Pl_Folio=plc.Pl_Folio AND pl.Es_Cve_Estado<>'CA'
-WHERE gr.Gr_Fecha>=:fi AND gr.Gr_Fecha<:ff AND gr.Es_Cve_Estado<>'CA' AND s.Em_Cve_Empresa=:emp
-  AND gr.Gr_Tabla='CONSUMO_INTERNO' AND pl.Pl_Configuracion IN ('0295','0414') AND COALESCE(gr.Gr_Referencia,'')<>''
-GROUP BY gr.Gr_Folio, gr.Gr_Referencia, plc.Pl_Folio
+FROM docs gr
+JOIN grd_d grd ON grd.FOLIO=gr.FOLIO
+JOIN plc_p plc ON plc.Pc_Tabla='GASTO_REGISTRO' AND plc.Pc_Documento=gr.FOLIO
+JOIN pl_p pl ON pl.Pl_Folio=plc.Pl_Folio
+WHERE gr.ORIGEN='CONSUMO_INTERNO' AND pl.Pl_Configuracion IN ('0295','0414') AND COALESCE(gr.REF,'')<>''
+GROUP BY gr.FOLIO, gr.REF, plc.Pl_Folio
 """
 
 # Líneas de póliza del documento sin CECO: se atribuyen por importe a filas que la póliza no cubre.
 GASTO_POLIZA_SIN_CECO_SQL = f"""
-SELECT gr.Gr_Folio AS FOLIO, {_COLS_POLIZA},
+SELECT gr.FOLIO AS FOLIO, {_COLS_POLIZA},
        pd.Cc_Cve_Cuenta_Contable AS CUENTA_REGISTRO, cc.Cc_Descripcion AS NOMBRE_CUENTA_REGISTRO,
        CASE WHEN pd.Pd_Tipo=1 THEN pd.Pd_Importe ELSE 0 END AS CARGO,
        CASE WHEN pd.Pd_Tipo=2 THEN pd.Pd_Importe ELSE 0 END AS ABONO
-FROM Gasto_Registro gr JOIN Sucursal s ON gr.Sc_Cve_Sucursal=s.Sc_Cve_Sucursal
-JOIN Poliza_Control plc ON plc.Pc_Tabla='GASTO_REGISTRO' AND plc.Pc_Documento=gr.Gr_Folio AND plc.Es_Cve_Estado<>'CA'
-JOIN Poliza pl ON pl.Pl_Folio=plc.Pl_Folio AND pl.Es_Cve_Estado<>'CA'
-JOIN Poliza_Detalle pd ON pd.Pl_Folio=plc.Pl_Folio AND pd.Pd_Referencia=gr.Gr_Folio
+FROM docs gr
+JOIN plc_p plc ON plc.Pc_Tabla='GASTO_REGISTRO' AND plc.Pc_Documento=gr.FOLIO
+JOIN pl_p pl ON pl.Pl_Folio=plc.Pl_Folio
+JOIN pd_p pd ON pd.Pl_Folio=plc.Pl_Folio AND pd.Pd_Referencia=gr.FOLIO
 LEFT JOIN Cuenta_Contable cc ON cc.Cc_Cve_Cuenta_Contable=pd.Cc_Cve_Cuenta_Contable
-WHERE gr.Gr_Fecha>=:fi AND gr.Gr_Fecha<:ff AND gr.Es_Cve_Estado<>'CA' AND s.Em_Cve_Empresa=:emp
-  AND COALESCE(pd.Pd_Centro_Costo,'')=''
+WHERE COALESCE(pd.Pd_Centro_Costo,'')=''
   AND pd.Cc_Cve_Cuenta_Contable NOT LIKE '1170%' AND pd.Cc_Cve_Cuenta_Contable NOT LIKE '2110%' AND pd.Cc_Cve_Cuenta_Contable NOT LIKE '2150%'
   AND pd.Cc_Cve_Cuenta_Contable NOT LIKE '10500%' AND pd.Cc_Cve_Cuenta_Contable NOT LIKE '10600%'
 """
@@ -147,39 +178,31 @@ CENTRO_COSTO_SQL = "SELECT Cc_Cve_Centro_Costo AS CECO, Cc_Descripcion AS CECO_D
 # Gasto: importes por documento, reparto por CECO e impuestos por clave
 # ----------------------------------------------------------------------------------------------
 GASTO_SUBTOTALES_SQL = """
-SELECT gr.Gr_Folio AS FOLIO, grd.Grd_ID AS "Grd_ID",
+SELECT grd.FOLIO AS FOLIO, grd.Grd_ID AS "Grd_ID",
     SUM(CASE WHEN i.Im_Tasa=16.0000 AND i.Im_Tipo_Factor='Tasa' THEN gri.Gri_Base_Gravable ELSE 0 END)*grd.Grd_Tipo_Cambio AS SUBTOTAL_16,
     SUM(CASE WHEN i.Im_Tasa=0.0000 AND i.Im_Tipo_Factor='Tasa' THEN gri.Gri_Base_Gravable ELSE 0 END)*grd.Grd_Tipo_Cambio AS SUBTOTAL_0,
     SUM(CASE WHEN i.Im_Tipo_Factor='Exento' THEN gri.Gri_Base_Gravable ELSE 0 END)*grd.Grd_Tipo_Cambio AS SUBTOTAL_EXENTA,
     grd.Grd_Precio_Descontado_Importe*grd.Grd_Tipo_Cambio AS SUBTOTAL_NETO
-FROM Gasto_Registro gr
-JOIN Sucursal s ON gr.Sc_Cve_Sucursal=s.Sc_Cve_Sucursal
-JOIN Gasto_Registro_Documento grd ON gr.Gr_Folio=grd.Gr_Folio
-LEFT JOIN Gasto_Registro_Impuesto gri ON gri.Gr_Folio=grd.Gr_Folio AND gri.Grd_ID=grd.Grd_ID
+FROM grd_d grd
+LEFT JOIN Gasto_Registro_Impuesto gri ON gri.Gr_Folio=grd.FOLIO AND gri.Grd_ID=grd.Grd_ID
 LEFT JOIN Impuesto i ON i.Im_Cve_Impuesto=gri.Im_Cve_Impuesto
-WHERE gr.Gr_Fecha>=:fi AND gr.Gr_Fecha<:ff AND gr.Es_Cve_Estado<>'CA' AND s.Em_Cve_Empresa=:emp
-GROUP BY gr.Gr_Folio, grd.Grd_ID, grd.Grd_Tipo_Cambio, grd.Grd_Precio_Descontado_Importe
+GROUP BY grd.FOLIO, grd.Grd_ID, grd.Grd_Tipo_Cambio, grd.Grd_Precio_Descontado_Importe
 """
 
 # Reparto del documento entre centros de costo. GASTO_RECLASIFICACION queda fuera: su importe es un par espejo (+/-).
 GASTO_REPARTO_SQL = """
-SELECT gr.Gr_Folio AS FOLIO, grc.Grd_ID AS "Grd_ID", grc.Cc_Cve_Centro_Costo AS CECO, grc.Grc_Importe AS "Grc_Importe", grc.Grc_Factor AS "Grc_Factor"
-FROM Gasto_Registro gr
-JOIN Sucursal s ON gr.Sc_Cve_Sucursal=s.Sc_Cve_Sucursal
-JOIN Gasto_Registro_Control grc ON grc.Gr_Folio=gr.Gr_Folio
-WHERE gr.Gr_Fecha>=:fi AND gr.Gr_Fecha<:ff AND gr.Es_Cve_Estado<>'CA' AND s.Em_Cve_Empresa=:emp
-  AND COALESCE(gr.Gr_Tabla,'')<>'GASTO_RECLASIFICACION'
+SELECT gr.FOLIO AS FOLIO, grc.Grd_ID AS "Grd_ID", grc.Cc_Cve_Centro_Costo AS CECO, grc.Grc_Importe AS "Grc_Importe", grc.Grc_Factor AS "Grc_Factor"
+FROM docs gr
+JOIN Gasto_Registro_Control grc ON grc.Gr_Folio=gr.FOLIO
+WHERE gr.ORIGEN<>'GASTO_RECLASIFICACION'
 """
 
 GASTO_IMPUESTO_CLAVE_SQL = """
-SELECT gr.Gr_Folio AS FOLIO, grd.Grd_ID AS "Grd_ID", gri.Im_Cve_Impuesto AS CLAVE,
+SELECT grd.FOLIO AS FOLIO, grd.Grd_ID AS "Grd_ID", gri.Im_Cve_Impuesto AS CLAVE,
        SUM(gri.Gri_Importe)*grd.Grd_Tipo_Cambio AS IMPORTE
-FROM Gasto_Registro gr
-JOIN Sucursal s ON gr.Sc_Cve_Sucursal=s.Sc_Cve_Sucursal
-JOIN Gasto_Registro_Documento grd ON gr.Gr_Folio=grd.Gr_Folio
-JOIN Gasto_Registro_Impuesto gri ON gri.Gr_Folio=grd.Gr_Folio AND gri.Grd_ID=grd.Grd_ID
-WHERE gr.Gr_Fecha>=:fi AND gr.Gr_Fecha<:ff AND gr.Es_Cve_Estado<>'CA' AND s.Em_Cve_Empresa=:emp
-GROUP BY gr.Gr_Folio, grd.Grd_ID, gri.Im_Cve_Impuesto, grd.Grd_Tipo_Cambio
+FROM grd_d grd
+JOIN Gasto_Registro_Impuesto gri ON gri.Gr_Folio=grd.FOLIO AND gri.Grd_ID=grd.Grd_ID
+GROUP BY grd.FOLIO, grd.Grd_ID, gri.Im_Cve_Impuesto, grd.Grd_Tipo_Cambio
 """
 
 # ----------------------------------------------------------------------------------------------
@@ -188,9 +211,8 @@ GROUP BY gr.Gr_Folio, grd.Grd_ID, gri.Im_Cve_Impuesto, grd.Grd_Tipo_Cambio
 XML_SQL = """
 WITH xmls AS (
     SELECT d.FOLIO, cd.Cd_Timbre_UUID, cd.Cd_RFC_Emisor, cd.Cd_Monto, cd.Cd_Serie, cd.Cd_Serie_Folio,
-           cd.Cd_Uso_CFDI, cd.Cd_Tipo_CFDI, CASE WHEN RTRIM(cd.Cd_Metdo_Pago_CFDI) IN ('PUE','PPD') THEN RTRIM(cd.Cd_Metdo_Pago_CFDI) WHEN RTRIM(cd.Cd_Metodo_Pago) IN ('PUE','PPD') THEN RTRIM(cd.Cd_Metodo_Pago) END AS METODO_PAGO, cd.Cd_Forma_Pago
-    FROM docs d JOIN Comprobante_Digital cd
-      ON cd.Cd_Tabla='{origen}' AND cd.Cd_Documento LIKE d.FOLIO||'%' AND cd.Es_Cve_Estado='AC'
+           cd.Cd_Uso_CFDI, cd.Cd_Tipo_CFDI, cd.METODO_PAGO, cd.Cd_Forma_Pago
+    FROM docs d JOIN cd_p cd ON cd.Cd_Tabla='{origen}' AND cd.FOLIO=d.FOLIO
 ),
 xa AS (
     SELECT FOLIO, COUNT(DISTINCT Cd_Timbre_UUID) AS N_UUID, MIN(Cd_Timbre_UUID) AS UUID_UNICO, MIN(Cd_RFC_Emisor) AS RFC_EMISOR,
@@ -224,17 +246,17 @@ GASTO_DOCUMENTOS_SQL = """
 SELECT d.FOLIO, grd.Grd_ID AS DOC_ID, grd.Pv_Cve_Proveedor AS CLAVE_PROVEEDOR, p.Pv_R_F_C AS RFC_PROVEEDOR,
        p.Pv_Descripcion AS NOMBRE_PROVEEDOR,
        COALESCE(NULLIF(LTRIM(RTRIM(LEFT(grd.Grd_Comentario,500))),''), LEFT(d.COM,500)) AS CONCEPTO_GASTO
-FROM docs d JOIN Gasto_Registro_Documento grd ON grd.Gr_Folio=d.FOLIO
+FROM docs d JOIN grd_d grd ON grd.FOLIO=d.FOLIO
 LEFT JOIN Proveedor p ON p.Pv_Cve_Proveedor=grd.Pv_Cve_Proveedor
+ORDER BY d.FOLIO, grd.Grd_ID
 """
 
 GASTO_XML_DOCUMENTO_SQL = """
 WITH xmls AS (
     SELECT d.FOLIO, CASE WHEN LENGTH(RTRIM(cd.Cd_Documento))>=18 THEN SUBSTRING(cd.Cd_Documento FROM 11 FOR 4) END AS DOC_ID,
            cd.Cd_Timbre_UUID, cd.Cd_RFC_Emisor, cd.Cd_Monto, cd.Cd_Serie, cd.Cd_Serie_Folio,
-           cd.Cd_Uso_CFDI, cd.Cd_Tipo_CFDI, CASE WHEN RTRIM(cd.Cd_Metdo_Pago_CFDI) IN ('PUE','PPD') THEN RTRIM(cd.Cd_Metdo_Pago_CFDI) WHEN RTRIM(cd.Cd_Metodo_Pago) IN ('PUE','PPD') THEN RTRIM(cd.Cd_Metodo_Pago) END AS METODO_PAGO, cd.Cd_Forma_Pago
-    FROM docs d JOIN Comprobante_Digital cd
-      ON cd.Cd_Tabla='GASTO_REGISTRO' AND cd.Cd_Documento LIKE d.FOLIO||'%' AND cd.Es_Cve_Estado='AC'
+           cd.Cd_Uso_CFDI, cd.Cd_Tipo_CFDI, cd.METODO_PAGO, cd.Cd_Forma_Pago
+    FROM docs d JOIN cd_p cd ON cd.Cd_Tabla='GASTO_REGISTRO' AND cd.FOLIO=d.FOLIO
 ),
 xa AS (
     SELECT FOLIO, DOC_ID, COUNT(DISTINCT Cd_Timbre_UUID) AS N_UUID, MIN(Cd_Timbre_UUID) AS UUID_UNICO, MIN(Cd_RFC_Emisor) AS RFC_EMISOR,
@@ -267,7 +289,7 @@ GASTO_RETENCIONES_SQL = """
 SELECT d.FOLIO, COUNT(DISTINCT cd.Cd_Timbre_UUID) AS N, MIN(cr.Cd_Monto) AS MONTO,
        MIN(cr.Cd_Serie) AS SERIE, MIN(cr.Cd_Serie_Folio) AS FOLIO_XML
 FROM docs d
-JOIN Comprobante_Digital cd ON cd.Cd_Tabla='GASTO_REGISTRO' AND cd.Cd_Documento LIKE d.FOLIO||'%' AND cd.Es_Cve_Estado='AC' AND cd.Cd_Tipo_CFDI='RETENCIONES'
+JOIN cd_p cd ON cd.Cd_Tabla='GASTO_REGISTRO' AND cd.FOLIO=d.FOLIO AND cd.Cd_Tipo_CFDI='RETENCIONES'
 LEFT JOIN Comprobante_Digital cr ON cr.Cd_Tabla='CONSTANCIA_RETENCION' AND cr.Cd_Timbre_UUID=cd.Cd_Timbre_UUID AND cr.Es_Cve_Estado='AC'
 GROUP BY d.FOLIO
 """
@@ -279,7 +301,7 @@ GROUP BY d.FOLIO
 PAGOS_SQL = """
 WITH pagos AS (
     SELECT cd.FOLIO, pc.Pc_ID, pc.Cxp_Folio, pc.Fp_Cve_Forma_Pago, pc.Pc_Banco, pc.Pc_Cuenta_Bancaria,
-           pc.Pc_Documento, pc.Pc_Tabla, pc.Pc_Referencia,
+           pc.Pc_Documento, pc.Pc_Tabla, pc.Pc_Referencia, pc.Pc_Importe*COALESCE(pc.Pc_Tipo_Cambio,1) AS IMP_MXN,
            ROW_NUMBER() OVER (PARTITION BY cd.FOLIO ORDER BY
                CASE WHEN pc.Fp_Cve_Forma_Pago IN ('0001','0002','0003') THEN 0 ELSE 1 END,
                ABS(pc.Pc_Importe*COALESCE(pc.Pc_Tipo_Cambio,1)) DESC, pc.Cxp_Folio, pc.Pc_ID) rn
@@ -292,8 +314,7 @@ formas AS (
     GROUP BY x.FOLIO
 ),
 monto AS (
-    SELECT cd.FOLIO, SUM(pc.Pc_Importe*COALESCE(pc.Pc_Tipo_Cambio,1)) AS MONTO_COBRADO
-    FROM cxp_d cd JOIN Pago_CXP pc ON pc.Cxp_Folio=cd.Cxp_Folio AND pc.Es_Cve_Estado<>'CA' GROUP BY cd.FOLIO
+    SELECT FOLIO, SUM(IMP_MXN) AS MONTO_COBRADO FROM pagos GROUP BY FOLIO
 )
 SELECT f.FOLIO, f.Gr_Referencia AS REFERENCIA,
   fm.FORMA_PAGO,
@@ -340,9 +361,10 @@ DOC_CABECERA_SQL = """
 WITH b AS (
     SELECT c.{p}_Folio AS FOLIO, c.{p}_Fecha AS FECHA, c.Mn_Cve_Moneda AS MONEDA, c.Pv_Cve_Proveedor AS CLAVE_PROVEEDOR,
            {neto} AS NETO, c.{p}_Precio_Neto_Importe*c.{p}_Tipo_Cambio AS TOT,
-           COALESCE((SELECT MAX(CASE i.Im_Cve_Impuesto WHEN '0004' THEN 3 WHEN '0003' THEN 2 ELSE 1 END) FROM {imp} i
-                   WHERE {imp_join}),1) AS K
+           COALESCE(k.K,1) AS K
     FROM {tabla} c JOIN docs d ON d.FOLIO=c.{p}_Folio
+    LEFT JOIN (SELECT {imp_cols_k}, MAX(CASE i.Im_Cve_Impuesto WHEN '0004' THEN 3 WHEN '0003' THEN 2 ELSE 1 END) AS K
+               FROM {imp} i JOIN docs dd ON dd.FOLIO=i.{p}_Folio GROUP BY {imp_cols_k}) k ON {imp_on_k}
     WHERE c.Es_Cve_Estado<>'CA')
 SELECT b.FOLIO, MAX(b.FECHA) AS FECHA, MAX(b.MONEDA) AS MONEDA, MAX(b.CLAVE_PROVEEDOR) AS CLAVE_PROVEEDOR, MAX(d.REF) AS REFERENCIA,
        SUM(CASE WHEN K=2 THEN NETO ELSE 0 END) AS SUBTOTAL_0,
@@ -368,14 +390,15 @@ SELECT d.FOLIO, pl.Pl_Folio AS POLIZA, pl.Pl_Fecha AS FECHA_POLIZA, pl.Pl_Tipo A
        NULLIF(BTRIM(pd.Pd_Centro_Costo),'') AS CECO, cco.Cc_Descripcion AS CECO_DESCRIPCION,
        CASE WHEN pd.Pd_Tipo=1 THEN pd.Pd_Importe ELSE 0 END AS CARGO, CASE WHEN pd.Pd_Tipo=2 THEN pd.Pd_Importe ELSE 0 END AS ABONO
 FROM docs d
-JOIN Poliza_Control plc ON plc.Pc_Tabla='{pc}' AND plc.Pc_Documento=d.FOLIO AND plc.Es_Cve_Estado<>'CA'
-JOIN Poliza pl ON pl.Pl_Folio=plc.Pl_Folio AND pl.Es_Cve_Estado<>'CA'
-JOIN Poliza_Detalle pd ON pd.Pl_Folio=plc.Pl_Folio AND {pol_ref}
+JOIN plc_p plc ON plc.Pc_Tabla='{pc}' AND plc.Pc_Documento=d.FOLIO
+JOIN pl_p pl ON pl.Pl_Folio=plc.Pl_Folio
+JOIN pd_p pd ON pd.Pl_Folio=plc.Pl_Folio AND {pol_ref}
 LEFT JOIN Cuenta_Contable cc ON cc.Cc_Cve_Cuenta_Contable=pd.Cc_Cve_Cuenta_Contable
 LEFT JOIN Centro_Costo cco ON cco.Cc_Cve_Centro_Costo=pd.Pd_Centro_Costo
 WHERE COALESCE(pd.Pd_Importe,0)<>0 {filtro05}
   AND LEFT(pd.Cc_Cve_Cuenta_Contable,5) NOT IN ('10500','10600')
   AND LEFT(pd.Cc_Cve_Cuenta_Contable,4) NOT IN ('1170','2110','2150'{excl_pol})
+ORDER BY d.FOLIO, pl.Pl_Folio, pd.Pd_ID
 """
 
 # Pólizas de documentos cuyas líneas quedan todas fuera de DOC_POLIZA_SQL (importe 0 o solo inventario/proveedores):
@@ -384,7 +407,8 @@ DOC_POLIZA_SIN_LINEAS_SQL = """
 SELECT DISTINCT d.FOLIO, pl.Pl_Folio AS POLIZA, pl.Pl_Fecha AS FECHA_POLIZA, pl.Pl_Tipo AS TIPO_POLIZA, pl.Pl_Numero AS NUMERO_POLIZA,
        pl.Pl_Comentario AS CONCEPTO_POLIZA
 FROM docs d
-JOIN Poliza_Control plc ON plc.Pc_Tabla='{pc}' AND plc.Pc_Documento=d.FOLIO AND plc.Es_Cve_Estado<>'CA'
-JOIN Poliza pl ON pl.Pl_Folio=plc.Pl_Folio AND pl.Es_Cve_Estado<>'CA'
-JOIN Poliza_Detalle pd ON pd.Pl_Folio=plc.Pl_Folio AND {pol_ref}
+JOIN plc_p plc ON plc.Pc_Tabla='{pc}' AND plc.Pc_Documento=d.FOLIO
+JOIN pl_p pl ON pl.Pl_Folio=plc.Pl_Folio
+JOIN pd_p pd ON pd.Pl_Folio=plc.Pl_Folio AND {pol_ref}
+ORDER BY d.FOLIO, pl.Pl_Folio
 """
