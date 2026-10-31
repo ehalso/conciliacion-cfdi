@@ -67,7 +67,7 @@ tr.r:hover td{background:var(--hl)}
 .pg{display:flex;gap:10px;align-items:center;padding:8px 12px;border-top:1px solid var(--line);color:var(--mute)}
 .pg button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:4px 12px;cursor:pointer}
 .pg button:disabled{opacity:.4;cursor:default}
-.st{color:var(--mute);font:12px "Roboto Mono",monospace}.st.busy{color:var(--accent)}.st.err{color:var(--neg)}select{font:inherit;padding:5px 8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}input[type=date]{font:inherit;padding:5px 8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}.btn:disabled{opacity:.5;cursor:wait}
+.st{color:var(--mute);font:12px "Roboto Mono",monospace}.st.busy{color:var(--accent)}.st.err{color:var(--neg)}select{font:inherit;padding:5px 8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}input[type=date]{font:inherit;padding:5px 8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}.btn:disabled{opacity:.5;cursor:wait}.prog{padding:8px 16px}.pb{height:6px;background:var(--line);border-radius:3px;overflow:hidden}.pb i{display:block;height:100%;width:0;background:var(--accent);transition:width .6s}.ps{margin-top:6px;font:12px "Roboto Mono",monospace;color:var(--mute);display:flex;flex-wrap:wrap;gap:4px 16px}.ps .ok{color:var(--ink)}.ps .ya{color:var(--accent);font-weight:600}
 </style>
 <div class="top"><div class="l"><span class="burger"><i></i></span>Trivasa</div><div class="u">ESTEBAN HERNAN ALCOCER SOUZA</div></div>
 <div class="wrap"><div class="card">
@@ -76,7 +76,8 @@ tr.r:hover td{background:var(--hl)}
  <div class="sub" id="sub" style="margin-top:10px"></div></div>
  <div class="kpis" id="kpis"></div>
 </header>
-<div class="bar" id="ctl"><label class="t">Fecha inicio <input type="date" id="fi" value="2026-01-01"></label><label class="t">Fecha final <input type="date" id="ff" value="2026-01-31"></label><label class="t" id="agrl"><input type="checkbox" id="agr" checked> Agrupar por cuenta contable</label><button class="btn" id="go">Consultar</button><button class="chip" id="rf" title="Trae los cambios de Mpro (.207) a Postgres y vuelve a consultar" hidden>&#8635; Actualizar datos</button><span class="st" id="fr"></span><span class="st" id="st"></span></div>
+<div class="bar" id="ctl"><label class="t">Fecha inicio <input type="date" id="fi"></label><label class="t">Fecha final <input type="date" id="ff"></label><label class="t" id="agrl"><input type="checkbox" id="agr" checked> Agrupar por cuenta contable</label><button class="btn" id="go">Consultar</button><button class="chip" id="rf" title="Trae los cambios de Mpro (.207) a Postgres y vuelve a consultar" hidden>&#8635; Actualizar datos</button><span class="st" id="fr"></span><span class="st" id="st"></span></div>
+<div class="prog" id="prog" hidden><div class="pb"><i id="pbi"></i></div><div class="ps" id="pps"></div></div>
 <div class="bar" role="group" aria-label="Filtrar por tipo"><span id="chips" style="display:contents"></span></div>
 <div class="bar">
  <input type="search" id="q" placeholder="Buscar folio, proveedor, RFC, UUID, cuenta…" aria-label="Buscar">
@@ -212,6 +213,7 @@ async function cargar(){
  if(!ini||!fin){st.textContent='Indica fecha inicio y fecha final.';return}
  btn.disabled=true;st.className='st busy';st.textContent='Consultando…';
  const t0=performance.now();
+ const sondeo=setTimeout(function pp(){fetch('api/progreso?ini='+ini+'&fin='+fin,{cache:'no-store'}).then(r=>r.json()).then(p=>{if(!btn.disabled)return;if(p.activo){const n=p.etapas.length;$('prog').hidden=false;$('pbi').style.width=((p.i+.5)/n*100)+'%';$('pps').innerHTML=p.etapas.map((e,k)=>'<span class="'+(k<p.i?'ok':k==p.i?'ya':'')+'">'+(k<p.i?'✓ ':k==p.i?'▶ ':'○ ')+e+(k==p.i?'… '+p.seg+' s':'')+'</span>').join('')}}).catch(()=>{}).finally(()=>{if(btn.disabled)tmr2=setTimeout(pp,1000)})},700);let tmr2=null;
  try{
   const r=await fetch('api/reporte?ini='+ini+'&fin='+fin+'&agrupar='+($('agr').checked?1:0),{cache:'no-store'});
   if(!r.ok)throw new Error((await r.text())||r.status);
@@ -222,7 +224,7 @@ async function cargar(){
   st.textContent=(m.cache?'Desde caché del servidor':'Consulta a '+m.fuente)+' · generado '+m.generado+(m.cache?'':' ('+m.seg_consulta+' s de consulta)')+' · descarga '+((t1-t0)/1000).toFixed(2)+' s · render '+((t3-t2)/1000).toFixed(2)+' s';
   window.__tiempos={fetch_ms:Math.round(t1-t0),parse_ms:Math.round(t2-t1),render_ms:Math.round(t3-t2),total_ms:Math.round(t3-t0),cache:!!m.cache,filas:D.rows.length};
  }catch(e){st.className='st err';st.textContent='Error: '+e.message}
- btn.disabled=false}
+ clearTimeout(sondeo);clearTimeout(tmr2);$('prog').hidden=true;btn.disabled=false}
 $('agr').onchange=()=>cargar();
 $('go').onclick=()=>cargar();
 const fmtF=iso=>iso?new Date(iso).toLocaleString('es-MX',{timeZone:'America/Mexico_City',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
@@ -245,5 +247,5 @@ $('rf').onclick=()=>{
  fetch('api/actualizar',{method:'POST',headers:{'X-Conciliacion':'1'}}).then(r=>r.status===409?r.json().then(j=>{$('fr').textContent=j.motivo;$('rf').disabled=false;setTimeout(estadoIngest,8000)}):r.json().then(pintarEstado))
   .catch(()=>{$('fr').textContent='No se pudo contactar al servidor.';$('rf').disabled=false})};
 estadoIngest();
-if(PRE){$('ctl').hidden=true;init(PRE)}else{const q=new URLSearchParams(location.search);if(q.get('ini'))$('fi').value=q.get('ini');if(q.get('fin'))$('ff').value=q.get('fin');cargar()}
+if(PRE){$('ctl').hidden=true;init(PRE)}else{const h=new Date(),f=(y,m,d)=>new Date(y,m,d,12).toISOString().slice(0,10);$('fi').value=f(h.getFullYear(),h.getMonth(),1);$('ff').value=f(h.getFullYear(),h.getMonth()+1,0);const q=new URLSearchParams(location.search);if(q.get('ini'))$('fi').value=q.get('ini');if(q.get('fin'))$('ff').value=q.get('fin');cargar()}
 </script>

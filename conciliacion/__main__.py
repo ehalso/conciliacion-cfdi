@@ -16,7 +16,7 @@ def main() -> None:
     else:
         fuente = mpro_desde_entorno()
         engine = crear_engine(fuente)
-    srv = crear_servidor(cfg, fuente, engine, crear_engine_sat(sat) if sat else None)
+    srv = crear_servidor(cfg, fuente, engine, crear_engine_sat(sat) if sat else None, precalienta=BACKEND == "postgres")
     print(srv.server_address[1], flush=True)
     srv.serve_forever()
 

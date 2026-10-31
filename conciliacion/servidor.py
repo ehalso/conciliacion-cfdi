@@ -35,12 +35,27 @@ class Cache:
         self.engine, self.etiqueta, self.ttl, self.maximo = engine, etiqueta, ttl_seg, maximo
         self.engine_sat = engine_sat
         self._items: dict = {}
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()  # protege los diccionarios; cada periodo tiene además su propio candado
+        self._locks: dict = {}
         self.datos = lambda: None  # marca de frescura de los datos; si cambia, el caché ya no vale
+        self.progreso: dict = {}  # (ini, fin) -> construcción en curso: {"etapas", "i", "t0"}
+
+    def avance(self, clave: tuple, t0: float):
+        def f(etapas, i):
+            self.progreso[clave] = {"etapas": list(etapas), "i": i, "t0": t0}
+        return f
+
+    def estado_progreso(self, ini: str, fin: str) -> dict:
+        p = self.progreso.get((ini, fin))
+        if not p:
+            return {"activo": False}
+        return {"activo": True, "etapas": p["etapas"], "i": p["i"], "seg": round(time.time() - p["t0"], 1)}
 
     def reporte(self, ini: str, fin: str, vista: str, agrupar: bool, refrescar: bool) -> tuple[bytes, bool]:
         """Devuelve (JSON gzip, vino_de_caché)."""
         with self._lock:
+            klock = self._locks.setdefault((ini, fin), threading.Lock())
+        with klock:
             c = self._items.get((ini, fin))
             vigente = c is not None and not refrescar and c.get("datos") == self.datos() and time.time() - c["t"] < self.ttl
             if vigente and (vista, agrupar) in c["gz"]:
@@ -48,11 +63,16 @@ class Cache:
             if not vigente:
                 t0 = time.time()
                 ff = (dt.date.fromisoformat(fin) + dt.timedelta(days=1)).isoformat()
-                c = {"t": time.time(), "d": construir(self.engine, ini, ff, self.engine_sat), "gz": {}, "datos": self.datos(),
+                try:
+                    d = construir(self.engine, ini, ff, self.engine_sat, self.avance((ini, fin), t0))
+                finally:
+                    self.progreso.pop((ini, fin), None)
+                c = {"t": time.time(), "d": d, "gz": {}, "datos": self.datos(),
                      "seg": round(time.time() - t0, 1), "generado": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-                self._items[(ini, fin)] = c
-                while len(self._items) > self.maximo:
-                    self._items.pop(min(self._items, key=lambda k: self._items[k]["t"]))
+                with self._lock:
+                    self._items[(ini, fin)] = c
+                    while len(self._items) > self.maximo:
+                        self._items.pop(min(self._items, key=lambda k: self._items[k]["t"]))
             datos = a_datos(c["d"], vista, agrupar)
             datos["meta"] = {"fuente": self.etiqueta, "ini": ini, "fin": fin, "filas": len(datos["rows"]),
                              "vista": vista, "agrupar": datos["agrupar"], "generado": c["generado"],
@@ -60,6 +80,30 @@ class Cache:
             gz = gzip.compress(json.dumps(datos, ensure_ascii=False, separators=(",", ":")).encode(), 5)
             c["gz"][(vista, agrupar)] = gz
             return gz, vigente
+
+
+def periodos_recientes(hoy: dt.date) -> list[tuple[str, str]]:
+    """Mes en curso y mes anterior, como (primer día, último día): lo que más se consulta."""
+    def mes(d: dt.date) -> tuple[str, str]:
+        ini = d.replace(day=1)
+        fin = (ini + dt.timedelta(days=32)).replace(day=1) - dt.timedelta(days=1)
+        return ini.isoformat(), fin.isoformat()
+    return [mes(hoy), mes(hoy.replace(day=1) - dt.timedelta(days=1))]
+
+
+def precalentar(cache: Cache, espera_seg: int = 60) -> None:
+    """Hilo: cuando los datos cambian (o al arrancar) arma en caché los periodos recientes, fuera de la ventana de crons."""
+    ultima = object()
+    while True:
+        try:
+            marca = cache.datos()
+            if marca != ultima and not actualizar.en_ventana_cron():
+                for ini, fin in periodos_recientes(dt.date.today()):
+                    cache.reporte(ini, fin, "layout", True, False)
+                ultima = marca
+        except Exception as e:
+            print("ERROR precalentado", repr(e), flush=True)
+        time.sleep(espera_seg)
 
 
 PIPELINES_INGEST = ("trivasa_gastos_cxp", "comprobante_digital_compra")
@@ -113,7 +157,7 @@ def _parametros(q: dict) -> tuple[str, str, str, bool]:
     return ini, fin, vista, q.get("agrupar", ["1"])[0] != "0"
 
 
-def crear_servidor(cfg: Servidor, mpro: Mpro, engine: Engine, engine_sat: Engine | None = None) -> ThreadingHTTPServer:
+def crear_servidor(cfg: Servidor, mpro: Mpro, engine: Engine, engine_sat: Engine | None = None, precalienta: bool = False) -> ThreadingHTTPServer:
     esperado = "Basic " + base64.b64encode(f"{cfg.usuario}:{cfg.clave}".encode()).decode()
     pagina = (resources.files("conciliacion") / "static" / "index.html").read_bytes()
     cache = Cache(engine, mpro.etiqueta, cfg.ttl_seg, cfg.max_cache, engine_sat)
@@ -127,6 +171,8 @@ def crear_servidor(cfg: Servidor, mpro: Mpro, engine: Engine, engine_sat: Engine
 
     if habilitado:
         cache.datos = lambda: estado().get("datos")
+    if precalienta:
+        threading.Thread(target=precalentar, args=(cache,), daemon=True).start()
 
     class Manejador(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -154,6 +200,14 @@ def crear_servidor(cfg: Servidor, mpro: Mpro, engine: Engine, engine_sat: Engine
             if u.path == "/api/estado":
                 memo["t"] = 0.0
                 return self._enviar(200, json.dumps(estado(), ensure_ascii=False).encode(), "application/json; charset=utf-8",
+                                    [("Cache-Control", "no-store")])
+            if u.path == "/api/progreso":
+                q = parse_qs(u.query)
+                try:
+                    ini, fin, _, _ = _parametros(q)
+                except (KeyError, ValueError) as e:
+                    return self._enviar(400, str(e).encode(), "text/plain; charset=utf-8")
+                return self._enviar(200, json.dumps(cache.estado_progreso(ini, fin)).encode(), "application/json; charset=utf-8",
                                     [("Cache-Control", "no-store")])
             if u.path != "/api/reporte":
                 return self._enviar(404, b"No encontrado", "text/plain; charset=utf-8")

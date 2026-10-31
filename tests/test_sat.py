@@ -42,6 +42,13 @@ class CruceSat(unittest.TestCase):
             o = sat.agregar_sat(d, None)
         self.assertEqual(list(o.CONC_IMPORTES), ["Sí", "Sí"])
 
+    def test_complemento_incluido_en_el_total_no_se_suma(self):
+        sat_c = pd.DataFrame({"UUID_CRUCE": [U1], "SAT_UUID": [U1], "SAT_IMPORTE": [100.0], "SAT_IMPORTE_COMPLEMENTO": [98.0]})
+        d = pd.DataFrame({"UUID": [U1, U1], "Tipo": "Gasto", "TOTAL": [98.0, 2.0]})
+        with mock.patch.object(sat, "consultar_sat", lambda e, u: sat_c):
+            o = sat.agregar_sat(d, None)
+        self.assertEqual(list(o.CONC_IMPORTES), ["Sí", "Sí"])
+
     def test_sin_sat_deja_el_reporte(self):
         d = pd.DataFrame({"UUID": [U1], "TOTAL": [1], "Tipo": "Gasto"})
         with mock.patch.object(sat, "consultar_sat", side_effect=RuntimeError("caído")):
