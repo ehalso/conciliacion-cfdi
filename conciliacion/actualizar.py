@@ -69,6 +69,7 @@ def main() -> int:
     t0 = time.time()
     for i, (nombre, cmd) in enumerate(PASOS):
         pasos[i]["estado"] = "corriendo"
+        pasos[i]["inicio"] = time.time()
         guardar(est)
         print(f"[{ahora()}] {nombre}", flush=True)
         t = time.time()
@@ -84,7 +85,8 @@ def main() -> int:
         pasos[i]["estado"] = "ok"
         guardar(est)
     fin = ahora()
-    guardar({**est, "estado": "ok", "fin": fin, "ultima_ok": fin, "segundos": round(time.time() - t0)})
+    guardar({**est, "estado": "ok", "fin": fin, "ultima_ok": fin, "segundos": round(time.time() - t0),
+             "duraciones": {p["nombre"]: p["segundos"] for p in pasos}})
     print(f"[{fin}] listo en {round(time.time() - t0)} s", flush=True)
     return 0
 

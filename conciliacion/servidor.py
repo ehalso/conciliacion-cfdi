@@ -38,18 +38,6 @@ class Cache:
         self._lock = threading.Lock()  # protege los diccionarios; cada periodo tiene además su propio candado
         self._locks: dict = {}
         self.datos = lambda: None  # marca de frescura de los datos; si cambia, el caché ya no vale
-        self.progreso: dict = {}  # (ini, fin) -> construcción en curso: {"etapas", "i", "t0"}
-
-    def avance(self, clave: tuple, t0: float):
-        def f(etapas, i):
-            self.progreso[clave] = {"etapas": list(etapas), "i": i, "t0": t0}
-        return f
-
-    def estado_progreso(self, ini: str, fin: str) -> dict:
-        p = self.progreso.get((ini, fin))
-        if not p:
-            return {"activo": False}
-        return {"activo": True, "etapas": p["etapas"], "i": p["i"], "seg": round(time.time() - p["t0"], 1)}
 
     def reporte(self, ini: str, fin: str, vista: str, agrupar: bool, refrescar: bool) -> tuple[bytes, bool]:
         """Devuelve (JSON gzip, vino_de_caché)."""
@@ -63,10 +51,7 @@ class Cache:
             if not vigente:
                 t0 = time.time()
                 ff = (dt.date.fromisoformat(fin) + dt.timedelta(days=1)).isoformat()
-                try:
-                    d = construir(self.engine, ini, ff, self.engine_sat, self.avance((ini, fin), t0))
-                finally:
-                    self.progreso.pop((ini, fin), None)
+                d = construir(self.engine, ini, ff, self.engine_sat)
                 c = {"t": time.time(), "d": d, "gz": {}, "datos": self.datos(),
                      "seg": round(time.time() - t0, 1), "generado": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
                 with self._lock:
@@ -127,6 +112,7 @@ def estado_ingest(engine: Engine) -> dict:
             cron = cron.astimezone(actualizar.TZ).isoformat(timespec="seconds")
     except Exception:
         cron = None
+    d["ahora"] = time.time()
     d["datos"] = max(filter(None, [d.get("ultima_ok"), cron]), default=None)
     return d
 
@@ -196,18 +182,10 @@ def crear_servidor(cfg: Servidor, mpro: Mpro, engine: Engine, engine_sat: Engine
                 return
             u = urlparse(self.path)
             if u.path in ("/", "/index.html"):
-                return self._enviar(200, pagina, "text/html; charset=utf-8")
+                return self._enviar(200, pagina, "text/html; charset=utf-8", [("Cache-Control", "no-store")])
             if u.path == "/api/estado":
                 memo["t"] = 0.0
                 return self._enviar(200, json.dumps(estado(), ensure_ascii=False).encode(), "application/json; charset=utf-8",
-                                    [("Cache-Control", "no-store")])
-            if u.path == "/api/progreso":
-                q = parse_qs(u.query)
-                try:
-                    ini, fin, _, _ = _parametros(q)
-                except (KeyError, ValueError) as e:
-                    return self._enviar(400, str(e).encode(), "text/plain; charset=utf-8")
-                return self._enviar(200, json.dumps(cache.estado_progreso(ini, fin)).encode(), "application/json; charset=utf-8",
                                     [("Cache-Control", "no-store")])
             if u.path != "/api/reporte":
                 return self._enviar(404, b"No encontrado", "text/plain; charset=utf-8")

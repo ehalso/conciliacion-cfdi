@@ -213,7 +213,6 @@ async function cargar(){
  if(!ini||!fin){st.textContent='Indica fecha inicio y fecha final.';return}
  btn.disabled=true;st.className='st busy';st.textContent='Consultando…';
  const t0=performance.now();
- const sondeo=setTimeout(function pp(){fetch('api/progreso?ini='+ini+'&fin='+fin,{cache:'no-store'}).then(r=>r.json()).then(p=>{if(!btn.disabled)return;if(p.activo){const n=p.etapas.length;$('prog').hidden=false;$('pbi').style.width=((p.i+.5)/n*100)+'%';$('pps').innerHTML=p.etapas.map((e,k)=>'<span class="'+(k<p.i?'ok':k==p.i?'ya':'')+'">'+(k<p.i?'✓ ':k==p.i?'▶ ':'○ ')+e+(k==p.i?'… '+p.seg+' s':'')+'</span>').join('')}}).catch(()=>{}).finally(()=>{if(btn.disabled)tmr2=setTimeout(pp,1000)})},700);let tmr2=null;
  try{
   const r=await fetch('api/reporte?ini='+ini+'&fin='+fin+'&agrupar='+($('agr').checked?1:0),{cache:'no-store'});
   if(!r.ok)throw new Error((await r.text())||r.status);
@@ -224,7 +223,7 @@ async function cargar(){
   st.textContent=(m.cache?'Desde caché del servidor':'Consulta a '+m.fuente)+' · generado '+m.generado+(m.cache?'':' ('+m.seg_consulta+' s de consulta)')+' · descarga '+((t1-t0)/1000).toFixed(2)+' s · render '+((t3-t2)/1000).toFixed(2)+' s';
   window.__tiempos={fetch_ms:Math.round(t1-t0),parse_ms:Math.round(t2-t1),render_ms:Math.round(t3-t2),total_ms:Math.round(t3-t0),cache:!!m.cache,filas:D.rows.length};
  }catch(e){st.className='st err';st.textContent='Error: '+e.message}
- clearTimeout(sondeo);clearTimeout(tmr2);$('prog').hidden=true;btn.disabled=false}
+ btn.disabled=false}
 $('agr').onchange=()=>cargar();
 $('go').onclick=()=>cargar();
 const fmtF=iso=>iso?new Date(iso).toLocaleString('es-MX',{timeZone:'America/Mexico_City',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
@@ -234,10 +233,15 @@ function pintarEstado(e){
  const run=e.estado==='corriendo',rf=$('rf'),fr=$('fr');
  rf.hidden=false;rf.disabled=run;rf.innerHTML=run?'Actualizando…':'&#8635; Actualizar datos';
  let t='Datos actualizados al '+fmtF(e.datos);
- if(run)t+=' · '+(e.pasos||[]).map(p=>p.nombre+(p.estado==='ok'?' ✓':p.estado==='corriendo'?' …':'')).join(' · ');
  if(e.estado==='error')t+=' · '+(e.error||'Error al actualizar.');
  fr.textContent=t;fr.className='st'+(e.estado==='error'?' err':'');
- if(run){vistoCorriendo=true;if(!tmr)tmr=setInterval(estadoIngest,3000)}
+ const pg=$('prog');pg.hidden=!run;
+ if(run){const ps=e.pasos||[],prev=e.duraciones||{},ahora=e.ahora||Date.now()/1000;let hecho=0;
+  $('pps').innerHTML=ps.map(p=>{const seg=p.estado==='corriendo'&&p.inicio?Math.round(ahora-p.inicio):0;
+   if(p.estado==='ok')hecho+=1;else if(p.estado==='corriendo')hecho+=Math.min(.95,seg/(prev[p.nombre]||seg*2+30));
+   return '<span class="'+(p.estado==='ok'?'ok':p.estado==='corriendo'?'ya':'')+'">'+(p.estado==='ok'?'✓ ':p.estado==='corriendo'?'▶ ':'○ ')+p.nombre+(p.estado==='ok'&&p.segundos!=null?' ('+p.segundos+' s)':'')+(p.estado==='corriendo'?'… '+seg+' s'+(prev[p.nombre]?' (antes tardó '+prev[p.nombre]+' s)':''):'')+'</span>'}).join('');
+  $('pbi').style.width=(ps.length?hecho/ps.length*100:0)+'%'}
+ if(run){vistoCorriendo=true;if(!tmr)tmr=setInterval(estadoIngest,2000)}
  else{if(tmr){clearInterval(tmr);tmr=null}if(vistoCorriendo&&e.estado==='ok'){vistoCorriendo=false;cargar()}vistoCorriendo=false}
 }
 function estadoIngest(){fetch('api/estado',{cache:'no-store'}).then(r=>r.json()).then(pintarEstado).catch(()=>{})}
