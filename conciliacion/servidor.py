@@ -67,23 +67,24 @@ class Cache:
             return gz, vigente
 
 
-def periodos_recientes(hoy: dt.date) -> list[tuple[str, str]]:
-    """Mes en curso y mes anterior, como (primer día, último día): lo que más se consulta."""
-    def mes(d: dt.date) -> tuple[str, str]:
-        ini = d.replace(day=1)
-        fin = (ini + dt.timedelta(days=32)).replace(day=1) - dt.timedelta(days=1)
-        return ini.isoformat(), fin.isoformat()
-    return [mes(hoy), mes(hoy.replace(day=1) - dt.timedelta(days=1))]
+PERIODO_DEFECTO = ("2026-01-01", "2026-01-31")  # el mismo que trae la interfaz al abrir
+
+
+def periodos_a_precalentar(hoy: dt.date) -> list[tuple[str, str]]:
+    """El periodo con el que abre la interfaz y el mes en curso."""
+    ini = hoy.replace(day=1)
+    fin = (ini + dt.timedelta(days=32)).replace(day=1) - dt.timedelta(days=1)
+    return [PERIODO_DEFECTO] + [(ini.isoformat(), fin.isoformat())] * ((ini.isoformat(), fin.isoformat()) != PERIODO_DEFECTO)
 
 
 def precalentar(cache: Cache, espera_seg: int = 60) -> None:
-    """Hilo: cuando los datos cambian (o al arrancar) arma en caché los periodos recientes, fuera de la ventana de crons."""
+    """Hilo: cuando los datos cambian (o al arrancar) arma en caché el periodo por defecto y el mes en curso, fuera de la ventana de crons."""
     ultima = object()
     while True:
         try:
             marca = cache.datos()
             if marca != ultima and not actualizar.en_ventana_cron():
-                for ini, fin in periodos_recientes(dt.date.today()):
+                for ini, fin in periodos_a_precalentar(dt.date.today()):
                     cache.reporte(ini, fin, "layout", True, False)
                 ultima = marca
         except Exception as e:

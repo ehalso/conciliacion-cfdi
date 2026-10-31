@@ -76,7 +76,7 @@ tr.r:hover td{background:var(--hl)}
  <div class="sub" id="sub" style="margin-top:10px"></div></div>
  <div class="kpis" id="kpis"></div>
 </header>
-<div class="bar" id="ctl"><label class="t">Fecha inicio <input type="date" id="fi"></label><label class="t">Fecha final <input type="date" id="ff"></label><label class="t" id="agrl"><input type="checkbox" id="agr" checked> Agrupar por cuenta contable</label><button class="btn" id="go">Consultar</button><button class="chip" id="rf" title="Trae los cambios de Mpro (.207) a Postgres y vuelve a consultar" hidden>&#8635; Actualizar datos</button><span class="st" id="fr"></span><span class="st" id="st"></span></div>
+<div class="bar" id="ctl"><label class="t">Fecha inicio <input type="date" id="fi" value="2026-01-01"></label><label class="t">Fecha final <input type="date" id="ff" value="2026-01-31"></label><label class="t" id="agrl"><input type="checkbox" id="agr" checked> Agrupar por cuenta contable</label><button class="btn" id="go">Consultar</button><button class="chip" id="rf" title="Trae los cambios de Mpro (.207) a Postgres y vuelve a consultar" hidden>&#8635; Actualizar datos</button><span class="st" id="fr"></span><span class="st" id="st"></span></div>
 <div class="prog" id="prog" hidden><div class="pb"><i id="pbi"></i></div><div class="ps" id="pps"></div></div>
 <div class="bar" role="group" aria-label="Filtrar por tipo"><span id="chips" style="display:contents"></span></div>
 <div class="bar">
@@ -251,5 +251,5 @@ $('rf').onclick=()=>{
  fetch('api/actualizar',{method:'POST',headers:{'X-Conciliacion':'1'}}).then(r=>r.status===409?r.json().then(j=>{$('fr').textContent=j.motivo;$('rf').disabled=false;setTimeout(estadoIngest,8000)}):r.json().then(pintarEstado))
   .catch(()=>{$('fr').textContent='No se pudo contactar al servidor.';$('rf').disabled=false})};
 estadoIngest();
-if(PRE){$('ctl').hidden=true;init(PRE)}else{const h=new Date(),f=(y,m,d)=>new Date(y,m,d,12).toISOString().slice(0,10);$('fi').value=f(h.getFullYear(),h.getMonth(),1);$('ff').value=f(h.getFullYear(),h.getMonth()+1,0);const q=new URLSearchParams(location.search);if(q.get('ini'))$('fi').value=q.get('ini');if(q.get('fin'))$('ff').value=q.get('fin');cargar()}
+if(PRE){$('ctl').hidden=true;init(PRE)}else{const q=new URLSearchParams(location.search);if(q.get('ini'))$('fi').value=q.get('ini');if(q.get('fin'))$('ff').value=q.get('fin');cargar()}
 </script>
