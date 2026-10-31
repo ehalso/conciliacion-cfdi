@@ -1,7 +1,7 @@
 """Refresco bajo demanda de los datos: ingest dlt (.207 → raw.*). Lo lanza el botón "Actualizar datos" del servidor.
 
 Mismos run_daily que los crons de 06:00 y 06:20 de trivasa-bi-core, en serie. Un solo refresco a la vez (flock) y no corre
-en la ventana de los crons, para no pisar sus pipelines dlt. Estado en STATE_DIR/estado.json; el log va a stdout.
+en la ventana de los crons (sin tocar el estado guardado), para no pisar sus pipelines dlt. Estado en STATE_DIR/estado.json; el log va a stdout.
 """
 import datetime as dt
 import fcntl
@@ -19,7 +19,7 @@ STATE_DIR = Path(os.environ.get("STATE_DIR", Path.home() / "conciliacion_state")
 TZ = ZoneInfo("America/Mexico_City")
 PASO_TIMEOUT = 1800
 VENTANA_CRON = (dt.time(5, 55), dt.time(7, 5))  # hora del host: dlt_comprobante_digital 06:00, dlt_gastos_cxp 06:20, dbt 06:58
-INTERVALO_MIN = 600  # segundos desde la última corrida correcta
+MOTIVO_VENTANA = "Hay cargas programadas en curso (05:55–07:05, hora del servidor). Intenta de nuevo después."
 
 PY = sys.executable
 PASOS = [
@@ -58,16 +58,10 @@ def main() -> int:
     except BlockingIOError:
         print("ya hay un refresco en curso")
         return 3
-    est = leer_estado()
-    ok = est.get("ultima_ok")
     if en_ventana_cron():
-        guardar({**est, "estado": "rechazado", "fin": ahora(),
-                 "motivo": "Hay cargas programadas en curso (05:55–07:05, hora del servidor). Intenta de nuevo después."})
+        print(MOTIVO_VENTANA)
         return 4
-    if ok and (dt.datetime.now(TZ) - dt.datetime.fromisoformat(ok)).total_seconds() < INTERVALO_MIN:
-        guardar({**est, "estado": "rechazado", "fin": ahora(),
-                 "motivo": f"Los datos se actualizaron hace menos de {INTERVALO_MIN // 60} minutos."})
-        return 5
+    est = leer_estado()
 
     pasos = [{"nombre": n, "estado": "pendiente", "segundos": None} for n, _ in PASOS]
     est = {**est, "estado": "corriendo", "inicio": ahora(), "fin": None, "error": None, "motivo": None, "pasos": pasos}

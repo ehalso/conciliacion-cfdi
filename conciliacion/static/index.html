@@ -233,7 +233,6 @@ function pintarEstado(e){
  let t='Datos actualizados al '+fmtF(e.datos);
  if(run)t+=' · '+(e.pasos||[]).map(p=>p.nombre+(p.estado==='ok'?' ✓':p.estado==='corriendo'?' …':'')).join(' · ');
  if(e.estado==='error')t+=' · '+(e.error||'Error al actualizar.');
- if(e.estado==='rechazado')t+=' · '+(e.motivo||'No se pudo actualizar ahora.');
  fr.textContent=t;fr.className='st'+(e.estado==='error'?' err':'');
  if(run){vistoCorriendo=true;if(!tmr)tmr=setInterval(estadoIngest,3000)}
  else{if(tmr){clearInterval(tmr);tmr=null}if(vistoCorriendo&&e.estado==='ok'){vistoCorriendo=false;cargar()}vistoCorriendo=false}
@@ -242,7 +241,7 @@ function estadoIngest(){fetch('api/estado',{cache:'no-store'}).then(r=>r.json())
 $('rf').onclick=()=>{
  if(!confirm('Esto trae los cambios de Mpro (.207) a Postgres y puede tardar unos minutos. ¿Actualizar ahora?'))return;
  $('rf').disabled=true;
- fetch('api/actualizar',{method:'POST',headers:{'X-Conciliacion':'1'}}).then(r=>r.json()).then(pintarEstado)
+ fetch('api/actualizar',{method:'POST',headers:{'X-Conciliacion':'1'}}).then(r=>r.status===409?r.json().then(j=>{$('fr').textContent=j.motivo;$('rf').disabled=false;setTimeout(estadoIngest,8000)}):r.json().then(pintarEstado))
   .catch(()=>{$('fr').textContent='No se pudo contactar al servidor.';$('rf').disabled=false})};
 estadoIngest();
 if(PRE){$('ctl').hidden=true;init(PRE)}else{const q=new URLSearchParams(location.search);if(q.get('ini'))$('fi').value=q.get('ini');if(q.get('fin'))$('ff').value=q.get('fin');cargar()}

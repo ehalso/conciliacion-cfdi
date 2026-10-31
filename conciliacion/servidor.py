@@ -188,6 +188,8 @@ def crear_servidor(cfg: Servidor, mpro: Mpro, engine: Engine, engine_sat: Engine
             if urlparse(self.path).path != "/api/actualizar" or self.headers.get("X-Conciliacion") != "1" or not habilitado:
                 return self._enviar(404 if not habilitado else 403, b"No permitido", "text/plain; charset=utf-8")
             if estado().get("estado") != "corriendo":
+                if actualizar.en_ventana_cron():
+                    return self._enviar(409, json.dumps({"motivo": actualizar.MOTIVO_VENTANA}, ensure_ascii=False).encode(), "application/json; charset=utf-8")
                 lanzar_ingest()
                 time.sleep(1.5)
                 memo["t"] = 0.0
