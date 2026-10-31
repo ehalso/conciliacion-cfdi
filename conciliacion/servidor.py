@@ -53,7 +53,7 @@ class Cache:
                 ff = (dt.date.fromisoformat(fin) + dt.timedelta(days=1)).isoformat()
                 d = construir(self.engine, ini, ff, self.engine_sat)
                 c = {"t": time.time(), "d": d, "gz": {}, "datos": self.datos(),
-                     "seg": round(time.time() - t0, 1), "generado": dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+                     "seg": round(time.time() - t0, 1), "generado": dt.datetime.now(actualizar.TZ).strftime("%Y-%m-%d %H:%M:%S")}
                 with self._lock:
                     self._items[(ini, fin)] = c
                     while len(self._items) > self.maximo:
