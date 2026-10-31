@@ -8,24 +8,32 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 
 from .atribucion import VARIOS
+from .db import normalizar_pg
 
 LOTE = 1000
 SQL = """
-SELECT UPPER(z.Cdp_IdDocumento) AS FACTURA, UPPER(cd.Cd_Timbre_UUID) AS COMPLEMENTO, cd.Cd_Timbre_Fecha AS FECHA
+SELECT UPPER(z.{doc}) AS FACTURA, UPPER(cd.Cd_Timbre_UUID) AS COMPLEMENTO, cd.Cd_Timbre_Fecha AS FECHA
 FROM ZTRV_Comprobante_Digital_Pago z
-JOIN Comprobante_Digital cd ON cd.Cd_Timbre_UUID=z.Cdp_Uuid_Pago AND cd.Cd_Tabla='CHEQUE'
+JOIN Comprobante_Digital cd ON {cmp_uuid} AND cd.Cd_Tabla='CHEQUE'
      AND cd.Cd_Tipo_CFDI='P' AND cd.Es_Cve_Estado='AC'
-WHERE z.Cdp_IdDocumento IN :uuids
+WHERE {doc_col} IN :uuids
 """
 
 
 def consultar(engine: Engine, uuids: list[str]) -> pd.DataFrame:
+    # dlt normaliza Cdp_IdDocumento a cdp_id_documento en raw
+    # En raw los UUID quedan en minúsculas y Postgres distingue mayúsculas (SQL Server no)
+    pg = engine.dialect.name == "postgresql"
+    doc = "cdp_id_documento" if pg else "Cdp_IdDocumento"
+    sql = SQL.format(doc=doc, doc_col=f"UPPER(z.{doc})" if pg else f"z.{doc}",
+                     cmp_uuid="UPPER(cd.Cd_Timbre_UUID)=UPPER(z.cdp_uuid_pago)" if pg else "cd.Cd_Timbre_UUID=z.Cdp_Uuid_Pago")
     partes = []
     with engine.connect() as con:
         for i in range(0, len(uuids), LOTE):
-            partes.append(pd.read_sql(text(SQL).bindparams(bindparam("uuids", expanding=True)), con,
+            partes.append(pd.read_sql(text(sql).bindparams(bindparam("uuids", expanding=True)), con,
                                       params={"uuids": uuids[i:i + LOTE]}))
-    return pd.concat(partes, ignore_index=True) if partes else pd.DataFrame(columns=["FACTURA", "COMPLEMENTO", "FECHA"])
+    c = pd.concat(partes, ignore_index=True) if partes else pd.DataFrame(columns=["FACTURA", "COMPLEMENTO", "FECHA"])
+    return normalizar_pg(c)
 
 
 def resumir(c: pd.DataFrame) -> pd.DataFrame:

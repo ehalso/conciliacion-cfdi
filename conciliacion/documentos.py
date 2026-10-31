@@ -9,12 +9,12 @@ import numpy as np
 import pandas as pd
 from sqlalchemy.engine import Connection
 
-from . import sql
+from .dialecto import sql
 from .db import consultar, tablas_temporales
 
 _IMP_JOIN_ESTANDAR = "i.{p}_Folio=c.{p}_Folio AND i.{p}_ID=c.{p}_ID"
 _IMP_JOIN_CXP = "i.Cxp_Folio=c.Cxp_Folio"  # Cuenta_X_Pagar no tiene ID: Cxp_Folio es único
-_POL_REF_CXP = "(pd.Pd_Referencia=d.FOLIO OR (ISNULL(d.REF,'')<>'' AND pd.Pd_Referencia=d.REF))"
+_POL_REF_CXP = "(pd.Pd_Referencia=d.FOLIO OR (COALESCE(d.REF,'')<>'' AND pd.Pd_Referencia=d.REF))"
 
 
 @dataclass(frozen=True)
@@ -67,13 +67,13 @@ def _filtro_doc(t: TipoDocumento) -> str:
 
 def _plantillas(t: TipoDocumento) -> dict:
     return dict(
-        p=t.p, tabla=t.tabla, imp=t.impuesto, origen=t.origen_xml, pc=t.origen_xml, neto=t.neto, cxp=t.cxp,
+        p=t.p, tabla=t.tabla, imp=t.impuesto, origen=t.origen_xml.upper(), pc=t.origen_xml.upper(), neto=t.neto, cxp=t.cxp,
         imp_join=(_IMP_JOIN_CXP if t.es_cxp else _IMP_JOIN_ESTANDAR).format(p=t.p),
         imp_col="Cxpi_Importe" if t.es_cxp else "Im_Importe",
         filtro_doc=_filtro_doc(t),
         pol_ref=_POL_REF_CXP if t.es_cxp else "pd.Pd_Referencia=d.FOLIO",
         excl_pol=",'2130'" if t.es_cxp else "",
-        filtro05="AND ISNULL(cc.cc_titulo,'')<>'05'" if t.c05 else "",
+        filtro05="AND COALESCE(cc.cc_titulo,'')<>'05'" if t.c05 else "",
     )
 
 

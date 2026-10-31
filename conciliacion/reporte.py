@@ -2,7 +2,7 @@
 import pandas as pd
 from sqlalchemy.engine import Engine
 
-from . import sql
+from .dialecto import sql
 from .complemento import agregar_complemento
 from .db import parametros, tablas_temporales
 from .documentos import TIPOS, consultar_proveedores, construir_tipo

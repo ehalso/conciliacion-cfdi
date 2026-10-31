@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy.engine import Connection
 
-from . import sql
+from .dialecto import sql
 from .atribucion import VARIOS, atribuir_documento
 from .db import consultar
 
