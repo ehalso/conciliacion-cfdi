@@ -18,7 +18,7 @@ conciliacion/
   posproceso.py   cargo/abono, prorrateo, totales, catálogos SAT
   reporte.py      construir(engine, fi, ff) -> DataFrame unificado
   vista.py        DataFrame -> JSON de la interfaz (layout / ceco, agrupado por cuenta)
-  servidor.py     http.server con auth básica, caché por periodo y /api/reporte
+  servidor.py     http.server con auth básica, caché por periodo (con precalentado del periodo por defecto y el mes en curso), /api/reporte, /api/estado y /api/actualizar
   static/         index.html (SheetJS) y columnas.json
 tests/            pruebas unitarias de las funciones puras
 docs/             reglas de negocio y mejoras futuras
