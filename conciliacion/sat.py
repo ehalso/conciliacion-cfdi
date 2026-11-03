@@ -18,7 +18,7 @@ TIPO_SOLO_SAT = "Solo SAT"
 # `tipo` solo tiene RECIBIDO y EMITIDO; lo autoemitido (emisor = receptor, p. ej. nómina) llega como EMITIDO.
 # SAT_RFC/SAT_PROVEEDOR son la contraparte: el emisor en recibidos y el receptor en emitidos.
 SQL_CFDI_BASE = """
-SELECT upper(c.uuid) AS uuid, c.serie, c.folio, c.tipo_comprobante, c.fecha, c.{rfc} AS rfc_emisor, c.{nombre} AS nombre_emisor, c.total,
+SELECT upper(c.uuid) AS uuid, c.serie, c.folio, c.tipo_comprobante, c.fecha, c.{rfc} AS rfc_emisor, c.{nombre} AS nombre_emisor, {total} AS total,
        (k.uuid IS NOT NULL) AS cancelado,
        substring(c.xml::text from 'Concepto[^>]*?Descripcion="([^"]*)"') AS concepto,
        substring(c.xml::text from 'UsoCFDI="([^"]*)"') AS uso_cfdi,
@@ -28,15 +28,17 @@ LEFT JOIN (SELECT DISTINCT upper(uuid) AS uuid FROM raw_sat_api.cancelados WHERE
 WHERE {filtro}
 """
 RECIBIDO, EMITIDO = "RECIBIDO", "EMITIDO"
+# En el complemento de pago el total del CFDI es 0: el monto es el de los pagos (en emitidos, la cobranza de Mpro).
+_TOTAL = {RECIBIDO: "c.total", EMITIDO: "CASE WHEN c.tipo_comprobante = 'P' THEN c.pagos_monto_total ELSE c.total END"}
 _FILTRO_UUIDS = {
     RECIBIDO: "(c.tipo = 'RECIBIDO' OR (c.tipo = 'EMITIDO' AND c.rfc_emisor = c.rfc_receptor)) AND upper(c.uuid) = ANY(:uuids)",
     EMITIDO: "c.tipo = 'EMITIDO' AND upper(c.uuid) = ANY(:uuids)",
 }
-# CFDI vigentes del periodo (por fecha del CFDI); luego se descartan los que ya están en Mpro. En emitidos solo Ingreso y
-# Egreso a terceros (los pagos, traslados y la nómina propia no son ventas).
+# CFDI vigentes del periodo (por fecha del CFDI); luego se descartan los que ya están en Mpro. En emitidos solo Ingreso, Egreso
+# y Pago a terceros (los traslados y la nómina propia no son ventas ni cobranza).
 _FILTRO_SOLO_SAT = {
     RECIBIDO: "c.tipo = 'RECIBIDO' AND c.fecha >= :fi AND c.fecha < :ff AND k.uuid IS NULL",
-    EMITIDO: "c.tipo = 'EMITIDO' AND c.tipo_comprobante IN ('I','E') AND c.rfc_emisor <> c.rfc_receptor "
+    EMITIDO: "c.tipo = 'EMITIDO' AND c.tipo_comprobante IN ('I','E','P') AND c.rfc_emisor <> c.rfc_receptor "
              "AND c.fecha >= :fi AND c.fecha < :ff AND k.uuid IS NULL",
 }
 _CONTRAPARTE = {RECIBIDO: ("rfc_emisor", "nombre_emisor"), EMITIDO: ("rfc_receptor", "nombre_receptor")}
@@ -44,7 +46,7 @@ _CONTRAPARTE = {RECIBIDO: ("rfc_emisor", "nombre_emisor"), EMITIDO: ("rfc_recept
 
 def sql_cfdi(sentido: str = RECIBIDO, solo_sat: bool = False) -> str:
     rfc, nombre = _CONTRAPARTE[sentido]
-    return SQL_CFDI_BASE.format(rfc=rfc, nombre=nombre, filtro=(_FILTRO_SOLO_SAT if solo_sat else _FILTRO_UUIDS)[sentido])
+    return SQL_CFDI_BASE.format(rfc=rfc, nombre=nombre, total=_TOTAL[sentido], filtro=(_FILTRO_SOLO_SAT if solo_sat else _FILTRO_UUIDS)[sentido])
 
 
 SQL_CFDI = sql_cfdi()

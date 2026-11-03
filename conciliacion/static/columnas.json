@@ -455,6 +455,48 @@
   "linea": false
  },
  {
+  "k": "FACTURA_PAGADA",
+  "l": "Factura pagada",
+  "g": "Factura pagada",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "UUID_FACTURA_PAGADA",
+  "l": "UUID factura pagada",
+  "g": "Factura pagada",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "PARCIALIDAD",
+  "l": "Parcialidad",
+  "g": "Factura pagada",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "SALDO_ANTERIOR",
+  "l": "Saldo anterior",
+  "g": "Factura pagada",
+  "t": "n",
+  "linea": false
+ },
+ {
+  "k": "IMPORTE_PAGADO",
+  "l": "Importe pagado",
+  "g": "Factura pagada",
+  "t": "n",
+  "linea": false
+ },
+ {
+  "k": "SALDO_INSOLUTO",
+  "l": "Saldo insoluto",
+  "g": "Factura pagada",
+  "t": "n",
+  "linea": false
+ },
+ {
   "k": "SAT_UUID",
   "l": "UUID",
   "g": "Base de datos SAT",

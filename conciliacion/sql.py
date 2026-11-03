@@ -400,3 +400,42 @@ JOIN Poliza_Control plc ON plc.Pc_Tabla='{pc}' AND plc.Pc_Documento=d.PDOC AND p
 JOIN Poliza pl ON pl.Pl_Folio=plc.Pl_Folio AND pl.Es_Cve_Estado<>'CA' {pol_fecha}
 JOIN Poliza_Detalle pd ON pd.Pl_Folio=plc.Pl_Folio AND {pol_ref}
 """
+
+# Cobranza (complemento de pago emitido, CFDI tipo P): una fila de Pago_Parcial por factura pagada. Pp_Folio es el folio del
+# COMPROBANTE_PAGO; Cxc_Folio+Pc_ID ligan al cobro (Pago_CXC), cuya póliza (Pc_Tabla='PAGO_CXC', una "COBRANZA DEL <día>" por día,
+# con todos los cobros) lo referencia como Cxc_Folio+Pc_ID; Pc_Documento del cobro es el recibo que citan sus líneas: un cargo a
+# bancos/caja por recibo y un abono a clientes (1120) por cobro. El IVA trasladado se asienta agregado por día (no por documento).
+COBRANZA_SETUP = """
+SELECT pp.Pp_Folio AS FOLIO, pp.Pp_Id AS PP_ID, RTRIM(pp.Cxc_Folio)+RTRIM(pp.Pc_ID) AS PDOC, pp.Pp_Fecha AS FDOC,
+       (SELECT MAX(pc.Pc_Documento) FROM Pago_CXC pc WHERE pc.Cxc_Folio=pp.Cxc_Folio AND pc.Pc_ID=pp.Pc_ID AND pc.Es_Cve_Estado<>'CA') AS RECIBO,
+       pp.Pp_Total AS TOTAL_COBRO
+INTO #cob
+FROM Pago_Parcial pp JOIN Sucursal s ON s.Sc_Cve_Sucursal=pp.Sc_Cve_Sucursal
+WHERE pp.Es_Cve_Estado<>'CA' AND pp.Pp_Fecha>=:fi AND pp.Pp_Fecha<:ff AND s.Em_Cve_Empresa=:emp;
+"""
+COBRANZA_CABECERA_SQL = """
+SELECT d.FOLIO, d.PP_ID, d.RECIBO AS FOLIO_PAGO, pp.Pp_Fecha AS FECHA, pp.Mn_Cve_Moneda AS MONEDA, pp.Cl_Cve_Cliente AS CLAVE_PROVEEDOR,
+       pp.Pp_Documento AS FACTURA_PAGADA, pp.Pp_UUID_Original AS UUID_FACTURA_PAGADA, pp.Pp_Parcialidad AS PARCIALIDAD,
+       pp.Pp_Saldo_Anterior_DR AS SALDO_ANTERIOR, pp.Pp_Pago_DR AS IMPORTE_PAGADO, pp.Pp_Saldo_Insoluto_DR AS SALDO_INSOLUTO,
+       pp.Pp_SubTotal AS SUBTOTAL_NETO, pp.Pp_Impuesto AS IMP_0006, pp.Pp_Total AS TOTAL_SQL,
+       fp.Fp_Descripcion AS FORMA_PAGO, NULLIF(RTRIM(pp.Pp_Referencia),'') AS NO_CHEQUE_TRANSF, NULLIF(RTRIM(pp.Pp_Banco),'') AS BANCO,
+       NULLIF(RTRIM(pp.Pp_Cuenta_Bancaria),'') AS CUENTA_BANCARIA, cd.Cd_Timbre_UUID AS UUID, cd.Cd_RFC_Emisor AS XML_RFC_EMISOR,
+       cd.Cd_Serie AS XML_SERIE, cd.Cd_Serie_Folio AS XML_FOLIO, cd.Cd_Timbre_Fecha AS FECHA_COMPLEMENTO_PAGO
+FROM #cob d
+JOIN Pago_Parcial pp ON pp.Pp_Folio=d.FOLIO AND pp.Pp_Id=d.PP_ID
+LEFT JOIN Forma_Pago fp ON fp.Fp_Cve_Forma_Pago=pp.Pp_Forma_Pago
+LEFT JOIN Comprobante_Digital cd ON cd.Cd_Tabla='COMPROBANTE_PAGO' AND cd.Cd_Documento=pp.Pp_Folio AND cd.Es_Cve_Estado='AC'
+"""
+COBRANZA_POLIZA_SQL = """
+SELECT d.FOLIO, d.PDOC, d.RECIBO, d.TOTAL_COBRO, pl.Pl_Folio AS POLIZA, pl.Pl_Fecha AS FECHA_POLIZA, pl.Pl_Tipo AS TIPO_POLIZA, pl.Pl_Numero AS NUMERO_POLIZA,
+       pl.Pl_Comentario AS CONCEPTO_POLIZA, pd.Pd_ID AS PD_ID, pd.Pd_Referencia AS PD_REF, pd.Cc_Cve_Cuenta_Contable AS CUENTA_REGISTRO,
+       cc.Cc_Descripcion AS NOMBRE_CUENTA_REGISTRO, NULLIF(LTRIM(RTRIM(pd.Pd_Centro_Costo)),'') AS CECO, cco.Cc_Descripcion AS CECO_DESCRIPCION,
+       CASE WHEN pd.Pd_Tipo=1 THEN pd.Pd_Importe ELSE 0 END AS CARGO, CASE WHEN pd.Pd_Tipo=2 THEN pd.Pd_Importe ELSE 0 END AS ABONO
+FROM #cob d
+JOIN Poliza_Control plc ON plc.Pc_Tabla='PAGO_CXC' AND plc.Pc_Documento=d.PDOC AND plc.Es_Cve_Estado<>'CA'
+JOIN Poliza pl ON pl.Pl_Folio=plc.Pl_Folio AND pl.Es_Cve_Estado<>'CA'
+JOIN Poliza_Detalle pd ON pd.Pl_Folio=plc.Pl_Folio AND pd.Pd_Referencia=d.RECIBO
+LEFT JOIN Cuenta_Contable cc ON cc.Cc_Cve_Cuenta_Contable=pd.Cc_Cve_Cuenta_Contable
+LEFT JOIN Centro_Costo cco ON cco.Cc_Cve_Centro_Costo=pd.Pd_Centro_Costo
+WHERE ISNULL(pd.Pd_Importe,0)<>0
+"""

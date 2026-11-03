@@ -3,7 +3,7 @@ from unittest import mock
 
 import pandas as pd
 
-from conciliacion import documentos, servidor, vista
+from conciliacion import cobranza, documentos, servidor, vista
 from conciliacion.documentos import TIPOS, TIPOS_CLIENTE, _plantillas
 from conciliacion.reporte import construir_emitidos
 from conciliacion.sat import EMITIDO, RECIBIDO, sql_cfdi
@@ -24,11 +24,17 @@ class SqlCfdi(unittest.TestCase):
         self.assertIn("c.nombre_receptor AS nombre_emisor", q)
         self.assertNotIn("RECIBIDO", q)
 
-    def test_solo_sat_emitidos_filtra_ingreso_egreso_y_autoemitidos(self):
+    def test_solo_sat_emitidos_filtra_ingreso_egreso_pago_y_autoemitidos(self):
         q = sql_cfdi(EMITIDO, solo_sat=True)
-        self.assertIn("tipo_comprobante IN ('I','E')", q)
+        self.assertIn("tipo_comprobante IN ('I','E','P')", q)
         self.assertIn("c.rfc_emisor <> c.rfc_receptor", q)
         self.assertIn(":fi", q)
+
+
+    def test_monto_del_pago_solo_en_emitidos(self):
+        self.assertIn("pagos_monto_total", sql_cfdi(EMITIDO))
+        self.assertNotIn("pagos_monto_total", sql_cfdi(RECIBIDO))
+        self.assertIn("c.total AS total", sql_cfdi(RECIBIDO))
 
 
 class Plantillas(unittest.TestCase):
@@ -66,6 +72,41 @@ class Vista(unittest.TestCase):
         r = vista.a_datos(self.d(), "layout", False, emitidos=True)
         ks = [c["k"] for c in r["cols"]]
         self.assertEqual([x[ks.index("Tipo")] for x in r["rows"]], ["Venta", "NC cliente"])
+
+
+class Cobranza(unittest.TestCase):
+    def cab(self):
+        base = dict(FECHA="2026-02-03", CLAVE_PROVEEDOR="1", FOLIO_PAGO="R1", SALDO_ANTERIOR=100.0, SALDO_INSOLUTO=0.0, IMPORTE_PAGADO=100.0,
+                    SUBTOTAL_NETO=86.21, IMP_0006=13.79, TOTAL_SQL=100.0, PARCIALIDAD=1.0)
+        return pd.DataFrame([
+            {**base, "FOLIO": "A", "PP_ID": "0001", "FACTURA_PAGADA": "F1", "UUID_FACTURA_PAGADA": "U1"},
+            {**base, "FOLIO": "B", "PP_ID": "0001", "FACTURA_PAGADA": "F2", "UUID_FACTURA_PAGADA": "U2"},
+            {**base, "FOLIO": "B", "PP_ID": "0002", "FACTURA_PAGADA": "F3", "UUID_FACTURA_PAGADA": "U3"},
+        ])
+
+    def test_un_documento_por_folio_suma_importes(self):
+        d = cobranza._documentos(self.cab()).set_index("FOLIO")
+        self.assertEqual(len(d), 2)
+        self.assertEqual(d.loc["B", "TOTAL_SQL"], 200.0)
+        self.assertEqual(d.loc["B", "FACTURA_PAGADA"], "VARIOS")
+        self.assertTrue(pd.isna(d.loc["B", "SALDO_INSOLUTO"]))
+        self.assertEqual((d.loc["A", "FACTURA_PAGADA"], d.loc["A", "PARCIALIDAD"]), ("F1", "1"))
+
+    def test_poliza_recibo_compartido(self):
+        def fila(folio, tot, pd_id, cargo, abono):
+            return dict(FOLIO=folio, PDOC="P" + folio, RECIBO="R1", TOTAL_COBRO=tot, POLIZA="L1", PD_ID=pd_id, CARGO=cargo, ABONO=abono)
+        filas = [fila(f, t, i, c, a) for f, t in (("A", 100.0), ("B", 50.0)) for i, c, a in
+                 (("01", 150.0, 0.0), ("02", 0.0, 100.01), ("03", 0.0, 50.0), ("04", 0.0, 9.0))]
+        r = cobranza._lineas_poliza(pd.DataFrame(filas))
+        self.assertEqual(len(r), 4)
+        por = r.groupby("FOLIO")[["CARGO", "ABONO"]].sum()
+        self.assertEqual(por.loc["A"].tolist(), [150.0, 109.01])
+        self.assertEqual(por.loc["B"].tolist(), [0.0, 50.0])
+
+    def test_orden_y_tipo(self):
+        self.assertEqual(cobranza.TIPO, "Cobranza")
+        self.assertLess(vista.ORDEN_TIPO["NC cliente"], vista.ORDEN_TIPO["Cobranza"])
+        self.assertIn("pp.Es_Cve_Estado<>'CA'", cobranza.sql.COBRANZA_SETUP)
 
 
 class Servidor(unittest.TestCase):

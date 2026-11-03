@@ -3,6 +3,7 @@ import pandas as pd
 from sqlalchemy.engine import Engine
 
 from .dialecto import sql
+from .cobranza import construir_cobranza
 from .complemento import agregar_complemento
 from .db import parametros, tablas_temporales
 from .documentos import TIPOS, TIPOS_CLIENTE, consultar_clientes, consultar_proveedores, construir_tipo
@@ -34,16 +35,16 @@ def construir(engine: Engine, fi: str, ff: str, engine_sat: Engine | None = None
 
 
 def construir_emitidos(engine: Engine, fi: str, ff: str, engine_sat: Engine | None = None) -> pd.DataFrame:
-    """Ventas y notas de crédito de cliente (CFDI emitidos) para [fi, ff); solo Mpro (SQL Server).
+    """Ventas, notas de crédito y cobranza (complementos de pago) de cliente (CFDI emitidos) para [fi, ff); solo Mpro (SQL Server).
 
     CLAVE/RFC/NOMBRE_PROVEEDOR llevan los datos del cliente. Con `engine_sat` cruza por UUID contra los EMITIDO del SAT.
     """
     if engine.dialect.name != "mssql":
-        raise RuntimeError("Ventas solo está disponible con CONC_BACKEND=mssql: el warehouse no replica Factura/Nota_Credito/Cliente.")
+        raise RuntimeError("Ventas solo está disponible con CONC_BACKEND=mssql: el warehouse no replica Factura/Nota_Credito/Pago_Parcial/Cliente.")
     p = parametros(fi, ff)
     with engine.connect() as con:
         clientes = consultar_clientes(con)
-        partes = [construir_tipo(con, t, p, clientes) for t in TIPOS_CLIENTE]
+        partes = [construir_tipo(con, t, p, clientes) for t in TIPOS_CLIENTE] + [construir_cobranza(con, p, clientes)]
     d = post(pd.concat(partes, ignore_index=True, sort=False))
     if engine_sat is None:
         return d

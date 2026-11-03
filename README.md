@@ -48,16 +48,17 @@ Con credenciales de Postgres (`SAT_PG_USER`/`SAT_PG_PASSWORD` o `POSTGRES_DW_RO_
 
 La sesión a Postgres es de solo lectura. Si no hay credenciales o el SAT falla, el reporte sale sin esas columnas (`meta.sat = false`).
 
-## Ventas (emitidos)
+## Ventas y cobranza (emitidos)
 
 Selector "Recibidos / Emitidos" junto a las pestañas Detalle/Resumen (`/api/reporte?...&sentido=recibidos|emitidos`; por omisión recibidos). El layout de emitidos usa las mismas columnas que recibidos, adaptadas a cliente (las columnas de proveedor se rotulan "Clave cliente", "RFC cliente", "Cliente"):
 
 - **Venta**: `Factura`/`Factura_Impuesto` (CFDI emitido tipo I). Póliza `Pc_Tabla='VENTA'`, ligada por `Fc_Documento` (o `Fc_Folio` si está vacío), ventana de ±45 días por reciclaje de folios, solo pólizas activas; las líneas de ingreso se ligan por `<Fc_Serie><folio de serie a 10 caracteres>`.
 - **NC cliente**: `Nota_Credito`/`Nota_Credito_Impuesto` (CFDI emitido tipo E), importes con signo negativo. Se excluyen las cuentas 1120, 2140, 1140 y 5100 (inventario, costo, anticipos).
+- **Cobranza**: complemento de pago emitido (CFDI tipo P) desde `Pago_Parcial` (un renglón por factura pagada; `Pp_Folio` = `Cd_Documento` del `COMPROBANTE_PAGO`). Periodo por la fecha del pago en Mpro (`Pp_Fecha`), sin cancelados. Un documento por folio (si paga varias facturas: sumas y "VARIOS"); subtotal/IVA/total del pago de `Pp_SubTotal`/`Pp_Impuesto`/`Pp_Total` y grupo "Factura pagada" (factura, UUID, parcialidad, saldos). Los PXC (pago sin timbrar) salen sin UUID ni póliza. Póliza: `Pc_Tabla='PAGO_CXC'` (documento = `Cxc_Folio`+`Pc_ID`), una "COBRANZA DEL <día>" con todos los cobros; el cargo a bancos es único por recibo y se muestra en el primer cobro del recibo, y el abono a clientes (1120) se asigna al cobro de importe más cercano (±0.05). El IVA de esa póliza va agregado por día, no por documento. Forma de pago: descripción de `Forma_Pago` (claves propias de Mpro, no SAT). En el SAT el monto de un P es `pagos_monto_total`.
 - Impuestos de venta: 0006 IVA 16 %, 0007 tasa 0, 0008 exento.
-- Cruce SAT contra `tipo = 'EMITIDO'` (las columnas "RFC/Nombre del cliente" son el receptor). "Solo SAT" en emitidos: CFDI I/E vigentes del periodo con emisor distinto del receptor y UUID ausente de `Comprobante_Digital`.
+- Cruce SAT contra `tipo = 'EMITIDO'` (las columnas "RFC/Nombre del cliente" son el receptor). "Solo SAT" en emitidos: CFDI I/E/P vigentes del periodo con emisor distinto del receptor y UUID ausente de `Comprobante_Digital`.
 
-Limitaciones: solo `CONC_BACKEND=mssql` (el warehouse Postgres no replica Factura/Nota_Credito/Cliente; con postgres `sentido=emitidos` responde 400); el IVA trasladado de la póliza (2160) no se liga por documento (el IVA está en `IMP_0006`); no incluye cobranza/complementos de pago; el precalentado de caché solo cubre recibidos; monedas distintas de MXN sin probar.
+Limitaciones: solo `CONC_BACKEND=mssql` (el warehouse Postgres no replica Factura/Nota_Credito/Cliente; con postgres `sentido=emitidos` responde 400); el IVA trasladado de la póliza (2160) no se liga por documento en ventas ni en cobranza (el IVA está en `IMP_0006`); el precalentado de caché solo cubre recibidos; monedas distintas de MXN sin probar.
 
 ## Resumen SAT vs Mpro
 
