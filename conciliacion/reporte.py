@@ -9,7 +9,8 @@ from .db import parametros, tablas_temporales
 from .documentos import TIPOS, TIPOS_CLIENTE, consultar_clientes, consultar_proveedores, construir_tipo
 from .gasto import construir_gasto
 from .posproceso import post
-from .sat import EMITIDO, agregar_sat, agregar_solo_sat
+from .sat import EMITIDO, TRASLADO, agregar_sat, agregar_solo_sat
+from .traslados import conciliar_estatus, construir_traslados as construir_traslados_mpro
 
 
 def construir(engine: Engine, fi: str, ff: str, engine_sat: Engine | None = None) -> pd.DataFrame:
@@ -50,3 +51,21 @@ def construir_emitidos(engine: Engine, fi: str, ff: str, engine_sat: Engine | No
         return d
     d = agregar_sat(d, engine_sat, EMITIDO)
     return agregar_solo_sat(d, engine_sat, engine, fi, ff, EMITIDO) if "SAT_UUID" in d else d
+
+
+def construir_traslados(engine: Engine, fi: str, ff: str, engine_sat: Engine | None = None) -> pd.DataFrame:
+    """Traslados (REMISION, TRANSFERENCIA, PEDIDO, ORDEN_COMPRA) de [fi, ff): una fila por folio, con o sin CFDI; solo Mpro (SQL Server).
+
+    Con `engine_sat` cruza por UUID contra los CFDI tipo T autoemitidos del SAT y agrega los que Mpro no tiene (Tipo "Solo SAT").
+    """
+    if engine.dialect.name != "mssql":
+        raise RuntimeError("Traslados solo está disponible con CONC_BACKEND=mssql: el warehouse no replica Traslado/Complemento_Carta_Porte.")
+    p = parametros(fi, ff)
+    with engine.connect() as con:
+        d = construir_traslados_mpro(con, p, consultar_clientes(con))
+    if engine_sat is None:
+        return d
+    d = agregar_sat(d, engine_sat, TRASLADO)
+    if "SAT_UUID" not in d:
+        return d
+    return conciliar_estatus(agregar_solo_sat(d, engine_sat, engine, fi, ff, TRASLADO))

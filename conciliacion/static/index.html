@@ -85,7 +85,7 @@ tr.r:hover td{background:var(--hl)}
 <div id="vrep">
 <div class="bar" id="ctl"><span id="psel" hidden><label class="t">Año <select id="sy"></select></label><label class="t">Mes <select id="sm"></select></label></span><span id="dsel"><label class="t">Fecha inicio <input type="date" id="fi" value="2026-01-01"></label><label class="t">Fecha final <input type="date" id="ff" value="2026-01-31"></label></span><label class="t" id="agrl"><input type="checkbox" id="agr" checked> Agrupar por cuenta contable</label><label class="t" id="excl"><input type="checkbox" id="exc"> Mostrar excluidos (sin CFDI por criterio)</label><button class="btn" id="go">Consultar</button><button class="chip" id="rf" title="Trae los cambios de Mpro (.207) a Postgres y vuelve a consultar" hidden>&#8635; Actualizar datos</button><span class="st" id="fr"></span><span class="st" id="st"></span></div>
 <div class="prog" id="prog" hidden><div class="pb"><i id="pbi"></i></div><div class="ps" id="pps"></div></div>
-<div class="bar" role="tablist" aria-label="Vista"><button class="chip" role="tab" id="tdet" aria-pressed="true">Detalle</button><button class="chip" role="tab" id="tres" aria-pressed="false">Resumen SAT vs Mpro</button><label class="t" id="senl">Documentos <select id="sen"><option value="recibidos">Recibidos (compras y gastos)</option><option value="emitidos">Emitidos (ventas, notas de crédito y cobranza)</option></select></label></div>
+<div class="bar" role="tablist" aria-label="Vista"><button class="chip" role="tab" id="tdet" aria-pressed="true">Detalle</button><button class="chip" role="tab" id="tres" aria-pressed="false">Resumen SAT vs Mpro</button><label class="t" id="senl">Documentos <select id="sen"><option value="recibidos">Recibidos (compras y gastos)</option><option value="emitidos">Emitidos (ventas, notas de crédito y cobranza)</option><option value="traslados">Traslados (remisiones, transferencias, pedidos y órdenes de compra)</option></select></label></div>
 <div id="det" style="display:contents">
 <div class="bar" role="group" aria-label="Filtrar por tipo"><span id="chips" style="display:contents"></span></div>
 <div class="bar">
@@ -107,7 +107,10 @@ const $=id=>document.getElementById(id);
 function init(D){
 window.__ETIQ=Object.fromEntries(D.cols.map(c=>[c.k,c.l]));
 const RH=26,meta=D.meta||{},agrupado=!!D.agrupar;
-const TIPO={'Gasto':'#06707D','Compra':'#A16207','Indirecto':'#C2410C','NC proveedor':'#BE185D','CxP libre':'#7A4EA3','CxP orden compra':'#78350F','Solo SAT':'#475569','Venta':'#15803D','NC cliente':'#0E7490','Cobranza':'#4D7C0F'};
+const TIPO={'Gasto':'#06707D','Compra':'#A16207','Indirecto':'#C2410C','NC proveedor':'#BE185D','CxP libre':'#7A4EA3','CxP orden compra':'#78350F','Solo SAT':'#475569','Venta':'#15803D','NC cliente':'#0E7490','Cobranza':'#4D7C0F','Traslado · Remisión':'#0F766E','Traslado · Transferencia':'#1D4ED8','Traslado · Pedido':'#9333EA','Traslado · Orden de compra':'#B45309'};
+const ORI_TRASLADO={REMISION:'Remisión',TRANSFERENCIA:'Transferencia',PEDIDO:'Pedido',ORDEN_COMPRA:'Orden de compra'};
+const esTr=meta.sentido=='traslados';
+$('agrl').hidden=esTr||vistaRes;$('only').parentNode.hidden=esTr;
 // Gasto: rampa de 8 pasos (teal oscuro a lila claro); los 4 pasos claros llevan texto oscuro (3.er valor = 1)
 const ORI={registro_gasto:['Registro de gasto','#084741'],comprobacion_gasto:['Comprobación de gasto','#0B5B5D'],orden_compra:['Orden de compra','#06707D'],control_combustible:['Control de combustible','#167F9B'],viaje:['Viaje','#15A8E4',1],gasto_reclasificacion:['Gasto reclasificación','#64B9FE',1],consumo_interno:['Consumo interno','#A5C9FF',1],gasto_registro_nomina:['Nómina','#D2DDFD',1]};
 // la etiqueta de Tipo absorbe el origen: Gasto · origen, CxP · Libre/Orden Compra; el resto, solo el tipo
@@ -116,7 +119,7 @@ const tOf=[],oOf=[];
 const cols=D.cols.filter(c=>c.k!='ORIGEN');
 const rows=(function(){const c0=D.cols,T0=c0.findIndex(c=>c.k=='Tipo'),O0=c0.findIndex(c=>c.k=='ORIGEN'),F0=c0.findIndex(c=>c.k=='FOLIO');
  let k0=null,cT=null,cO=null;
- return D.rows.map((r,i)=>{const k=r[T0]+'|'+r[F0];if(k!==k0){k0=k;cT=r[T0];cO=O0<0?null:r[O0]}tOf[i]=cT;oOf[i]=cO;
+ return D.rows.map((r,i)=>{const k=r[T0]+'|'+r[F0];if(k!==k0){k0=k;cT=r[T0];cO=O0<0?null:r[O0];if(cT=='Traslado'&&cO){cT='Traslado · '+(ORI_TRASLADO[cO]||cO);cO=null}}tOf[i]=cT;oOf[i]=cO;
   const n=r.slice();n[T0]=lbl(cT,cO);if(O0>=0)n.splice(O0,1);return n})})();
 const ix={};cols.forEach((c,i)=>ix[c.k]=i);
 const W={Tipo:230,FOLIO:130,POLIZA:120,FECHA_POLIZA:104,CONCEPTO_POLIZA:300,CUENTA_REGISTRO:130,NOMBRE_CUENTA_REGISTRO:230,CECO:70,CARGO:110,ABONO:110,FECHA:104,MONEDA:64,CLAVE_PROVEEDOR:80,RFC_PROVEEDOR:130,NOMBRE_PROVEEDOR:260,TIPO_COMPROBANTE:190,UUID:300,NOMBRE_CUENTA:200,CONCEPTO_GASTO:260,DESCRIPCION_USO_BIEN_SERVICIO:240,FORMA_PAGO:200,XML_FORMA_PAGO:230,XML_METODO_PAGO:200,COMPLEMENTO_PAGO:300,REFERENCIA:170,BANCO:130,CUENTA_BANCARIA:130,NO_CHEQUE_TRANSF:150,NUMERO_FACTURA:120,XML_RFC_EMISOR:130};
@@ -124,7 +127,7 @@ cols.forEach(c=>c.w=c.k=='FECHA_FACTURA'||c.k=='FECHA_CHEQUE'?104:W[c.k]||(c.t==
 const total=cols.reduce((a,c)=>a+c.w,0);
 // columnas fijas a la izquierda: Tipo (con origen) y FOLIO
 const stk={};let off=0;['Tipo','FOLIO'].forEach(k=>{if(k in ix){stk[k]=off;off+=cols[ix[k]].w}});
-$('sub').textContent='Una fila por documento con sus importes (subtotales, impuestos, total, XML y cobro); si tiene varias líneas de póliza, las siguientes solo llevan el folio, la cuenta, el CECO, el cargo y el abono'+(agrupado?', sumadas por cuenta contable.':'.');
+$('sub').textContent=esTr?'Una fila por folio de traslado (remisión, transferencia, pedido u orden de compra), con o sin CFDI tipo T y su carta porte; el cruce con el SAT es por existencia y estatus, no por importes.':'Una fila por documento con sus importes (subtotales, impuestos, total, XML y cobro); si tiene varias líneas de póliza, las siguientes solo llevan el folio, la cuenta, el CECO, el cargo y el abono'+(agrupado?', sumadas por cuenta contable.':'.');
 // group header
 const hd=document.getElementById('hd');
 document.getElementById('cg').innerHTML=cols.map(c=>'<col style="width:'+c.w+'px">').join('');
@@ -164,8 +167,10 @@ function apply(){mkChips();ori.value=selO;const q=query.toLowerCase();view=[];
   if(ok&&!ok.has(kOf[i]))continue;if(only&&!first[i])continue;view.push(i)}
  let c=0,a=0,s=0,tt=0,tm=0,sat=0,fs=new Set(),us=new Set();view.forEach(i=>{const r=rows[i];c+=r[ci]||0;a+=r[ai]||0;s+=r[si]||0;const t=toi==null?0:r[toi]||0;tt+=t;fs.add(kOf[i]);
   if(tOf[i]=='Solo SAT')return;tm+=t;const u=sui==null?null:r[sui];if(u&&!us.has(u)){us.add(u);sat+=(r[sii]||0)+(sci==null?0:r[sci]||0)}});
+ function kpisTr(){const u=ix.UUID,e=ix.ESTATUS_MPRO,x=ix.CONC_EXISTENCIA,co=ix.COSTO;let con=0,can=0,ok=0,cos=0;view.forEach(i=>{const r=rows[i];if(!first[i])return;if(u!=null&&r[u])con++;if(e!=null&&r[e]=='Cancelado')can++;if(x!=null&&r[x]=='Sí')ok++;cos+=co==null?0:r[co]||0});
+  return [['Folios',fs.size.toLocaleString('es-MX')],['Con CFDI',con.toLocaleString('es-MX')],['Sin CFDI',(fs.size-con).toLocaleString('es-MX')],['Cancelados en Mpro',can.toLocaleString('es-MX')],['Existen en Mpro y SAT',ok.toLocaleString('es-MX')],['Σ Costo',money(cos)]]}
  let okc=0;fs.forEach(f=>{const x=fol.get(f);if(Math.abs(x.c-x.a-x.s)<=0.05)okc++});
- $('kpis').innerHTML=[['Documentos',fs.size.toLocaleString('es-MX')],['Líneas',view.length.toLocaleString('es-MX')],['Σ Cargo',money(c)],['Σ Abono',money(a)],['Σ Subtotal neto',money(s)],['Σ Total',money(tt)],['Documentos cuadrados',okc+' / '+fs.size]].concat(sui==null?[]:[['Σ En BD SAT (UUID únicos)',money(sat)],['% Conciliación',tm?(100*sat/tm).toFixed(1)+'%':'—']]).map(k=>'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span></div>').join('');
+ $('kpis').innerHTML=(esTr?kpisTr():[['Documentos',fs.size.toLocaleString('es-MX')],['Líneas',view.length.toLocaleString('es-MX')],['Σ Cargo',money(c)],['Σ Abono',money(a)],['Σ Subtotal neto',money(s)],['Σ Total',money(tt)],['Documentos cuadrados',okc+' / '+fs.size]].concat(sui==null?[]:[['Σ En BD SAT (UUID únicos)',money(sat)],['% Conciliación',tm?(100*sat/tm).toFixed(1)+'%':'—']])).map(k=>'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span></div>').join('');
  page=0;$('count').textContent=view.length.toLocaleString('es-MX')+' filas';draw()}
 const vp=document.getElementById('vp'),body=document.getElementById('body'),PS=300;let page=0;
 function draw(){const pages=Math.max(1,Math.ceil(view.length/PS));page=Math.min(page,pages-1);
@@ -185,7 +190,7 @@ function draw(){const pages=Math.max(1,Math.ceil(view.length/PS));page=Math.min(
  document.getElementById('pp').onclick=()=>{page--;draw();vp.scrollTop=0};document.getElementById('pn').onclick=()=>{page++;draw();vp.scrollTop=0}}
 document.getElementById('q').oninput=e=>{query=e.target.value.trim();clearTimeout(window._t);window._t=setTimeout(apply,200)};
 document.getElementById('only').onchange=e=>{only=e.target.checked;apply()};
-$('foot').innerHTML='<span><b>Tipo</b>: '+(meta.sentido=='emitidos'?'Venta (factura emitida), NC cliente o Cobranza (complemento de pago emitido, por fecha del pago en Mpro). En Venta la póliza muestra el ingreso y, cuando la póliza lo referencia, el IVA; en Cobranza, el cargo a bancos (una vez por recibo) y el abono a clientes de cada cobro. Las notas de crédito van en negativo.':'Gasto (con su origen), Compra, Indirecto, NC proveedor o CxP (Libre u Orden Compra: inversión que parte de una OC y genera CxP). Las notas de crédito van en negativo.')+'</span><span><b>Subtotal neto</b> ya descuenta descuentos; <b>Cargo</b> = importes positivos de la póliza y <b>Abono</b> = negativos en valor absoluto.</span>'+'<span>Los importes del documento aparecen solo en su primera fila, por lo que las sumas de columna no duplican.</span>'+'<span>Solo se muestran las columnas con algún dato en el periodo.</span>';
+$('foot').innerHTML='<span><b>Tipo</b>: '+(esTr?'Traslado por origen en Mpro (remisión, transferencia, pedido u orden de compra): una fila por folio de Traslado, por fecha del traslado, tenga o no CFDI. El CFDI es un traslado (tipo T) autoemitido de monto 0, por eso se concilia por existencia y estatus, no por importe. Carta Porte: la vigente del folio. Solo SAT: traslados timbrados que no están en Mpro.':meta.sentido=='emitidos'?'Venta (factura emitida), NC cliente o Cobranza (complemento de pago emitido, por fecha del pago en Mpro). En Venta la póliza muestra el ingreso y, cuando la póliza lo referencia, el IVA; en Cobranza, el cargo a bancos (una vez por recibo) y el abono a clientes de cada cobro. Las notas de crédito van en negativo.':'Gasto (con su origen), Compra, Indirecto, NC proveedor o CxP (Libre u Orden Compra: inversión que parte de una OC y genera CxP). Las notas de crédito van en negativo.')+'</span><span><b>Subtotal neto</b> ya descuenta descuentos; <b>Cargo</b> = importes positivos de la póliza y <b>Abono</b> = negativos en valor absoluto.</span>'+'<span>Los importes del documento aparecen solo en su primera fila, por lo que las sumas de columna no duplican.</span>'+'<span>Solo se muestran las columnas con algún dato en el periodo.</span>';
 apply();
 
 function exportar(){

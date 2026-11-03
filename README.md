@@ -50,7 +50,7 @@ La sesión a Postgres es de solo lectura. Si no hay credenciales o el SAT falla,
 
 ## Ventas y cobranza (emitidos)
 
-Selector "Recibidos / Emitidos" junto a las pestañas Detalle/Resumen (`/api/reporte?...&sentido=recibidos|emitidos`; por omisión recibidos). El layout de emitidos usa las mismas columnas que recibidos, adaptadas a cliente (las columnas de proveedor se rotulan "Clave cliente", "RFC cliente", "Cliente"):
+Selector "Recibidos / Emitidos / Traslados" junto a las pestañas Detalle/Resumen (`/api/reporte?...&sentido=recibidos|emitidos|traslados`; por omisión recibidos). El layout de emitidos usa las mismas columnas que recibidos, adaptadas a cliente (las columnas de proveedor se rotulan "Clave cliente", "RFC cliente", "Cliente"):
 
 - **Venta**: `Factura`/`Factura_Impuesto` (CFDI emitido tipo I). Póliza `Pc_Tabla='VENTA'`, ligada por `Fc_Documento` (o `Fc_Folio` si está vacío), ventana de ±45 días por reciclaje de folios, solo pólizas activas; las líneas de ingreso se ligan por `<Fc_Serie><folio de serie a 10 caracteres>`.
 - **NC cliente**: `Nota_Credito`/`Nota_Credito_Impuesto` (CFDI emitido tipo E), importes con signo negativo. Se excluyen las cuentas 1120, 2140, 1140 y 5100 (inventario, costo, anticipos).
@@ -59,6 +59,17 @@ Selector "Recibidos / Emitidos" junto a las pestañas Detalle/Resumen (`/api/rep
 - Cruce SAT contra `tipo = 'EMITIDO'` (las columnas "RFC/Nombre del cliente" son el receptor). "Solo SAT" en emitidos: CFDI I/E/P vigentes del periodo con emisor distinto del receptor y UUID ausente de `Comprobante_Digital`.
 
 Limitaciones: solo `CONC_BACKEND=mssql` (el warehouse Postgres no replica Factura/Nota_Credito/Cliente; con postgres `sentido=emitidos` responde 400); el IVA trasladado de la póliza (2160) no se liga por documento en ventas ni en cobranza (el IVA está en `IMP_0006`); el precalentado de caché solo cubre recibidos; monedas distintas de MXN sin probar.
+
+## Traslados
+
+Tercer sentido del selector (`sentido=traslados`), layout propio: **una fila por folio de `Traslado`** (que es de nivel línea; se agrega por `Tr_Folio`), con o sin CFDI. El `Tipo` lleva el origen `Tr_Tabla` (REMISION, TRANSFERENCIA, PEDIDO, ORDEN_COMPRA), que en la interfaz son los chips de filtro. Periodo por `Tr_Fecha`.
+
+- **Registro**: sucursal, estatus en Mpro (AC/CA/PXC), documento de origen, número de factura, referencia, comentario y la carga (líneas, productos, cantidad y costo sumados). El cliente de las remisiones sale de `Remision.Cl_Cve_Cliente` (`Tr_Cliente` viene vacío).
+- **CFDI**: `Comprobante_Digital` con `Cd_Tabla='TRASLADO'` (tipo T autoemitido, emisor = receptor, monto 0); si hay varias versiones se toma la activa y, si no, la de timbre más reciente.
+- **Carta Porte**: `Complemento_Carta_Porte` (`Ccp_Tabla='TRASLADO'`): folio, versión, estatus, distancia, pesos y mercancías; igual, la activa o la más reciente. Su `Z_Uuid_Generado` no es el UUID del timbre.
+- **Conciliación SAT**: como el monto es 0 no hay conciliación de importes; solo existencia por UUID y `CONC_ESTATUS` (estatus del CFDI en Mpro contra SAT: activo/cancelado), evaluable solo si el UUID está en ambos lados. "Solo SAT": CFDI tipo T vigentes del periodo con emisor = receptor y UUID ausente de `Comprobante_Digital`.
+
+Limitaciones: solo `CONC_BACKEND=mssql`; sin póliza ni importes; el enlace con viaje/embarque está pendiente; el cruce SAT de tipo T se probó solo con datos sintéticos (tests), no contra el Postgres real; el periodo es `Tr_Fecha`, no la fecha de timbre del SAT.
 
 ## Resumen SAT vs Mpro
 

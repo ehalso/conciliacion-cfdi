@@ -3,10 +3,10 @@ from unittest import mock
 
 import pandas as pd
 
-from conciliacion import cobranza, documentos, servidor, vista
+from conciliacion import cobranza, documentos, servidor, traslados, vista
 from conciliacion.documentos import TIPOS, TIPOS_CLIENTE, _plantillas
-from conciliacion.reporte import construir_emitidos
-from conciliacion.sat import EMITIDO, RECIBIDO, sql_cfdi
+from conciliacion.reporte import construir_emitidos, construir_traslados
+from conciliacion.sat import EMITIDO, RECIBIDO, TRASLADO, sql_cfdi
 
 
 PER = {"ini": ["2026-02-01"], "fin": ["2026-02-28"]}
@@ -111,7 +111,7 @@ class Cobranza(unittest.TestCase):
 
 class Servidor(unittest.TestCase):
     def test_sentido_por_omision_recibidos(self):
-        self.assertFalse(servidor._parametros(PER)[4])
+        self.assertEqual(servidor._parametros(PER)[4], "recibidos")
 
     def test_sentido_invalido(self):
         with self.assertRaises(ValueError):
@@ -121,7 +121,7 @@ class Servidor(unittest.TestCase):
         with mock.patch.object(servidor, "BACKEND", "postgres"), self.assertRaises(ValueError):
             servidor._parametros({**PER, "sentido": ["emitidos"]})
         with mock.patch.object(servidor, "BACKEND", "mssql"):
-            self.assertTrue(servidor._parametros({**PER, "sentido": ["emitidos"]})[4])
+            self.assertEqual(servidor._parametros({**PER, "sentido": ["emitidos"]})[4], "emitidos")
 
 
 class Reporte(unittest.TestCase):
@@ -130,6 +130,51 @@ class Reporte(unittest.TestCase):
         eng.dialect.name = "postgresql"
         with self.assertRaises(RuntimeError):
             construir_emitidos(eng, "2026-02-01", "2026-03-01")
+
+    def test_traslados_rechaza_postgres(self):
+        eng = mock.Mock()
+        eng.dialect.name = "postgresql"
+        with self.assertRaises(RuntimeError):
+            construir_traslados(eng, "2026-02-01", "2026-03-01")
+
+
+class Traslados(unittest.TestCase):
+    def test_solo_sat_son_los_tipo_t_autoemitidos(self):
+        q = sql_cfdi(TRASLADO, solo_sat=True)
+        self.assertIn("c.tipo_comprobante = 'T'", q)
+        self.assertIn("c.rfc_emisor = c.rfc_receptor", q)
+        self.assertIn("k.uuid IS NULL", q)
+
+    def test_cruce_por_uuid_sin_filtrar_tipo(self):
+        q = sql_cfdi(TRASLADO)
+        self.assertIn("upper(c.uuid) = ANY(:uuids)", q)
+        self.assertNotIn("tipo_comprobante", q.split("WHERE")[1])
+
+    def test_sql_una_fila_por_folio_con_cfdi_vigente_o_el_mas_reciente(self):
+        self.assertIn("GROUP BY t.Tr_Folio", traslados.sql.TRASLADO_SETUP)
+        self.assertIn("LEFT JOIN", traslados.sql.TRASLADO_SQL)
+        self.assertIn("Cd_Tabla='TRASLADO'", traslados.sql.TRASLADO_SQL)
+        self.assertIn("Ccp_Tabla='TRASLADO'", traslados.sql.TRASLADO_SQL)
+
+    def test_conciliar_estatus_solo_donde_hay_uuid_en_ambos(self):
+        d = pd.DataFrame({"CONC_EXISTE_MPRO": ["Sí", "Sí", "Sí", "No"], "CONC_EXISTE_SAT": ["Sí", "Sí", "No", "Sí"],
+                          "XML_ESTATUS": ["Activo", "Activo", "Activo", None], "SAT_ESTATUS": ["Activo", "Cancelado", None, "Activo"]})
+        self.assertEqual(traslados.conciliar_estatus(d).CONC_ESTATUS.tolist(), ["Sí", "No", "", ""])
+
+    def test_sentido_traslados(self):
+        with mock.patch.object(servidor, "BACKEND", "postgres"), self.assertRaises(ValueError):
+            servidor._parametros({**PER, "sentido": ["traslados"]})
+        with mock.patch.object(servidor, "BACKEND", "mssql"):
+            self.assertEqual(servidor._parametros({**PER, "sentido": ["traslados"]})[4], "traslados")
+
+    def test_vista_sin_poliza_ni_importes(self):
+        d = pd.DataFrame({"Tipo": ["Traslado", "Traslado"], "FOLIO": ["T1", "T2"], "FECHA": ["2026-02-01"] * 2,
+                          "ORIGEN": ["REMISION", "PEDIDO"], "UUID": ["A", None], "COSTO": [10.0, 5.5]})
+        r = vista.a_datos(d, "layout", True, traslados=True)
+        ks = [c["k"] for c in r["cols"]]
+        self.assertEqual(ks, ["Tipo", "ORIGEN", "FOLIO", "FECHA", "COSTO", "UUID"])
+        self.assertFalse(r["agrupar"])
+        self.assertEqual(len(r["rows"]), 2)
 
 
 if __name__ == "__main__":

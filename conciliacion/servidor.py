@@ -23,7 +23,7 @@ from .config import Mpro, Servidor
 from .db import consultar
 from .dialecto import BACKEND
 from .posproceso import describir_criterios
-from .reporte import construir, construir_emitidos
+from .reporte import construir, construir_emitidos, construir_traslados
 from .resumen import consultar_mpro, consultar_retenciones, consultar_sat, diferencias, resumir
 from .vista import VISTAS, a_datos
 
@@ -31,12 +31,17 @@ MAX_DIAS = 366
 ERROR_BD = "Error consultando la base de Mpro; reintenta o avisa a TI."
 
 
+CONSTRUCTORES = {"recibidos": construir, "emitidos": construir_emitidos, "traslados": construir_traslados}
+SENTIDOS = tuple(CONSTRUCTORES)
+
+
 class Cache:
     """DataFrame por (ini, fin) con TTL; JSON comprimido por (vista, agrupar, excluidos)."""
 
-    def __init__(self, engine: Engine, etiqueta: str, ttl_seg: int, maximo: int, engine_sat: Engine | None = None, emitidos: bool = False):
+    def __init__(self, engine: Engine, etiqueta: str, ttl_seg: int, maximo: int, engine_sat: Engine | None = None, sentido: str = "recibidos"):
         self.engine, self.etiqueta, self.ttl, self.maximo = engine, etiqueta, ttl_seg, maximo
-        self.emitidos = emitidos  # True: ventas y notas de crédito de cliente (CFDI emitidos)
+        self.sentido = sentido  # recibidos | emitidos (ventas, NC y cobranza de cliente) | traslados
+        self.emitidos = sentido == "emitidos"
         self.engine_sat = engine_sat
         self._items: dict = {}
         self._res: dict = {}
@@ -56,7 +61,7 @@ class Cache:
         if not vigente:
             t0 = time.time()
             ff = (dt.date.fromisoformat(fin) + dt.timedelta(days=1)).isoformat()
-            d = (construir_emitidos if self.emitidos else construir)(self.engine, ini, ff, self.engine_sat)
+            d = CONSTRUCTORES[self.sentido](self.engine, ini, ff, self.engine_sat)
             c = {"t": time.time(), "d": d, "gz": {}, "datos": self.datos(),
                  "seg": round(time.time() - t0, 1), "generado": dt.datetime.now(actualizar.TZ).strftime("%Y-%m-%d %H:%M:%S")}
             with self._lock:
@@ -93,10 +98,10 @@ class Cache:
             clave = (vista, agrupar, excluidos)
             if vigente and clave in c["gz"]:
                 return c["gz"][clave], True
-            datos = a_datos(c["d"], vista, agrupar, excluidos, self.emitidos)
+            datos = a_datos(c["d"], vista, agrupar, excluidos, self.emitidos, self.sentido == "traslados")
             datos["meta"] = {"fuente": self.etiqueta, "ini": ini, "fin": fin, "filas": len(datos["rows"]),
                              "vista": vista, "agrupar": datos["agrupar"], "excluidos": excluidos, "generado": c["generado"],
-                             "seg_consulta": c["seg"], "sat": "SAT_UUID" in c["d"], "sentido": "emitidos" if self.emitidos else "recibidos"}
+                             "seg_consulta": c["seg"], "sat": "SAT_UUID" in c["d"], "sentido": self.sentido}
             gz = gzip.compress(json.dumps(datos, ensure_ascii=False, separators=(",", ":")).encode(), 5)
             c["gz"][clave] = gz
             return gz, vigente
@@ -189,24 +194,25 @@ def _periodo(q: dict) -> tuple[str, str]:
     return ini, fin
 
 
-def _parametros(q: dict) -> tuple[str, str, str, bool, bool, bool]:
+def _parametros(q: dict) -> tuple[str, str, str, bool, str, bool]:
     ini, fin = _periodo(q)
     vista = q.get("vista", ["layout"])[0]
     if vista not in VISTAS:
         raise ValueError("vista debe ser layout o ceco.")
     sentido = q.get("sentido", ["recibidos"])[0]
-    if sentido not in ("recibidos", "emitidos"):
-        raise ValueError("sentido debe ser recibidos o emitidos.")
-    if sentido == "emitidos" and BACKEND != "mssql":
-        raise ValueError("Ventas solo está disponible con CONC_BACKEND=mssql (el warehouse no replica Factura/Nota_Credito/Cliente).")
-    return ini, fin, vista, q.get("agrupar", ["1"])[0] != "0", q.get("excluidos", ["0"])[0] == "1", sentido == "emitidos"
+    if sentido not in SENTIDOS:
+        raise ValueError("sentido debe ser recibidos, emitidos o traslados.")
+    if sentido != "recibidos" and BACKEND != "mssql":
+        raise ValueError("Ventas y traslados solo están disponibles con CONC_BACKEND=mssql (el warehouse no replica Factura/Nota_Credito/Traslado/Cliente).")
+    return ini, fin, vista, q.get("agrupar", ["1"])[0] != "0", sentido, q.get("excluidos", ["0"])[0] == "1"
 
 
 def crear_servidor(cfg: Servidor, mpro: Mpro, engine: Engine, engine_sat: Engine | None = None, precalienta: bool = False) -> ThreadingHTTPServer:
     esperado = "Basic " + base64.b64encode(f"{cfg.usuario}:{cfg.clave}".encode()).decode()
     pagina = (resources.files("conciliacion") / "static" / "index.html").read_bytes()
     cache = Cache(engine, mpro.etiqueta, cfg.ttl_seg, cfg.max_cache, engine_sat)
-    cache_emitidos = Cache(engine, mpro.etiqueta, cfg.ttl_seg, cfg.max_cache, engine_sat, emitidos=True)
+    caches = {"recibidos": cache}
+    caches.update({s: Cache(engine, mpro.etiqueta, cfg.ttl_seg, cfg.max_cache, engine_sat, s) for s in SENTIDOS[1:]})
     habilitado = BACKEND == "postgres"
     memo = {"t": 0.0, "v": None}
 
@@ -216,7 +222,8 @@ def crear_servidor(cfg: Servidor, mpro: Mpro, engine: Engine, engine_sat: Engine
         return memo["v"]
 
     if habilitado:
-        cache.datos = cache_emitidos.datos = lambda: estado().get("datos")
+        for c in caches.values():
+            c.datos = lambda: estado().get("datos")
     if precalienta:
         threading.Thread(target=precalentar, args=(cache,), daemon=True).start()
 
@@ -266,11 +273,11 @@ def crear_servidor(cfg: Servidor, mpro: Mpro, engine: Engine, engine_sat: Engine
                 return self._enviar(200, json.dumps(r, ensure_ascii=False, separators=(",", ":")).encode(),
                                     "application/json; charset=utf-8", [("Cache-Control", "no-store")])
             try:
-                ini, fin, vista, agrupar, excluidos, emitidos = _parametros(q)
+                ini, fin, vista, agrupar, sentido, excluidos = _parametros(q)
             except (KeyError, ValueError) as e:
                 return self._enviar(400, str(e).encode(), "text/plain; charset=utf-8")
             try:
-                gz, hit = (cache_emitidos if emitidos else cache).reporte(ini, fin, vista, agrupar, excluidos, False)
+                gz, hit = caches[sentido].reporte(ini, fin, vista, agrupar, excluidos, False)
             except Exception as e:
                 print("ERROR", repr(e), flush=True)
                 return self._enviar(500, ERROR_BD.encode(), "text/plain; charset=utf-8")

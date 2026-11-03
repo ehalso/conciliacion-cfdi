@@ -70,9 +70,72 @@
   "linea": false
  },
  {
+  "k": "SUCURSAL",
+  "l": "Sucursal",
+  "g": "Registro",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "ESTATUS_MPRO",
+  "l": "Estatus Mpro",
+  "g": "Registro",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "DOCUMENTO_ORIGEN",
+  "l": "Documento origen",
+  "g": "Registro",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "COMENTARIO",
+  "l": "Comentario",
+  "g": "Registro",
+  "t": "t",
+  "linea": false
+ },
+ {
   "k": "REFERENCIA",
   "l": "Referencia",
   "g": "Registro",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "LINEAS",
+  "l": "Líneas",
+  "g": "Carga",
+  "t": "n",
+  "linea": false
+ },
+ {
+  "k": "PRODUCTOS",
+  "l": "Productos",
+  "g": "Carga",
+  "t": "n",
+  "linea": false
+ },
+ {
+  "k": "CANTIDAD",
+  "l": "Cantidad (suma)",
+  "g": "Carga",
+  "t": "n",
+  "linea": false
+ },
+ {
+  "k": "COSTO",
+  "l": "Costo",
+  "g": "Carga",
+  "t": "n",
+  "linea": false
+ },
+ {
+  "k": "CARTA_PORTE_MPRO",
+  "l": "Carta Porte (marca)",
+  "g": "Carga",
   "t": "t",
   "linea": false
  },
@@ -144,6 +207,83 @@
   "l": "XML forma de pago",
   "g": "Comprobante (XML)",
   "t": "t",
+  "linea": false
+ },
+ {
+  "k": "XML_ESTATUS",
+  "l": "Estatus del CFDI en Mpro",
+  "g": "Comprobante (XML)",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "FECHA_TIMBRE",
+  "l": "Fecha de timbrado",
+  "g": "Comprobante (XML)",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "CCP_FOLIO",
+  "l": "Folio Carta Porte",
+  "g": "Carta Porte",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "CCP_VERSION",
+  "l": "Versión",
+  "g": "Carta Porte",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "CCP_ID",
+  "l": "IdCCP",
+  "g": "Carta Porte",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "CCP_ESTATUS",
+  "l": "Estatus",
+  "g": "Carta Porte",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "CCP_DISTANCIA",
+  "l": "Distancia (km)",
+  "g": "Carta Porte",
+  "t": "n",
+  "linea": false
+ },
+ {
+  "k": "CCP_PESO_BRUTO",
+  "l": "Peso bruto",
+  "g": "Carta Porte",
+  "t": "n",
+  "linea": false
+ },
+ {
+  "k": "CCP_PESO_NETO",
+  "l": "Peso neto",
+  "g": "Carta Porte",
+  "t": "n",
+  "linea": false
+ },
+ {
+  "k": "CCP_UNIDAD_PESO",
+  "l": "Unidad de peso",
+  "g": "Carta Porte",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "CCP_MERCANCIAS",
+  "l": "No. mercancías",
+  "g": "Carta Porte",
+  "t": "n",
   "linea": false
  },
  {
@@ -611,6 +751,13 @@
  {
   "k": "CONC_IMPORTES",
   "l": "Coincide importes",
+  "g": "Conciliación SAT",
+  "t": "t",
+  "linea": false
+ },
+ {
+  "k": "CONC_ESTATUS",
+  "l": "Coincide estatus",
   "g": "Conciliación SAT",
   "t": "t",
   "linea": false

@@ -19,14 +19,17 @@ FECHAS = ("FECHA", "FECHA_POLIZA", "FECHA_CHEQUE", "FECHA_COMPLEMENTO_PAGO", "SA
 POLIZA = ("POLIZA", "NUMERO_POLIZA", "TIPO_POLIZA", "FECHA_POLIZA", "CONCEPTO_POLIZA")
 REPITEN = ("registro_gasto", "control_combustible", "orden_compra", "viaje")
 SIEMPRE = ("Tipo", "FOLIO", "FECHA", "SUBTOTAL_NETO", "TOTAL", "CARGO", "ABONO")
+SIEMPRE_TRASLADOS = ("Tipo", "FOLIO", "FECHA")  # sin póliza ni importes
 ORDEN_TIPO = {"Gasto": 0, "Compra": 1, "Indirecto": 2, "NC proveedor": 3, "CxP libre": 4, "CxP orden compra": 5, "Solo SAT": 6,
-              "Venta": 1, "NC cliente": 2, "Cobranza": 3}
+              "Venta": 1, "NC cliente": 2, "Cobranza": 3, "Traslado": 1}
 CIFRAS_DOC = ("SUBTOTAL_0", "SUBTOTAL_16", "SUBTOTAL_EXENTA", "SUBTOTAL_NETO", "TOTAL")
 SIN_CEROS = ("SUBTOTAL_0", "SUBTOTAL_16", "SUBTOTAL_EXENTA")
 VISTAS = ("layout", "ceco")
 # En emitidos las columnas de proveedor llevan los datos del cliente (y las del SAT, los del receptor)
 ETIQUETAS_EMITIDOS = {"CLAVE_PROVEEDOR": "Clave cliente", "RFC_PROVEEDOR": "RFC cliente", "NOMBRE_PROVEEDOR": "Cliente",
                       "SAT_RFC": "RFC del cliente", "SAT_PROVEEDOR": "Nombre del cliente"}
+# En traslados el cliente es opcional (solo cuando el documento lo trae) y el SAT es el receptor del traslado (Trivasa misma)
+ETIQUETAS_TRASLADOS = {**ETIQUETAS_EMITIDOS, "SAT_RFC": "RFC (SAT)", "SAT_PROVEEDOR": "Nombre (SAT)"}
 
 
 @lru_cache(maxsize=1)
@@ -53,14 +56,15 @@ def val(v):
 GRUPOS_SAT = {"Base de datos SAT", "Conciliación SAT"}
 
 
-def columnas(d: pd.DataFrame, emitidos: bool = False) -> list[dict]:
+def columnas(d: pd.DataFrame, emitidos: bool = False, traslados: bool = False) -> list[dict]:
     """Catálogo más las claves IMP_xxxx que traiga el DataFrame y no estén en columnas.json."""
     base = [c for c in catalogo() if "SAT_UUID" in d or c["g"] not in GRUPOS_SAT]
     conocidas = {c["k"] for c in base}
     extra = [{"k": k, "l": k[4:] + " Impuesto", "g": "Impuestos", "t": "n", "linea": True}
              for k in sorted(d.columns) if k.startswith("IMP_") and k not in conocidas]
-    if emitidos:
-        base = [{**c, "l": ETIQUETAS_EMITIDOS.get(c["k"], c["l"])} for c in base]
+    if emitidos or traslados:
+        etiquetas = ETIQUETAS_TRASLADOS if traslados else ETIQUETAS_EMITIDOS
+        base = [{**c, "l": etiquetas.get(c["k"], c["l"])} for c in base]
     if not extra:
         return base
     i = max(j for j, c in enumerate(base) if c["g"] == "Impuestos") + 1
@@ -84,7 +88,7 @@ def agrupar_cuenta(d: pd.DataFrame) -> pd.DataFrame:
     return d.drop(columns=["_c", "_a", "_lado"]).reset_index(drop=True)
 
 
-def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True, excluidos: bool = False, emitidos: bool = False) -> dict:
+def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True, excluidos: bool = False, emitidos: bool = False, traslados: bool = False) -> dict:
     """Con excluidos=False se omiten los documentos con CRITERIO_CONCILIACION (no deben tener CFDI)."""
     layout = vista == "layout"
     if not excluidos and "CRITERIO_CONCILIACION" in d:
@@ -96,10 +100,10 @@ def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True, exclui
     d["_g"] = d.groupby(["Tipo", "FOLIO"], sort=False).ngroup()
     d["_d"] = d.DOC_ID.fillna("").replace("VARIOS", "~") if "DOC_ID" in d else ""
     d = d.sort_values(["_t", "_g", "_d"], kind="stable").drop(columns=["_t", "_g", "_d"]).reset_index(drop=True)
-    if layout and agrupar:
+    if layout and agrupar and not traslados:
         d = agrupar_cuenta(d)
 
-    cols = columnas(d, emitidos)
+    cols = columnas(d, emitidos, traslados)
     for c in cols:
         if c["k"] not in d:
             d[c["k"]] = None
@@ -137,9 +141,9 @@ def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True, exclui
         filas.append(fila)
 
     if filas:
-        usar = [j for j, c in enumerate(cols) if c["k"] in SIEMPRE or any(f[j] is not None for f in filas)]
+        usar = [j for j, c in enumerate(cols) if c["k"] in (SIEMPRE_TRASLADOS if traslados else SIEMPRE) or any(f[j] is not None for f in filas)]
         if len(usar) < len(cols):
             cols = [cols[j] for j in usar]
             filas = [[f[j] for j in usar] for f in filas]
     return {"cols": [{k: c[k] for k in ("k", "l", "g", "t")} for c in cols], "rows": filas,
-            "vista": vista, "agrupar": bool(layout and agrupar), "excluidos": excluidos}
+            "vista": vista, "agrupar": bool(layout and agrupar and not traslados), "excluidos": excluidos}

@@ -439,3 +439,37 @@ LEFT JOIN Cuenta_Contable cc ON cc.Cc_Cve_Cuenta_Contable=pd.Cc_Cve_Cuenta_Conta
 LEFT JOIN Centro_Costo cco ON cco.Cc_Cve_Centro_Costo=pd.Pd_Centro_Costo
 WHERE ISNULL(pd.Pd_Importe,0)<>0
 """
+
+# Traslados: una fila por Tr_Folio (la tabla Traslado es de nivel línea). Origen = Tr_Tabla (REMISION, TRANSFERENCIA, PEDIDO, ORDEN_COMPRA).
+# Se traen todos los folios del periodo (AC, CA y PXC) tengan o no CFDI; el cabecero es constante por folio. El CFDI (Comprobante_Digital,
+# Cd_Tabla='TRASLADO', Cd_Documento=Tr_Folio) es un tipo T autoemitido de monto 0: se toma el vigente (AC) o, si no hay, el más reciente.
+# El cliente es Tr_Cliente o, en REMISION, el de Remision (Rm_Folio = Tr_Documento).
+# La Carta Porte (Complemento_Carta_Porte, Ccp_Tabla='TRASLADO', Ccp_Documento=Tr_Folio) puede tener varias versiones: igual criterio.
+TRASLADO_SETUP = """
+SELECT t.Tr_Folio AS FOLIO, MIN(t.Tr_Fecha) AS FECHA, MIN(t.Tr_Tabla) AS ORIGEN, MIN(t.Tr_Documento) AS DOCUMENTO_ORIGEN,
+       MIN(NULLIF(RTRIM(t.Tr_Referencia),'')) AS REFERENCIA, MIN(NULLIF(RTRIM(t.Z_Oe_Folio),'')) AS OE_FOLIO,
+       MIN(NULLIF(RTRIM(t.Tr_Factura),'')) AS NUMERO_FACTURA, MIN(t.Sc_Cve_Sucursal) AS SUCURSAL, MIN(t.Es_Cve_Estado) AS ESTATUS_MPRO,
+       MIN(NULLIF(RTRIM(t.Tr_Cliente),'')) AS CLAVE_TR, MIN(NULLIF(RTRIM(t.Tr_Comentario),'')) AS COMENTARIO,
+       MIN(NULLIF(RTRIM(t.Mn_Cve_Moneda),'')) AS MONEDA, MAX(NULLIF(RTRIM(t.Tr_Carta_Porte),'')) AS CARTA_PORTE_MPRO,
+       COUNT(*) AS LINEAS, COUNT(DISTINCT t.Pr_Cve_Producto) AS PRODUCTOS, SUM(t.Tr_Cantidad_1) AS CANTIDAD, SUM(t.Tr_Costo_Importe) AS COSTO
+INTO #tr
+FROM Traslado t JOIN Sucursal s ON s.Sc_Cve_Sucursal=t.Sc_Cve_Sucursal
+WHERE t.Tr_Fecha>=:fi AND t.Tr_Fecha<:ff AND s.Em_Cve_Empresa=:emp
+GROUP BY t.Tr_Folio;
+"""
+TRASLADO_SQL = """
+SELECT d.*, COALESCE(d.CLAVE_TR, NULLIF(RTRIM(rm.Cl_Cve_Cliente),'')) AS CLAVE_PROVEEDOR, sc.Sc_Descripcion AS NOMBRE_SUCURSAL,
+       cd.Cd_Timbre_UUID AS UUID, cd.Es_Cve_Estado AS XML_ESTATUS, cd.Cd_Serie AS XML_SERIE, cd.Cd_Serie_Folio AS XML_FOLIO,
+       cd.Cd_RFC_Emisor AS XML_RFC_EMISOR, cd.Cd_Timbre_Fecha AS FECHA_TIMBRE,
+       cp.Ccp_Folio AS CCP_FOLIO, cp.Ccp_Version AS CCP_VERSION, cp.Ccp_IdCCP AS CCP_ID, cp.Es_Cve_Estado AS CCP_ESTATUS,
+       cp.Ccp_Total_Distancia_Recorrida AS CCP_DISTANCIA, cp.Ccp_Mercancias_Peso_Bruto_Total AS CCP_PESO_BRUTO,
+       cp.Ccp_Mercancias_Peso_Neto_Total AS CCP_PESO_NETO, cp.Ccp_Mercancias_Unidad_Peso AS CCP_UNIDAD_PESO,
+       cp.Ccp_Mercancias_Numero_Total_Mercancias AS CCP_MERCANCIAS
+FROM #tr d
+LEFT JOIN Sucursal sc ON sc.Sc_Cve_Sucursal=d.SUCURSAL
+OUTER APPLY (SELECT TOP 1 r.Cl_Cve_Cliente FROM Remision r WHERE d.ORIGEN='REMISION' AND r.Rm_Folio=d.DOCUMENTO_ORIGEN) rm
+OUTER APPLY (SELECT TOP 1 c.* FROM Comprobante_Digital c WHERE c.Cd_Tabla='TRASLADO' AND c.Cd_Documento=d.FOLIO
+             ORDER BY CASE WHEN c.Es_Cve_Estado='AC' THEN 0 ELSE 1 END, c.Cd_Timbre_Fecha DESC) cd
+OUTER APPLY (SELECT TOP 1 c.* FROM Complemento_Carta_Porte c WHERE c.Ccp_Tabla='TRASLADO' AND c.Ccp_Documento=d.FOLIO
+             ORDER BY CASE WHEN c.Es_Cve_Estado='AC' THEN 0 ELSE 1 END, c.Fecha_Alta DESC) cp
+"""

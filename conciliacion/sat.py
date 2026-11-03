@@ -27,12 +27,13 @@ FROM raw_sat_api.cfdi c
 LEFT JOIN (SELECT DISTINCT upper(uuid) AS uuid FROM raw_sat_api.cancelados WHERE estatus = '0') k ON k.uuid = upper(c.uuid)
 WHERE {filtro}
 """
-RECIBIDO, EMITIDO = "RECIBIDO", "EMITIDO"
+RECIBIDO, EMITIDO, TRASLADO = "RECIBIDO", "EMITIDO", "TRASLADO"
 # En el complemento de pago el total del CFDI es 0: el monto es el de los pagos (en emitidos, la cobranza de Mpro).
-_TOTAL = {RECIBIDO: "c.total", EMITIDO: "CASE WHEN c.tipo_comprobante = 'P' THEN c.pagos_monto_total ELSE c.total END"}
+_TOTAL = {RECIBIDO: "c.total", EMITIDO: "CASE WHEN c.tipo_comprobante = 'P' THEN c.pagos_monto_total ELSE c.total END", TRASLADO: "c.total"}
 _FILTRO_UUIDS = {
     RECIBIDO: "(c.tipo = 'RECIBIDO' OR (c.tipo = 'EMITIDO' AND c.rfc_emisor = c.rfc_receptor)) AND upper(c.uuid) = ANY(:uuids)",
     EMITIDO: "c.tipo = 'EMITIDO' AND upper(c.uuid) = ANY(:uuids)",
+    TRASLADO: "c.tipo = 'EMITIDO' AND upper(c.uuid) = ANY(:uuids)",
 }
 # CFDI vigentes del periodo (por fecha del CFDI); luego se descartan los que ya están en Mpro. En emitidos solo Ingreso, Egreso
 # y Pago a terceros (los traslados y la nómina propia no son ventas ni cobranza).
@@ -40,8 +41,12 @@ _FILTRO_SOLO_SAT = {
     RECIBIDO: "c.tipo = 'RECIBIDO' AND c.fecha >= :fi AND c.fecha < :ff AND k.uuid IS NULL",
     EMITIDO: "c.tipo = 'EMITIDO' AND c.tipo_comprobante IN ('I','E','P') AND c.rfc_emisor <> c.rfc_receptor "
              "AND c.fecha >= :fi AND c.fecha < :ff AND k.uuid IS NULL",
+    # traslados: solo los tipo T autoemitidos (Trivasa a sí misma, monto 0)
+    TRASLADO: "c.tipo = 'EMITIDO' AND c.tipo_comprobante = 'T' AND c.rfc_emisor = c.rfc_receptor "
+              "AND c.fecha >= :fi AND c.fecha < :ff AND k.uuid IS NULL",
 }
-_CONTRAPARTE = {RECIBIDO: ("rfc_emisor", "nombre_emisor"), EMITIDO: ("rfc_receptor", "nombre_receptor")}
+_CONTRAPARTE = {RECIBIDO: ("rfc_emisor", "nombre_emisor"), EMITIDO: ("rfc_receptor", "nombre_receptor"),
+                TRASLADO: ("rfc_receptor", "nombre_receptor")}
 
 
 def sql_cfdi(sentido: str = RECIBIDO, solo_sat: bool = False) -> str:
@@ -92,7 +97,10 @@ def _formatear(d: pd.DataFrame) -> pd.DataFrame:
 
 
 def agregar_sat(d: pd.DataFrame, engine: Engine, sentido: str = RECIBIDO) -> pd.DataFrame:
-    """Agrega SAT_* y CONC_* al reporte. Si el SAT no responde, devuelve el reporte sin esas columnas."""
+    """Agrega SAT_* y CONC_* al reporte. Si el SAT no responde, devuelve el reporte sin esas columnas.
+
+    En traslados (monto 0) no se concilian importes: solo existencia (y, aparte, estatus).
+    """
     uuid = _uuid_valido(d.UUID) if "UUID" in d else pd.Series(pd.NA, index=d.index, dtype="string")
     try:
         sat = consultar_sat(engine, sorted(uuid.dropna().unique()), sentido)
@@ -107,7 +115,8 @@ def agregar_sat(d: pd.DataFrame, engine: Engine, sentido: str = RECIBIDO) -> pd.
     out["CONC_EXISTE_MPRO"] = _si_no(en_mpro)
     out["CONC_EXISTE_SAT"] = _si_no(en_sat, en_mpro)
     out["CONC_EXISTENCIA"] = _si_no(en_mpro == en_sat, en_mpro)
-    out["DIF_IMPORTE_UUID"], out["CONC_IMPORTES"] = _conciliar_importes(out, en_mpro & en_sat)
+    if sentido != TRASLADO:
+        out["DIF_IMPORTE_UUID"], out["CONC_IMPORTES"] = _conciliar_importes(out, en_mpro & en_sat)
     out["SAT_NO_LOCALIZADOS"] = None
     return out
 
@@ -169,5 +178,7 @@ def agregar_solo_sat(d: pd.DataFrame, engine_sat: Engine, engine_mpro: Engine, f
     nuevos["Tipo"] = TIPO_SOLO_SAT
     nuevos["FOLIO"] = "SAT-" + nuevos.SAT_UUID.str[:13]
     nuevos["CONC_EXISTE_MPRO"], nuevos["CONC_EXISTE_SAT"] = NO, SI
-    nuevos["CONC_EXISTENCIA"], nuevos["CONC_IMPORTES"] = NO, NO
+    nuevos["CONC_EXISTENCIA"] = NO
+    if sentido != TRASLADO:
+        nuevos["CONC_IMPORTES"] = NO
     return pd.concat([d, nuevos], ignore_index=True, sort=False)
