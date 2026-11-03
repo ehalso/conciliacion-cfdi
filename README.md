@@ -17,6 +17,7 @@ conciliacion/
   documentos.py   Compra, Indirecto, NC proveedor, CxP libre, CxP orden compra
   posproceso.py   cargo/abono, prorrateo, totales, catálogos SAT
   reporte.py      construir(engine, fi, ff) -> DataFrame unificado
+  resumen.py      DataFrame -> resumen SAT vs Mpro por tipo de CFDI y lista de diferencias
   vista.py        DataFrame -> JSON de la interfaz (layout / ceco, agrupado por cuenta)
   servidor.py     http.server con auth básica, caché por periodo (con precalentado del periodo por defecto y el mes en curso), /api/reporte, /api/estado y /api/actualizar
   static/         index.html (SheetJS) y columnas.json
@@ -46,6 +47,10 @@ Con credenciales de Postgres (`SAT_PG_USER`/`SAT_PG_PASSWORD` o `POSTGRES_DW_RO_
 **Solo SAT:** además se agregan, con Tipo "Solo SAT", los CFDI recibidos vigentes (no cancelados) del periodo, por fecha del CFDI, cuyo UUID no existe en `Comprobante_Digital` de Mpro (cualquier módulo y fecha de registro). Solo llevan el bloque SAT y la conciliación (Existe en Mpro = No, en SAT = Sí, existencia = No, importes = No); el folio es `SAT-<inicio del UUID>`.
 
 La sesión a Postgres es de solo lectura. Si no hay credenciales o el SAT falla, el reporte sale sin esas columnas (`meta.sat = false`).
+
+## Resumen SAT vs Mpro
+
+Pestaña "Resumen SAT vs Mpro" (`/api/resumen?ini=&fin=[&refresh=1]`; en la UI se elige año y mes o "Todo el año"): cantidad y monto de CFDI por tipo, SAT, Mpro y diferencia, con dos agregados directos (sin construir el reporte completo; un mes tarda ~1 s, un año ~4 s). **SAT**: `raw_sat_api.cfdi` por fecha del CFDI, uno por UUID, sin cancelados de `raw_sat_api.cancelados`; en complementos de pago el monto es `pagos_monto_total`; Retención desde `raw_sat_api.retenciones` (`monto_tot_ret`, provisional; requiere `GRANT SELECT`, si no se muestra n/d). **Mpro**: `Comprobante_Digital` por fecha de timbre, un documento por UUID sin cancelados (`Es_Cve_Estado='CA'`); emitidos = `Cd_RFC_Emisor` igual a `RFC_PROPIO` (por omisión TRI970922TL2), recibidos = el resto; Pago sin monto (n/d), Nómina n/d (se timbra en Nominpaq), Retención = constancias de retención. "Exportar diferencias a Excel" baja el resumen y la lista de documentos con diferencia de existencia o de importe (`/api/diferencias`, usa el reporte completo del periodo, ~1 min por mes).
 
 ## Pruebas
 
