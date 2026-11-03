@@ -331,8 +331,9 @@ PAGOS_DOC_SQL = PAGOS_SQL.replace("#cxp_d", "#cxp_doc").replace("#folios", "#fol
 # Compras, indirectos, NC de proveedor y CxP: plantillas por tipo (ver documentos.py)
 # ----------------------------------------------------------------------------------------------
 DOC_SETUP = """
-SELECT d.FOLIO, d.REF, d.COM INTO #docs FROM (
-    SELECT c.{p}_Folio AS FOLIO, MAX(c.{p}_Referencia) AS REF, MAX(CONVERT(varchar(500), c.{p}_Comentario)) AS COM
+SELECT d.FOLIO, d.REF, d.COM, d.PDOC, d.FDOC, d.SF INTO #docs FROM (
+    SELECT c.{p}_Folio AS FOLIO, MAX(c.{p}_Referencia) AS REF, MAX(CONVERT(varchar(500), c.{p}_Comentario)) AS COM,
+           MAX({pol_doc}) AS PDOC, MIN(c.{p}_Fecha) AS FDOC, MAX({serie}) AS SF
     FROM {tabla} c JOIN Sucursal s ON s.Sc_Cve_Sucursal=c.Sc_Cve_Sucursal
     WHERE c.Es_Cve_Estado<>'CA' AND c.{p}_Fecha>=:fi AND c.{p}_Fecha<:ff AND s.Em_Cve_Empresa=:emp {filtro_doc}
     GROUP BY c.{p}_Folio) d;
@@ -348,9 +349,9 @@ DOC_SIN_PAGO = "SELECT CAST(NULL AS varchar(30)) AS FOLIO, CAST(NULL AS varchar(
 # K: 3 exento (0004), 2 tasa 0 (0003), 1 gravada (0001/0002 o sin impuesto)
 DOC_CABECERA_SQL = """
 WITH b AS (
-    SELECT c.{p}_Folio AS FOLIO, c.{p}_Fecha AS FECHA, c.Mn_Cve_Moneda AS MONEDA, c.Pv_Cve_Proveedor AS CLAVE_PROVEEDOR,
+    SELECT c.{p}_Folio AS FOLIO, c.{p}_Fecha AS FECHA, c.Mn_Cve_Moneda AS MONEDA, c.{tercero} AS CLAVE_PROVEEDOR,
            {neto} AS NETO, c.{p}_Precio_Neto_Importe*c.{p}_Tipo_Cambio AS TOT,
-           ISNULL((SELECT MAX(CASE i.Im_Cve_Impuesto WHEN '0004' THEN 3 WHEN '0003' THEN 2 ELSE 1 END) FROM {imp} i
+           ISNULL((SELECT MAX(CASE i.Im_Cve_Impuesto WHEN '{exento}' THEN 3 WHEN '{cero}' THEN 2 ELSE 1 END) FROM {imp} i
                    WHERE {imp_join}),1) AS K
     FROM {tabla} c JOIN #docs d ON d.FOLIO=c.{p}_Folio
     WHERE c.Es_Cve_Estado<>'CA')
@@ -370,6 +371,7 @@ WHERE c.Es_Cve_Estado<>'CA'
 GROUP BY c.{p}_Folio, i.Im_Cve_Impuesto
 """
 
+CLIENTES_SQL = "SELECT Cl_Cve_Cliente AS CLAVE_PROVEEDOR, Cl_R_F_C AS RFC_PROVEEDOR, Cl_Descripcion AS NOMBRE_PROVEEDOR FROM Cliente"
 PROVEEDORES_SQL = "SELECT Pv_Cve_Proveedor AS CLAVE_PROVEEDOR, Pv_R_F_C AS RFC_PROVEEDOR, Pv_Descripcion AS NOMBRE_PROVEEDOR FROM Proveedor"
 
 DOC_POLIZA_SQL = """
@@ -378,8 +380,8 @@ SELECT d.FOLIO, pl.Pl_Folio AS POLIZA, pl.Pl_Fecha AS FECHA_POLIZA, pl.Pl_Tipo A
        NULLIF(LTRIM(RTRIM(pd.Pd_Centro_Costo)),'') AS CECO, cco.Cc_Descripcion AS CECO_DESCRIPCION,
        CASE WHEN pd.Pd_Tipo=1 THEN pd.Pd_Importe ELSE 0 END AS CARGO, CASE WHEN pd.Pd_Tipo=2 THEN pd.Pd_Importe ELSE 0 END AS ABONO
 FROM #docs d
-JOIN Poliza_Control plc ON plc.Pc_Tabla='{pc}' AND plc.Pc_Documento=d.FOLIO AND plc.Es_Cve_Estado<>'CA'
-JOIN Poliza pl ON pl.Pl_Folio=plc.Pl_Folio AND pl.Es_Cve_Estado<>'CA'
+JOIN Poliza_Control plc ON plc.Pc_Tabla='{pc}' AND plc.Pc_Documento=d.PDOC AND plc.Es_Cve_Estado<>'CA'
+JOIN Poliza pl ON pl.Pl_Folio=plc.Pl_Folio AND pl.Es_Cve_Estado<>'CA' {pol_fecha}
 JOIN Poliza_Detalle pd ON pd.Pl_Folio=plc.Pl_Folio AND {pol_ref}
 LEFT JOIN Cuenta_Contable cc ON cc.Cc_Cve_Cuenta_Contable=pd.Cc_Cve_Cuenta_Contable
 LEFT JOIN Centro_Costo cco ON cco.Cc_Cve_Centro_Costo=pd.Pd_Centro_Costo
@@ -394,7 +396,7 @@ DOC_POLIZA_SIN_LINEAS_SQL = """
 SELECT DISTINCT d.FOLIO, pl.Pl_Folio AS POLIZA, pl.Pl_Fecha AS FECHA_POLIZA, pl.Pl_Tipo AS TIPO_POLIZA, pl.Pl_Numero AS NUMERO_POLIZA,
        pl.Pl_Comentario AS CONCEPTO_POLIZA
 FROM #docs d
-JOIN Poliza_Control plc ON plc.Pc_Tabla='{pc}' AND plc.Pc_Documento=d.FOLIO AND plc.Es_Cve_Estado<>'CA'
-JOIN Poliza pl ON pl.Pl_Folio=plc.Pl_Folio AND pl.Es_Cve_Estado<>'CA'
+JOIN Poliza_Control plc ON plc.Pc_Tabla='{pc}' AND plc.Pc_Documento=d.PDOC AND plc.Es_Cve_Estado<>'CA'
+JOIN Poliza pl ON pl.Pl_Folio=plc.Pl_Folio AND pl.Es_Cve_Estado<>'CA' {pol_fecha}
 JOIN Poliza_Detalle pd ON pd.Pl_Folio=plc.Pl_Folio AND {pol_ref}
 """

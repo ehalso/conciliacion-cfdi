@@ -48,6 +48,17 @@ Con credenciales de Postgres (`SAT_PG_USER`/`SAT_PG_PASSWORD` o `POSTGRES_DW_RO_
 
 La sesión a Postgres es de solo lectura. Si no hay credenciales o el SAT falla, el reporte sale sin esas columnas (`meta.sat = false`).
 
+## Ventas (emitidos)
+
+Selector "Recibidos / Emitidos" junto a las pestañas Detalle/Resumen (`/api/reporte?...&sentido=recibidos|emitidos`; por omisión recibidos). El layout de emitidos usa las mismas columnas que recibidos, adaptadas a cliente (las columnas de proveedor se rotulan "Clave cliente", "RFC cliente", "Cliente"):
+
+- **Venta**: `Factura`/`Factura_Impuesto` (CFDI emitido tipo I). Póliza `Pc_Tabla='VENTA'`, ligada por `Fc_Documento` (o `Fc_Folio` si está vacío), ventana de ±45 días por reciclaje de folios, solo pólizas activas; las líneas de ingreso se ligan por `<Fc_Serie><folio de serie a 10 caracteres>`.
+- **NC cliente**: `Nota_Credito`/`Nota_Credito_Impuesto` (CFDI emitido tipo E), importes con signo negativo. Se excluyen las cuentas 1120, 2140, 1140 y 5100 (inventario, costo, anticipos).
+- Impuestos de venta: 0006 IVA 16 %, 0007 tasa 0, 0008 exento.
+- Cruce SAT contra `tipo = 'EMITIDO'` (las columnas "RFC/Nombre del cliente" son el receptor). "Solo SAT" en emitidos: CFDI I/E vigentes del periodo con emisor distinto del receptor y UUID ausente de `Comprobante_Digital`.
+
+Limitaciones: solo `CONC_BACKEND=mssql` (el warehouse Postgres no replica Factura/Nota_Credito/Cliente; con postgres `sentido=emitidos` responde 400); el IVA trasladado de la póliza (2160) no se liga por documento (el IVA está en `IMP_0006`); no incluye cobranza/complementos de pago; el precalentado de caché solo cubre recibidos; monedas distintas de MXN sin probar.
+
 ## Resumen SAT vs Mpro
 
 Pestaña "Resumen SAT vs Mpro" (`/api/resumen?ini=&fin=[&refresh=1]`; en la UI se elige año y mes o "Todo el año"): cantidad y monto de CFDI por tipo, SAT, Mpro y diferencia, con dos agregados directos (sin construir el reporte completo; un mes tarda ~1 s, un año ~4 s). **SAT**: `raw_sat_api.cfdi` por fecha del CFDI, uno por UUID, sin cancelados de `raw_sat_api.cancelados`; en complementos de pago el monto es `pagos_monto_total`; Retención desde `raw_sat_api.retenciones` (`monto_tot_ret`, provisional; requiere `GRANT SELECT`, si no se muestra n/d). **Mpro**: `Comprobante_Digital` por fecha de timbre, un documento por UUID sin cancelados (`Es_Cve_Estado='CA'`); emitidos = `Cd_RFC_Emisor` igual a `RFC_PROPIO` (por omisión TRI970922TL2), recibidos = el resto; Pago sin monto (n/d), Nómina n/d (se timbra en Nominpaq), Retención = constancias de retención. "Exportar diferencias a Excel" baja el resumen y la lista de documentos con diferencia de existencia o de importe (`/api/diferencias`, usa el reporte completo del periodo, ~1 min por mes).

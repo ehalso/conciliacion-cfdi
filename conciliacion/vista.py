@@ -19,10 +19,14 @@ FECHAS = ("FECHA", "FECHA_POLIZA", "FECHA_CHEQUE", "FECHA_COMPLEMENTO_PAGO", "SA
 POLIZA = ("POLIZA", "NUMERO_POLIZA", "TIPO_POLIZA", "FECHA_POLIZA", "CONCEPTO_POLIZA")
 REPITEN = ("registro_gasto", "control_combustible", "orden_compra", "viaje")
 SIEMPRE = ("Tipo", "FOLIO", "FECHA", "SUBTOTAL_NETO", "TOTAL", "CARGO", "ABONO")
-ORDEN_TIPO = {"Gasto": 0, "Compra": 1, "Indirecto": 2, "NC proveedor": 3, "CxP libre": 4, "CxP orden compra": 5, "Solo SAT": 6}
+ORDEN_TIPO = {"Gasto": 0, "Compra": 1, "Indirecto": 2, "NC proveedor": 3, "CxP libre": 4, "CxP orden compra": 5, "Solo SAT": 6,
+              "Venta": 1, "NC cliente": 2}
 CIFRAS_DOC = ("SUBTOTAL_0", "SUBTOTAL_16", "SUBTOTAL_EXENTA", "SUBTOTAL_NETO", "TOTAL")
 SIN_CEROS = ("SUBTOTAL_0", "SUBTOTAL_16", "SUBTOTAL_EXENTA")
 VISTAS = ("layout", "ceco")
+# En emitidos las columnas de proveedor llevan los datos del cliente (y las del SAT, los del receptor)
+ETIQUETAS_EMITIDOS = {"CLAVE_PROVEEDOR": "Clave cliente", "RFC_PROVEEDOR": "RFC cliente", "NOMBRE_PROVEEDOR": "Cliente",
+                      "SAT_RFC": "RFC del cliente", "SAT_PROVEEDOR": "Nombre del cliente"}
 
 
 @lru_cache(maxsize=1)
@@ -49,12 +53,14 @@ def val(v):
 GRUPOS_SAT = {"Base de datos SAT", "Conciliación SAT"}
 
 
-def columnas(d: pd.DataFrame) -> list[dict]:
+def columnas(d: pd.DataFrame, emitidos: bool = False) -> list[dict]:
     """Catálogo más las claves IMP_xxxx que traiga el DataFrame y no estén en columnas.json."""
     base = [c for c in catalogo() if "SAT_UUID" in d or c["g"] not in GRUPOS_SAT]
     conocidas = {c["k"] for c in base}
     extra = [{"k": k, "l": k[4:] + " Impuesto", "g": "Impuestos", "t": "n", "linea": True}
              for k in sorted(d.columns) if k.startswith("IMP_") and k not in conocidas]
+    if emitidos:
+        base = [{**c, "l": ETIQUETAS_EMITIDOS.get(c["k"], c["l"])} for c in base]
     if not extra:
         return base
     i = max(j for j, c in enumerate(base) if c["g"] == "Impuestos") + 1
@@ -78,7 +84,7 @@ def agrupar_cuenta(d: pd.DataFrame) -> pd.DataFrame:
     return d.drop(columns=["_c", "_a", "_lado"]).reset_index(drop=True)
 
 
-def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True, excluidos: bool = False) -> dict:
+def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True, excluidos: bool = False, emitidos: bool = False) -> dict:
     """Con excluidos=False se omiten los documentos con CRITERIO_CONCILIACION (no deben tener CFDI)."""
     layout = vista == "layout"
     if not excluidos and "CRITERIO_CONCILIACION" in d:
@@ -93,7 +99,7 @@ def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True, exclui
     if layout and agrupar:
         d = agrupar_cuenta(d)
 
-    cols = columnas(d)
+    cols = columnas(d, emitidos)
     for c in cols:
         if c["k"] not in d:
             d[c["k"]] = None

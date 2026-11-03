@@ -16,20 +16,39 @@ SI, NO = "Sí", "No"
 TIPO_SOLO_SAT = "Solo SAT"
 
 # `tipo` solo tiene RECIBIDO y EMITIDO; lo autoemitido (emisor = receptor, p. ej. nómina) llega como EMITIDO.
-SQL_CFDI = """
-SELECT upper(c.uuid) AS uuid, c.serie, c.folio, c.tipo_comprobante, c.fecha, c.rfc_emisor, c.nombre_emisor, c.total,
+# SAT_RFC/SAT_PROVEEDOR son la contraparte: el emisor en recibidos y el receptor en emitidos.
+SQL_CFDI_BASE = """
+SELECT upper(c.uuid) AS uuid, c.serie, c.folio, c.tipo_comprobante, c.fecha, c.{rfc} AS rfc_emisor, c.{nombre} AS nombre_emisor, c.total,
        (k.uuid IS NOT NULL) AS cancelado,
        substring(c.xml::text from 'Concepto[^>]*?Descripcion="([^"]*)"') AS concepto,
        substring(c.xml::text from 'UsoCFDI="([^"]*)"') AS uso_cfdi,
        substring(c.xml::text from '<ecc12:EstadoDeCuentaCombustible[^>]*? Total="([0-9.]+)"') AS complemento
 FROM raw_sat_api.cfdi c
 LEFT JOIN (SELECT DISTINCT upper(uuid) AS uuid FROM raw_sat_api.cancelados WHERE estatus = '0') k ON k.uuid = upper(c.uuid)
-WHERE (c.tipo = 'RECIBIDO' OR (c.tipo = 'EMITIDO' AND c.rfc_emisor = c.rfc_receptor)) AND upper(c.uuid) = ANY(:uuids)
+WHERE {filtro}
 """
+RECIBIDO, EMITIDO = "RECIBIDO", "EMITIDO"
+_FILTRO_UUIDS = {
+    RECIBIDO: "(c.tipo = 'RECIBIDO' OR (c.tipo = 'EMITIDO' AND c.rfc_emisor = c.rfc_receptor)) AND upper(c.uuid) = ANY(:uuids)",
+    EMITIDO: "c.tipo = 'EMITIDO' AND upper(c.uuid) = ANY(:uuids)",
+}
+# CFDI vigentes del periodo (por fecha del CFDI); luego se descartan los que ya están en Mpro. En emitidos solo Ingreso y
+# Egreso a terceros (los pagos, traslados y la nómina propia no son ventas).
+_FILTRO_SOLO_SAT = {
+    RECIBIDO: "c.tipo = 'RECIBIDO' AND c.fecha >= :fi AND c.fecha < :ff AND k.uuid IS NULL",
+    EMITIDO: "c.tipo = 'EMITIDO' AND c.tipo_comprobante IN ('I','E') AND c.rfc_emisor <> c.rfc_receptor "
+             "AND c.fecha >= :fi AND c.fecha < :ff AND k.uuid IS NULL",
+}
+_CONTRAPARTE = {RECIBIDO: ("rfc_emisor", "nombre_emisor"), EMITIDO: ("rfc_receptor", "nombre_receptor")}
 
-# CFDI recibidos vigentes del periodo (por fecha del CFDI); luego se descartan los que ya están en Mpro.
-SQL_SOLO_SAT = SQL_CFDI.replace("(c.tipo = 'RECIBIDO' OR (c.tipo = 'EMITIDO' AND c.rfc_emisor = c.rfc_receptor)) AND upper(c.uuid) = ANY(:uuids)",
-                                "c.tipo = 'RECIBIDO' AND c.fecha >= :fi AND c.fecha < :ff AND k.uuid IS NULL")
+
+def sql_cfdi(sentido: str = RECIBIDO, solo_sat: bool = False) -> str:
+    rfc, nombre = _CONTRAPARTE[sentido]
+    return SQL_CFDI_BASE.format(rfc=rfc, nombre=nombre, filtro=(_FILTRO_SOLO_SAT if solo_sat else _FILTRO_UUIDS)[sentido])
+
+
+SQL_CFDI = sql_cfdi()
+SQL_SOLO_SAT = sql_cfdi(solo_sat=True)
 SQL_EN_MPRO = "SELECT DISTINCT UPPER(Cd_Timbre_UUID) AS uuid FROM Comprobante_Digital WHERE Cd_Timbre_UUID IN :uuids"
 # En raw los UUID están en mayúsculas y minúsculas mezcladas y Postgres distingue (SQL Server no).
 SQL_EN_MPRO_PG = "SELECT DISTINCT UPPER(cd_timbre_uuid) AS uuid FROM comprobante_digital WHERE UPPER(cd_timbre_uuid) = ANY(:uuids)"
@@ -39,12 +58,12 @@ def _uuid_valido(s: pd.Series) -> pd.Series:
     return s.astype("string").str.strip().str.upper().where(lambda x: x.str.fullmatch(r"[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}", na=False))
 
 
-def consultar_sat(engine: Engine, uuids: list[str]) -> pd.DataFrame:
+def consultar_sat(engine: Engine, uuids: list[str], sentido: str = RECIBIDO) -> pd.DataFrame:
     """CFDI del SAT para los `uuids` dados, con columnas SAT_*. Un renglón por UUID."""
     partes = []
     with engine.connect() as con:
         for i in range(0, len(uuids), LOTE):
-            partes.append(pd.read_sql(text(SQL_CFDI), con, params={"uuids": uuids[i:i + LOTE]}))
+            partes.append(pd.read_sql(text(sql_cfdi(sentido)), con, params={"uuids": uuids[i:i + LOTE]}))
     d = pd.concat(partes, ignore_index=True) if partes else pd.DataFrame(columns=["uuid"])
     return _formatear(d.drop_duplicates("uuid"))
 
@@ -70,11 +89,11 @@ def _formatear(d: pd.DataFrame) -> pd.DataFrame:
     })
 
 
-def agregar_sat(d: pd.DataFrame, engine: Engine) -> pd.DataFrame:
+def agregar_sat(d: pd.DataFrame, engine: Engine, sentido: str = RECIBIDO) -> pd.DataFrame:
     """Agrega SAT_* y CONC_* al reporte. Si el SAT no responde, devuelve el reporte sin esas columnas."""
     uuid = _uuid_valido(d.UUID) if "UUID" in d else pd.Series(pd.NA, index=d.index, dtype="string")
     try:
-        sat = consultar_sat(engine, sorted(uuid.dropna().unique()))
+        sat = consultar_sat(engine, sorted(uuid.dropna().unique()), sentido)
     except Exception as e:
         log.error("Cruce con el SAT omitido: %r", e)
         return d
@@ -122,15 +141,16 @@ def _si_no(cond: pd.Series, donde: pd.Series | None = None) -> pd.Series:
     return r if donde is None else r.where(donde, "")
 
 
-def agregar_solo_sat(d: pd.DataFrame, engine_sat: Engine, engine_mpro: Engine, fi: str, ff: str) -> pd.DataFrame:
-    """Agrega al reporte los CFDI recibidos vigentes en el SAT que no están registrados en Mpro (Tipo "Solo SAT").
+def agregar_solo_sat(d: pd.DataFrame, engine_sat: Engine, engine_mpro: Engine, fi: str, ff: str,
+                     sentido: str = RECIBIDO) -> pd.DataFrame:
+    """Agrega al reporte los CFDI (recibidos o emitidos, según `sentido`) vigentes en el SAT que no están registrados en Mpro (Tipo "Solo SAT").
 
     "Registrado en Mpro" = su UUID existe en Comprobante_Digital (cualquier módulo y fecha de registro).
     Si el SAT no responde, devuelve el reporte sin cambios.
     """
     try:
         with engine_sat.connect() as con:
-            c = pd.read_sql(text(SQL_SOLO_SAT), con, params={"fi": fi, "ff": ff})
+            c = pd.read_sql(text(sql_cfdi(sentido, True)), con, params={"fi": fi, "ff": ff})
         uuids = sorted(c.uuid.unique())
         with engine_mpro.connect() as con:
             pg = engine_mpro.dialect.name == "postgresql"

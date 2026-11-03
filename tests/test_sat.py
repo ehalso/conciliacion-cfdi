@@ -16,7 +16,7 @@ def sat_falso(uuids):
 
 class CruceSat(unittest.TestCase):
     def cruzar(self, d):
-        with mock.patch.object(sat, "consultar_sat", lambda e, u: sat_falso(u)):
+        with mock.patch.object(sat, "consultar_sat", lambda e, u, s=sat.RECIBIDO: sat_falso(u)):
             return sat.agregar_sat(d, None)
 
     def test_conciliacion(self):
@@ -38,14 +38,14 @@ class CruceSat(unittest.TestCase):
     def test_importes_con_complemento(self):
         sat_c = pd.DataFrame({"UUID_CRUCE": [U1], "SAT_UUID": [U1], "SAT_IMPORTE": [10.0], "SAT_IMPORTE_COMPLEMENTO": [90.0]})
         d = pd.DataFrame({"UUID": [U1, U1], "Tipo": "Gasto", "TOTAL": [90.0, 10.0]})
-        with mock.patch.object(sat, "consultar_sat", lambda e, u: sat_c):
+        with mock.patch.object(sat, "consultar_sat", lambda e, u, s=sat.RECIBIDO: sat_c):
             o = sat.agregar_sat(d, None)
         self.assertEqual(list(o.CONC_IMPORTES), ["Sí", "Sí"])
 
     def test_complemento_incluido_en_el_total_no_se_suma(self):
         sat_c = pd.DataFrame({"UUID_CRUCE": [U1], "SAT_UUID": [U1], "SAT_IMPORTE": [100.0], "SAT_IMPORTE_COMPLEMENTO": [98.0]})
         d = pd.DataFrame({"UUID": [U1, U1], "Tipo": "Gasto", "TOTAL": [98.0, 2.0]})
-        with mock.patch.object(sat, "consultar_sat", lambda e, u: sat_c):
+        with mock.patch.object(sat, "consultar_sat", lambda e, u, s=sat.RECIBIDO: sat_c):
             o = sat.agregar_sat(d, None)
         self.assertEqual(list(o.CONC_IMPORTES), ["Sí", "Sí"])
 
