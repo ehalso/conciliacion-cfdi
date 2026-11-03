@@ -44,7 +44,11 @@ Con credenciales de Postgres (`SAT_PG_USER`/`SAT_PG_PASSWORD` o `POSTGRES_DW_RO_
 - **Base de datos SAT**: UUID, serie, folio, estatus, tipo de CFDI, fecha, concepto (primera descripción del XML), RFC y nombre del proveedor, importe y "No localizados" (vacío, pendiente de definir).
 - **Conciliación SAT**: existe en Mpro, existe en SAT, coincide existencia y coincide importes (`XML_MONTO` vs importe SAT, tolerancia 0.05).
 
+**Multiempresa:** la BD de Mpro tiene varias empresas (`Sucursal.Em_Cve_Empresa`: 0001 Trivasa, 0002 Facilitadores, 0003 Flexbeel, 0004 Triturados; 0097-0099 son respaldos) y el SAT (`raw_sat_api`) es solo de Trivasa. Los documentos se filtran por empresa (`EMPRESA = "0001"`) vía su sucursal. `Comprobante_Digital` no tiene columna de empresa: se deduce del prefijo del folio (`07-0047157` → sucursal `0007`; cubre el 100 % de los CFDI desde 2025). Por eso la comprobación "ya existe en Mpro" de Solo SAT y las cifras Mpro del Resumen solo cuentan documentos de la empresa; p. ej. la factura que Triturados emitió a Trivasa (documento de la 0004) no cuenta como registrada en Trivasa.
+
 **Solo SAT:** además se agregan, con Tipo "Solo SAT", los CFDI recibidos vigentes (no cancelados) del periodo, por fecha del CFDI, cuyo UUID no existe en `Comprobante_Digital` de Mpro (cualquier módulo y fecha de registro). Solo llevan el bloque SAT y la conciliación (Existe en Mpro = No, en SAT = Sí, existencia = No, importes = No); el folio es `SAT-<inicio del UUID>`.
+
+**Propuesta pendiente (no aplicada): CFDI cancelados del SAT.** `raw_sat_api.cfdi` y `raw_sat_api.cancelados` son disjuntas (un CFDI cancelado solo está en `cancelados`, estatus `'0'`), y el cruce solo consulta `cfdi`; por eso un documento de Mpro cuyo CFDI está cancelado en el SAT sale como "No existe en SAT" y, en traslados, con `CONC_ESTATUS` vacío (febrero 2026: los 95 traslados cancelados en Mpro están en `cancelados`). Propuesta: para los UUID no hallados en `cfdi`, consultar `cancelados` y poner `SAT_ESTATUS = 'Cancelado'` (con fecha, monto y efecto) para que existencia y `CONC_ESTATUS` cuadren.
 
 La sesión a Postgres es de solo lectura. Si no hay credenciales o el SAT falla, el reporte sale sin esas columnas (`meta.sat = false`).
 

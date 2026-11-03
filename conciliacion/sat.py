@@ -6,6 +6,8 @@ import pandas as pd
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
 
+from .config import EMPRESA
+
 log = logging.getLogger(__name__)
 
 TOLERANCIA = 0.05
@@ -56,9 +58,14 @@ def sql_cfdi(sentido: str = RECIBIDO, solo_sat: bool = False) -> str:
 
 SQL_CFDI = sql_cfdi()
 SQL_SOLO_SAT = sql_cfdi(solo_sat=True)
-SQL_EN_MPRO = "SELECT DISTINCT UPPER(Cd_Timbre_UUID) AS uuid FROM Comprobante_Digital WHERE Cd_Timbre_UUID IN :uuids"
+# Comprobante_Digital es multiempresa y no trae la empresa: se deduce del prefijo del folio (07-0047157 -> sucursal 0007).
+SQL_EN_MPRO = ("SELECT DISTINCT UPPER(cd.Cd_Timbre_UUID) AS uuid FROM Comprobante_Digital cd "
+               "JOIN Sucursal s ON s.Sc_Cve_Sucursal = '00' + LEFT(cd.Cd_Documento, 2) "
+               "WHERE s.Em_Cve_Empresa = :emp AND cd.Cd_Timbre_UUID IN :uuids")
 # En raw los UUID están en mayúsculas y minúsculas mezcladas y Postgres distingue (SQL Server no).
-SQL_EN_MPRO_PG = "SELECT DISTINCT UPPER(cd_timbre_uuid) AS uuid FROM comprobante_digital WHERE UPPER(cd_timbre_uuid) = ANY(:uuids)"
+SQL_EN_MPRO_PG = ("SELECT DISTINCT UPPER(cd.cd_timbre_uuid) AS uuid FROM comprobante_digital cd "
+                  "JOIN sucursal s ON s.sc_cve_sucursal = '00' || LEFT(cd.cd_documento, 2) "
+                  "WHERE s.em_cve_empresa = :emp AND UPPER(cd.cd_timbre_uuid) = ANY(:uuids)")
 
 
 def _uuid_valido(s: pd.Series) -> pd.Series:
@@ -156,7 +163,8 @@ def agregar_solo_sat(d: pd.DataFrame, engine_sat: Engine, engine_mpro: Engine, f
                      sentido: str = RECIBIDO) -> pd.DataFrame:
     """Agrega al reporte los CFDI (recibidos o emitidos, según `sentido`) vigentes en el SAT que no están registrados en Mpro (Tipo "Solo SAT").
 
-    "Registrado en Mpro" = su UUID existe en Comprobante_Digital (cualquier módulo y fecha de registro).
+    "Registrado en Mpro" = su UUID existe en Comprobante_Digital de documentos de la empresa (cualquier módulo y fecha de registro);
+    los CFDI que solo están en documentos de otra empresa (p. ej. la factura que Triturados emitió a Trivasa) cuentan como no registrados.
     Si el SAT no responde, devuelve el reporte sin cambios.
     """
     try:
@@ -166,7 +174,7 @@ def agregar_solo_sat(d: pd.DataFrame, engine_sat: Engine, engine_mpro: Engine, f
         with engine_mpro.connect() as con:
             pg = engine_mpro.dialect.name == "postgresql"
             q = text(SQL_EN_MPRO_PG) if pg else text(SQL_EN_MPRO).bindparams(bindparam("uuids", expanding=True))
-            en_mpro = pd.concat([pd.read_sql(q, con, params={"uuids": uuids[i:i + 1000]}).uuid
+            en_mpro = pd.concat([pd.read_sql(q, con, params={"uuids": uuids[i:i + 1000], "emp": EMPRESA}).uuid
                                  for i in range(0, len(uuids), 1000)] or [pd.Series(dtype=str)])
     except Exception as e:
         log.error("SAT sin Mpro omitido: %r", e)

@@ -179,3 +179,43 @@ class Traslados(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Multiempresa(unittest.TestCase):
+    """Comprobante_Digital es multiempresa y no tiene columna de empresa: se acota por el prefijo del folio -> Sucursal."""
+
+    def test_existencia_en_mpro_acotada_a_la_empresa(self):
+        from conciliacion import sat
+        for q in (sat.SQL_EN_MPRO, sat.SQL_EN_MPRO_PG):
+            self.assertIn(":emp", q)
+            self.assertRegex(q.lower(), r"join sucursal s on s\.sc_cve_sucursal = '00' (\+|\|\|) left\(cd\.cd_documento, 2\)")
+
+    def test_solo_sat_pasa_la_empresa(self):
+        from conciliacion import sat
+        from conciliacion.config import EMPRESA
+        llamadas = []
+
+        class Con:
+            def __enter__(s): return s
+            def __exit__(s, *a): return False
+
+        class Eng:
+            def __init__(s, nombre): s.dialect = mock.Mock(name=nombre); s.dialect.name = nombre
+            def connect(s): return Con()
+
+        def lee(q, con, params=None):
+            llamadas.append(params)
+            if "fi" in params:
+                return pd.DataFrame({"uuid": ["A" * 36], "serie": [""], "folio": [""], "tipo_comprobante": ["I"], "fecha": [pd.Timestamp("2026-02-02")],
+                                     "rfc_emisor": ["X"], "nombre_emisor": ["X"], "total": [1.0], "cancelado": [False],
+                                     "concepto": [None], "uso_cfdi": [None], "complemento": [None]})
+            return pd.DataFrame({"uuid": []})
+
+        with mock.patch.object(sat.pd, "read_sql", lee):
+            sat.agregar_solo_sat(pd.DataFrame({"Tipo": []}), Eng("postgresql"), Eng("mssql"), "2026-02-01", "2026-03-01")
+        self.assertEqual(llamadas[-1]["emp"], EMPRESA)
+
+    def test_resumen_mpro_acotado_a_la_empresa(self):
+        from conciliacion import resumen
+        self.assertIn("Em_Cve_Empresa = :emp", resumen.SQL_MPRO)
+        self.assertIn("cd.Es_Cve_Estado", resumen.SQL_MPRO)

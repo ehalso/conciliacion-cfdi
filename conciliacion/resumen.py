@@ -5,6 +5,8 @@ import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from .config import EMPRESA
+
 TIPOS_REC = (
     ("Ingreso", "I", "Compras, gastos, indirectos y CxP"),
     ("Egreso", "E", "Notas de crédito de proveedor"),
@@ -26,15 +28,16 @@ WHERE k.uuid IS NULL
 GROUP BY c.tipo, c.tipo_comprobante
 """
 RFC_PROPIO = os.environ.get("RFC_PROPIO", "TRI970922TL2")
-# CFDI registrados en Mpro (Comprobante_Digital) por fecha de timbre, igual que el SAT; {sentido} separa emitidos (emisor propio) de recibidos.
+# CFDI registrados en Mpro (Comprobante_Digital, solo documentos de la empresa: la tabla es multiempresa) por fecha de timbre, igual que el SAT; {sentido} separa emitidos (emisor propio) de recibidos.
 # Se excluyen los UUID con todos sus documentos cancelados (CA).
 SQL_MPRO = """
 SELECT upper(Cd_Timbre_UUID) AS uuid, max(Cd_Tipo_CFDI) AS tipo, max(Cd_Tabla) AS tabla, max(Cd_Monto) AS monto
-FROM Comprobante_Digital
+FROM Comprobante_Digital cd
+JOIN Sucursal s ON s.Sc_Cve_Sucursal = '00' + LEFT(cd.Cd_Documento, 2) AND s.Em_Cve_Empresa = :emp
 WHERE Cd_Timbre_Fecha >= :fi AND Cd_Timbre_Fecha < :ff AND coalesce(Cd_RFC_Emisor, '') {sentido} :rfc
   AND Cd_Timbre_UUID IS NOT NULL AND Cd_Timbre_UUID <> ''
 GROUP BY upper(Cd_Timbre_UUID)
-HAVING sum(CASE WHEN Es_Cve_Estado = 'CA' THEN 0 ELSE 1 END) > 0
+HAVING sum(CASE WHEN cd.Es_Cve_Estado = 'CA' THEN 0 ELSE 1 END) > 0
 """
 SQL_SAT_RET = """
 SELECT tipo, count(DISTINCT upper(uuid)) AS n, coalesce(sum(monto_tot_ret), 0) AS monto
@@ -56,7 +59,7 @@ def consultar_sat(engine: Engine, fi: str, ff: str) -> pd.DataFrame:
 def consultar_mpro(engine: Engine, fi: str, ff: str, emitidos: bool) -> dict[str, dict]:
     """Cifras de Mpro por tipo de CFDI (un documento por UUID). Constancias de retención y Gasto_Registro 'RETENCIONES' = Retención."""
     with engine.connect() as con:
-        e = pd.read_sql(text(SQL_MPRO.format(sentido="=" if emitidos else "<>")), con, params={"fi": fi, "ff": ff, "rfc": RFC_PROPIO})
+        e = pd.read_sql(text(SQL_MPRO.format(sentido="=" if emitidos else "<>")), con, params={"fi": fi, "ff": ff, "rfc": RFC_PROPIO, "emp": EMPRESA})
     letra = {"I": "Ingreso", "E": "Egreso", "T": "Traslado", "P": "Pago", "N": "Nómina"}
     e["t"] = [("Retención" if (a == "CONSTANCIA_RETENCION" or (t or "").strip().upper() == "RETENCIONES") else letra.get((t or "").strip().upper()))
               for t, a in zip(e.tipo, e.tabla)]
