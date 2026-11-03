@@ -22,6 +22,7 @@ from . import actualizar
 from .config import Mpro, Servidor
 from .dialecto import BACKEND
 from .reporte import construir
+from .resumen import consultar_mpro, consultar_retenciones, consultar_sat, diferencias, resumir
 from .vista import VISTAS, a_datos
 
 MAX_DIAS = 366
@@ -35,29 +36,59 @@ class Cache:
         self.engine, self.etiqueta, self.ttl, self.maximo = engine, etiqueta, ttl_seg, maximo
         self.engine_sat = engine_sat
         self._items: dict = {}
+        self._res: dict = {}
         self._lock = threading.Lock()  # protege los diccionarios; cada periodo tiene además su propio candado
+        self._lock_res = threading.Lock()
         self._locks: dict = {}
         self.datos = lambda: None  # marca de frescura de los datos; si cambia, el caché ya no vale
 
+    def _candado(self, ini: str, fin: str) -> threading.Lock:
+        with self._lock:
+            return self._locks.setdefault((ini, fin), threading.Lock())
+
+    def _entrada(self, ini: str, fin: str, refrescar: bool) -> tuple[dict, bool]:
+        """Entrada de caché del periodo (la construye si falta o venció). Llamar con el candado del periodo tomado."""
+        c = self._items.get((ini, fin))
+        vigente = c is not None and not refrescar and c.get("datos") == self.datos() and time.time() - c["t"] < self.ttl
+        if not vigente:
+            t0 = time.time()
+            ff = (dt.date.fromisoformat(fin) + dt.timedelta(days=1)).isoformat()
+            d = construir(self.engine, ini, ff, self.engine_sat)
+            c = {"t": time.time(), "d": d, "gz": {}, "datos": self.datos(),
+                 "seg": round(time.time() - t0, 1), "generado": dt.datetime.now(actualizar.TZ).strftime("%Y-%m-%d %H:%M:%S")}
+            with self._lock:
+                self._items[(ini, fin)] = c
+                while len(self._items) > self.maximo:
+                    self._items.pop(min(self._items, key=lambda k: self._items[k]["t"]))
+        return c, vigente
+
+    def resumen(self, ini: str, fin: str, refrescar: bool) -> dict:
+        """Agregados directos (Postgres SAT + Comprobante_Digital); no construye el reporte completo."""
+        with self._lock_res:
+            c = self._res.get((ini, fin))
+            vigente = c is not None and not refrescar and c.get("datos") == self.datos() and time.time() - c["t"] < self.ttl
+            if not vigente:
+                ff = (dt.date.fromisoformat(fin) + dt.timedelta(days=1)).isoformat()
+                sat = self.engine_sat
+                r = resumir(consultar_sat(sat, ini, ff) if sat is not None else None, consultar_mpro(self.engine, ini, ff, False),
+                            consultar_mpro(self.engine, ini, ff, True), consultar_retenciones(sat, ini, ff) if sat is not None else None)
+                c = self._res[(ini, fin)] = {"t": time.time(), "r": r, "datos": self.datos(), "generado": dt.datetime.now(actualizar.TZ).strftime("%Y-%m-%d %H:%M:%S")}
+                while len(self._res) > self.maximo:
+                    self._res.pop(min(self._res, key=lambda k: self._res[k]["t"]))
+            return {**c["r"], "meta": {"fuente": self.etiqueta, "ini": ini, "fin": fin, "generado": c["generado"], "cache": vigente}}
+
+    def diferencias(self, ini: str, fin: str) -> dict:
+        """Lista de documentos con diferencia (requiere el reporte completo del periodo; es lo lento)."""
+        with self._candado(ini, fin):
+            c, _ = self._entrada(ini, fin, False)
+            return diferencias(c["d"])
+
     def reporte(self, ini: str, fin: str, vista: str, agrupar: bool, refrescar: bool) -> tuple[bytes, bool]:
         """Devuelve (JSON gzip, vino_de_caché)."""
-        with self._lock:
-            klock = self._locks.setdefault((ini, fin), threading.Lock())
-        with klock:
-            c = self._items.get((ini, fin))
-            vigente = c is not None and not refrescar and c.get("datos") == self.datos() and time.time() - c["t"] < self.ttl
+        with self._candado(ini, fin):
+            c, vigente = self._entrada(ini, fin, refrescar)
             if vigente and (vista, agrupar) in c["gz"]:
                 return c["gz"][(vista, agrupar)], True
-            if not vigente:
-                t0 = time.time()
-                ff = (dt.date.fromisoformat(fin) + dt.timedelta(days=1)).isoformat()
-                d = construir(self.engine, ini, ff, self.engine_sat)
-                c = {"t": time.time(), "d": d, "gz": {}, "datos": self.datos(),
-                     "seg": round(time.time() - t0, 1), "generado": dt.datetime.now(actualizar.TZ).strftime("%Y-%m-%d %H:%M:%S")}
-                with self._lock:
-                    self._items[(ini, fin)] = c
-                    while len(self._items) > self.maximo:
-                        self._items.pop(min(self._items, key=lambda k: self._items[k]["t"]))
             datos = a_datos(c["d"], vista, agrupar)
             datos["meta"] = {"fuente": self.etiqueta, "ini": ini, "fin": fin, "filas": len(datos["rows"]),
                              "vista": vista, "agrupar": datos["agrupar"], "generado": c["generado"],
@@ -133,11 +164,16 @@ def lanzar_ingest() -> None:
                          stdout=open(log, "a"), stderr=subprocess.STDOUT)
 
 
-def _parametros(q: dict) -> tuple[str, str, str, bool]:
+def _periodo(q: dict) -> tuple[str, str]:
     ini, fin = q["ini"][0], q["fin"][0]
     a, z = dt.date.fromisoformat(ini), dt.date.fromisoformat(fin)
     if z < a or (z - a).days > MAX_DIAS:
         raise ValueError("Rango inválido (máx. 1 año, fin >= inicio).")
+    return ini, fin
+
+
+def _parametros(q: dict) -> tuple[str, str, str, bool]:
+    ini, fin = _periodo(q)
     vista = q.get("vista", ["layout"])[0]
     if vista not in VISTAS:
         raise ValueError("vista debe ser layout o ceco.")
@@ -188,9 +224,21 @@ def crear_servidor(cfg: Servidor, mpro: Mpro, engine: Engine, engine_sat: Engine
                 memo["t"] = 0.0
                 return self._enviar(200, json.dumps(estado(), ensure_ascii=False).encode(), "application/json; charset=utf-8",
                                     [("Cache-Control", "no-store")])
-            if u.path != "/api/reporte":
+            if u.path not in ("/api/reporte", "/api/resumen", "/api/diferencias"):
                 return self._enviar(404, b"No encontrado", "text/plain; charset=utf-8")
             q = parse_qs(u.query)
+            if u.path in ("/api/resumen", "/api/diferencias"):
+                try:
+                    ini, fin = _periodo(q)
+                except (KeyError, ValueError) as e:
+                    return self._enviar(400, str(e).encode(), "text/plain; charset=utf-8")
+                try:
+                    r = cache.resumen(ini, fin, "refresh" in q) if u.path == "/api/resumen" else cache.diferencias(ini, fin)
+                except Exception as e:
+                    print("ERROR", repr(e), flush=True)
+                    return self._enviar(500, ERROR_BD.encode(), "text/plain; charset=utf-8")
+                return self._enviar(200, json.dumps(r, ensure_ascii=False, separators=(",", ":")).encode(),
+                                    "application/json; charset=utf-8", [("Cache-Control", "no-store")])
             try:
                 ini, fin, vista, agrupar = _parametros(q)
             except (KeyError, ValueError) as e:
