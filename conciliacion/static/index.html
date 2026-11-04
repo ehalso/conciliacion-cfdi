@@ -243,7 +243,6 @@ async function cargar(){
  }catch(e){st.className='st err';st.textContent='Error: '+e.message}
  btn.disabled=false}
 const fmt=new Intl.NumberFormat('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
-const esc=v=>String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;');
 let RES=null,vistaRes=false,resSeq=0,detKey='';
 function setVista(r){vistaRes=r;$('senl').hidden=r;$('psel').hidden=!r;$('dsel').hidden=r;$('go').hidden=r;if(r)selDesdeFechas();$('rs').hidden=!r;$('det').style.display=r?'none':'contents';$('kpis').hidden=r;$('agrl').hidden=r;$('excl').hidden=r;
  $('tdet').setAttribute('aria-pressed',!r);$('tres').setAttribute('aria-pressed',r);if(r)resumen(false);else if(detKey!==$('fi').value+'|'+$('ff').value+'|'+$('sen').value)cargar(false)}
