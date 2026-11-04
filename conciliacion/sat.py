@@ -16,8 +16,10 @@ SI, NO = "Sí", "No"
 TIPO_SOLO_SAT = "Solo SAT"
 
 # `tipo` solo tiene RECIBIDO y EMITIDO; lo autoemitido (emisor = receptor, p. ej. nómina) llega como EMITIDO.
+# El total del SAT viene en la moneda del CFDI y el TOTAL de Mpro en pesos (como EZAudita), así que los USD/EUR se pasan a MXN con tipo_cambio.
 SQL_CFDI = """
-SELECT upper(c.uuid) AS uuid, c.serie, c.folio, c.tipo_comprobante, c.fecha, c.rfc_emisor, c.nombre_emisor, c.total,
+SELECT upper(c.uuid) AS uuid, c.serie, c.folio, c.tipo_comprobante, c.fecha, c.rfc_emisor, c.nombre_emisor,
+       c.total * CASE WHEN c.moneda NOT IN ('MXN', 'XXX') AND c.tipo_cambio > 0 THEN c.tipo_cambio ELSE 1 END AS total,
        (k.uuid IS NOT NULL) AS cancelado,
        substring(c.xml::text from 'Concepto[^>]*?Descripcion="([^"]*)"') AS concepto,
        substring(c.xml::text from 'UsoCFDI="([^"]*)"') AS uso_cfdi,

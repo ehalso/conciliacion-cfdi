@@ -55,6 +55,12 @@ class CruceSat(unittest.TestCase):
             self.assertNotIn("SAT_UUID", sat.agregar_sat(d, None))
 
 
+class TotalEnPesos(unittest.TestCase):
+    def test_consultas_convierten_moneda_extranjera_con_tipo_cambio(self):
+        for q in (sat.SQL_CFDI, sat.SQL_SOLO_SAT):
+            self.assertIn("c.total * CASE WHEN c.moneda NOT IN ('MXN', 'XXX') AND c.tipo_cambio > 0 THEN c.tipo_cambio ELSE 1 END AS total", q)
+
+
 class SoloSat(unittest.TestCase):
     def test_agrega_los_que_no_estan_en_mpro(self):
         crudo = pd.DataFrame({"uuid": [U1, U2, "BBBBBBBB-0000-0000-0000-000000000003"], "serie": "A", "folio": "1", "tipo_comprobante": "I",
