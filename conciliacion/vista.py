@@ -19,7 +19,7 @@ FECHAS = ("FECHA", "FECHA_POLIZA", "FECHA_CHEQUE", "FECHA_COMPLEMENTO_PAGO", "SA
 POLIZA = ("POLIZA", "NUMERO_POLIZA", "TIPO_POLIZA", "FECHA_POLIZA", "CONCEPTO_POLIZA")
 REPITEN = ("registro_gasto", "control_combustible", "orden_compra", "viaje")
 SIEMPRE = ("Tipo", "FOLIO", "FECHA", "SUBTOTAL_NETO", "TOTAL", "CARGO", "ABONO")
-ORDEN_TIPO = {"Gasto": 0, "Compra": 1, "Indirecto": 2, "NC proveedor": 3, "CxP libre": 4, "CxP orden compra": 5, "Solo SAT": 6, "Mpro otro periodo": 7}
+ORDEN_TIPO = {"Gasto": 0, "Compra": 1, "Indirecto": 2, "NC proveedor": 3, "CxP libre": 4, "CxP orden compra": 5, "Solo SAT": 6}
 CIFRAS_DOC = ("SUBTOTAL_0", "SUBTOTAL_16", "SUBTOTAL_EXENTA", "SUBTOTAL_NETO", "TOTAL")
 SIN_CEROS = ("SUBTOTAL_0", "SUBTOTAL_16", "SUBTOTAL_EXENTA")
 VISTAS = ("layout", "ceco")
@@ -68,14 +68,16 @@ def agrupar_cuenta(d: pd.DataFrame) -> pd.DataFrame:
     """
     d = d.copy()
     d["_lado"] = np.where(d.ABONO.fillna(0) > 0, "A", "C")
-    llave = ["Tipo", "FOLIO", "DOC_ID", "CUENTA_REGISTRO", "_lado"] if "DOC_ID" in d else ["Tipo", "FOLIO", "CUENTA_REGISTRO", "_lado"]
+    # Las filas "(otro periodo)" son un CFDI por fila y pueden compartir folio de Mpro: el UUID las distingue
+    d["_u"] = d.SAT_UUID.where(d.Tipo.astype(str).str.endswith("(otro periodo)"), "") if "SAT_UUID" in d else ""
+    llave = ["Tipo", "FOLIO", "DOC_ID", "CUENTA_REGISTRO", "_lado", "_u"] if "DOC_ID" in d else ["Tipo", "FOLIO", "CUENTA_REGISTRO", "_lado", "_u"]
     g = d.groupby(llave, sort=False, dropna=False)
     d["_c"] = g.CARGO.transform(lambda x: x.fillna(0).sum())
     d["_a"] = g.ABONO.transform(lambda x: x.fillna(0).sum())
     d["CECO"] = np.where(g.CECO.transform("nunique") > 1, "VARIOS", g.CECO.transform("first"))
     d = d.drop_duplicates(llave).copy()
     d["CARGO"] = d._c.round(2); d["ABONO"] = d._a.round(2)
-    return d.drop(columns=["_c", "_a", "_lado"]).reset_index(drop=True)
+    return d.drop(columns=["_c", "_a", "_lado", "_u"]).reset_index(drop=True)
 
 
 def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True, excluidos: bool = False) -> dict:
@@ -86,7 +88,7 @@ def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True, exclui
     d = d.reset_index(drop=True).copy()
     if "Tipo" not in d:
         d["Tipo"] = "Gasto"
-    d["_t"] = d.Tipo.map(ORDEN_TIPO).fillna(9)
+    d["_t"] = d.Tipo.str.removesuffix(" (otro periodo)").map(ORDEN_TIPO).fillna(9) + d.Tipo.str.endswith(" (otro periodo)") * 10
     d["_g"] = d.groupby(["Tipo", "FOLIO"], sort=False).ngroup()
     d["_d"] = d.DOC_ID.fillna("").replace("VARIOS", "~") if "DOC_ID" in d else ""
     d = d.sort_values(["_t", "_g", "_d"], kind="stable").drop(columns=["_t", "_g", "_d"]).reset_index(drop=True)
@@ -99,6 +101,8 @@ def a_datos(d: pd.DataFrame, vista: str = "layout", agrupar: bool = True, exclui
             d[c["k"]] = None
     folio = d.Tipo.astype(str) + "|" + d.FOLIO.astype(str)
     llave = folio + "|" + (d.DOC_ID.fillna("").astype(str) if "DOC_ID" in d else "")
+    if "SAT_UUID" in d:
+        llave += "|" + d.SAT_UUID.where(d.Tipo.astype(str).str.endswith("(otro periodo)"), "").fillna("").astype(str)
     primera = (llave != llave.shift()).to_numpy()
     if "DOC_ID" in d:
         d["FOLIO"] = d.FOLIO.astype(str) + np.where(d.DOC_ID.notna(), "-" + d.DOC_ID.fillna("").astype(str), "")

@@ -66,7 +66,7 @@ class SoloSat(unittest.TestCase):
         crudo = pd.DataFrame({"uuid": [U1, U2, "BBBBBBBB-0000-0000-0000-000000000003"], "serie": "A", "folio": "1", "tipo_comprobante": "I",
                               "fecha": "2026-01-08T10:00:00Z", "rfc_emisor": "XAXX", "nombre_emisor": "P",
                               "total": [1.0, 2.0, 3.0], "cancelado": False, "concepto": "&amp;X", "uso_cfdi": "G03", "complemento": None})
-        lecturas = iter([crudo, pd.DataFrame({"uuid": [U1]})])
+        lecturas = iter([crudo, pd.DataFrame({"uuid": [U1], "tabla": "COMPRA", "folio": "05-1", "estado": "AC"})])
         engine = mock.MagicMock()
         with mock.patch.object(sat.pd, "read_sql", lambda *a, **k: next(lecturas)):
             d = pd.DataFrame({"Tipo": ["Gasto"], "FOLIO": ["01-1"], "UUID": [U1]})
@@ -81,16 +81,26 @@ class SoloSat(unittest.TestCase):
         crudo = pd.DataFrame({"uuid": [U1, U2, "BBBBBBBB-0000-0000-0000-000000000003"], "serie": "A", "folio": "1", "tipo_comprobante": "I",
                               "fecha": "2026-01-08T10:00:00Z", "rfc_emisor": "XAXX", "nombre_emisor": "P",
                               "total": [1.0, 2.0, 3.0], "cancelado": False, "concepto": "X", "uso_cfdi": "G03", "complemento": None})
-        lecturas = iter([crudo, pd.DataFrame({"uuid": [U1, U2]})])
+        lecturas = iter([crudo, pd.DataFrame({"uuid": [U1, U2, U2], "tabla": ["COMPRA", "CUENTA_X_PAGAR", "GASTO_REGISTRO"], "folio": ["05-1", "05-9", "01-0000007"], "estado": "AC"})])
         engine = mock.MagicMock()
         with mock.patch.object(sat.pd, "read_sql", lambda *a, **k: next(lecturas)):
             d = pd.DataFrame({"Tipo": ["Gasto"], "FOLIO": ["01-1"], "UUID": [U1]})
             o = sat.agregar_solo_sat(d, engine, engine, "2026-01-01", "2026-02-01")
         n = o.set_index("SAT_UUID")
-        self.assertEqual(n.loc[U2, "Tipo"], "Mpro otro periodo")
+        self.assertEqual((n.loc[U2, "Tipo"], n.loc[U2, "FOLIO"]), ("Gasto (otro periodo)", "01-0000007"))
         self.assertEqual((n.loc[U2, "CONC_EXISTE_MPRO"], n.loc[U2, "CONC_IMPORTES"]), ("Sí", ""))
         self.assertEqual(n.loc["BBBBBBBB-0000-0000-0000-000000000003", "Tipo"], "Solo SAT")
         self.assertNotIn(U1, list(o[o.Tipo != "Gasto"].SAT_UUID))
+
+    def test_no_agrega_complementos_de_pago(self):
+        crudo = pd.DataFrame({"uuid": [U2, "BBBBBBBB-0000-0000-0000-000000000003"], "serie": "A", "folio": "1", "tipo_comprobante": ["I", "P"],
+                              "fecha": "2026-01-08T10:00:00Z", "rfc_emisor": "XAXX", "nombre_emisor": "P",
+                              "total": [2.0, 0.0], "cancelado": False, "concepto": "X", "uso_cfdi": "G03", "complemento": None})
+        lecturas = iter([crudo, pd.DataFrame({"uuid": ["BBBBBBBB-0000-0000-0000-000000000003"], "tabla": "COMPRA", "folio": "05-1", "estado": "AC"})])
+        engine = mock.MagicMock()
+        with mock.patch.object(sat.pd, "read_sql", lambda *a, **k: next(lecturas)):
+            o = sat.agregar_solo_sat(pd.DataFrame({"Tipo": ["Gasto"], "FOLIO": ["01-1"], "UUID": [U1]}), engine, engine, "2026-01-01", "2026-02-01")
+        self.assertEqual(list(o.SAT_UUID.dropna()), [U2])
 
 
 if __name__ == "__main__":

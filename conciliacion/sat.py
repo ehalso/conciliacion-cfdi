@@ -14,7 +14,6 @@ LOTE = 5000
 TIPOS_CFDI = {"I": "Ingreso", "E": "Egreso", "P": "Pago", "T": "Traslado", "N": "Nómina"}
 SI, NO = "Sí", "No"
 TIPO_SOLO_SAT = "Solo SAT"
-TIPO_OTRO_PERIODO = "Mpro otro periodo"
 
 # `tipo` solo tiene RECIBIDO y EMITIDO; lo autoemitido (emisor = receptor, p. ej. nómina) llega como EMITIDO.
 # El total del SAT viene en la moneda del CFDI y el TOTAL de Mpro en pesos (como EZAudita), así que los USD/EUR se pasan a MXN con tipo_cambio.
@@ -33,9 +32,14 @@ WHERE (c.tipo = 'RECIBIDO' OR (c.tipo = 'EMITIDO' AND c.rfc_emisor = c.rfc_recep
 # CFDI recibidos vigentes del periodo (por fecha del CFDI); luego se descartan los que ya están en Mpro.
 SQL_SOLO_SAT = SQL_CFDI.replace("(c.tipo = 'RECIBIDO' OR (c.tipo = 'EMITIDO' AND c.rfc_emisor = c.rfc_receptor)) AND upper(c.uuid) = ANY(:uuids)",
                                 "c.tipo = 'RECIBIDO' AND c.fecha >= :fi AND c.fecha < :ff AND k.uuid IS NULL")
-SQL_EN_MPRO = "SELECT DISTINCT UPPER(Cd_Timbre_UUID) AS uuid FROM Comprobante_Digital WHERE Cd_Timbre_UUID IN :uuids"
+SQL_EN_MPRO = ("SELECT UPPER(Cd_Timbre_UUID) AS uuid, RTRIM(Cd_Tabla) AS tabla, LEFT(Cd_Documento,10) AS folio, Es_Cve_Estado AS estado "
+               "FROM Comprobante_Digital WHERE Cd_Timbre_UUID IN :uuids")
 # En raw los UUID están en mayúsculas y minúsculas mezcladas y Postgres distingue (SQL Server no).
-SQL_EN_MPRO_PG = "SELECT DISTINCT UPPER(cd_timbre_uuid) AS uuid FROM comprobante_digital WHERE UPPER(cd_timbre_uuid) = ANY(:uuids)"
+SQL_EN_MPRO_PG = ("SELECT UPPER(cd_timbre_uuid) AS uuid, RTRIM(cd_tabla) AS tabla, LEFT(cd_documento,10) AS folio, es_cve_estado AS estado "
+                  "FROM comprobante_digital WHERE UPPER(cd_timbre_uuid) = ANY(:uuids)")
+ORIGEN_MPRO = {"GASTO_REGISTRO": "Gasto", "COMPRA": "Compra", "COMPRA_INDIRECTO": "Indirecto",
+               "NOTA_CREDITO_PROVEEDOR": "NC proveedor", "CUENTA_X_PAGAR": "CxP"}
+SUFIJO_OTRO_PERIODO = " (otro periodo)"
 
 
 def _uuid_valido(s: pd.Series) -> pd.Series:
@@ -129,7 +133,9 @@ def agregar_solo_sat(d: pd.DataFrame, engine_sat: Engine, engine_mpro: Engine, f
     """Agrega al reporte los CFDI recibidos vigentes del periodo en el SAT que el reporte aún no trae.
 
     Tipo "Solo SAT": su UUID no existe en Comprobante_Digital (cualquier módulo y fecha de registro).
-    Tipo "Mpro otro periodo": sí existe en Mpro, pero su documento cae fuera del periodo; solo se muestran los datos del SAT.
+    Sin CFDI de tipo Pago.
+    Tipo "<origen> (otro periodo)": sí existe en Mpro, pero su documento cae fuera del periodo; lleva el folio y el origen del
+    documento de Mpro (Gasto, Compra…) y solo los datos del SAT.
     Si el SAT no responde, devuelve el reporte sin cambios.
     """
     try:
@@ -139,21 +145,26 @@ def agregar_solo_sat(d: pd.DataFrame, engine_sat: Engine, engine_mpro: Engine, f
         with engine_mpro.connect() as con:
             pg = engine_mpro.dialect.name == "postgresql"
             q = text(SQL_EN_MPRO_PG) if pg else text(SQL_EN_MPRO).bindparams(bindparam("uuids", expanding=True))
-            en_mpro = pd.concat([pd.read_sql(q, con, params={"uuids": uuids[i:i + 1000]}).uuid
-                                 for i in range(0, len(uuids), 1000)] or [pd.Series(dtype=str)])
+            en_mpro = pd.concat([pd.read_sql(q, con, params={"uuids": uuids[i:i + 1000]})
+                                 for i in range(0, len(uuids), 1000)] or [pd.DataFrame(columns=["uuid", "tabla", "folio", "estado"])])
     except Exception as e:
         log.error("SAT sin Mpro omitido: %r", e)
         return d
+    c = c[c.tipo_comprobante != "P"]  # los complementos de pago no se agregan: no son compras ni entran a los KPI
     en_reporte = set(_uuid_valido(d.UUID).dropna()) if "UUID" in d else set()
-    registrados = set(en_mpro)
+    orden = {t: i for i, t in enumerate(ORIGEN_MPRO)}
+    en_mpro = (en_mpro.assign(_a=en_mpro.estado.ne("AC"), _o=en_mpro.tabla.map(orden).fillna(len(orden)))
+               .sort_values(["_a", "_o", "folio"]).drop_duplicates("uuid").set_index("uuid"))
     nuevos = _formatear(c[~c.uuid.isin(en_reporte)].drop_duplicates("uuid")).drop(columns="UUID_CRUCE")
     if nuevos.empty:
         return d
     nuevos = nuevos.sort_values(["SAT_FECHA", "SAT_UUID"]).reset_index(drop=True)
-    otro = nuevos.SAT_UUID.isin(registrados)
+    otro = nuevos.SAT_UUID.isin(en_mpro.index)
     nuevos["Tipo"] = TIPO_SOLO_SAT
-    nuevos.loc[otro, "Tipo"] = TIPO_OTRO_PERIODO
     nuevos["FOLIO"] = "SAT-" + nuevos.SAT_UUID.str[:13]
+    m = en_mpro.reindex(nuevos.SAT_UUID[otro])
+    nuevos.loc[otro, "Tipo"] = (m.tabla.map(ORIGEN_MPRO).fillna(m.tabla.str.replace("_", " ").str.capitalize()) + SUFIJO_OTRO_PERIODO).to_numpy()
+    nuevos.loc[otro, "FOLIO"] = m.folio.to_numpy()
     nuevos["CONC_EXISTE_MPRO"], nuevos["CONC_EXISTE_SAT"] = NO, SI
     nuevos["CONC_EXISTENCIA"], nuevos["CONC_IMPORTES"] = NO, NO
     nuevos.loc[otro, ["CONC_EXISTE_MPRO", "CONC_EXISTENCIA"]] = SI
