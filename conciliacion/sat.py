@@ -167,6 +167,6 @@ def agregar_solo_sat(d: pd.DataFrame, engine_sat: Engine, engine_mpro: Engine, f
     nuevos.loc[otro, "FOLIO"] = m.folio.to_numpy()
     nuevos["CONC_EXISTE_MPRO"], nuevos["CONC_EXISTE_SAT"] = NO, SI
     nuevos["CONC_EXISTENCIA"], nuevos["CONC_IMPORTES"] = NO, NO
-    nuevos.loc[otro, ["CONC_EXISTE_MPRO", "CONC_EXISTENCIA"]] = SI
+    nuevos.loc[otro, "CONC_EXISTE_MPRO"] = SI  # está en Comprobante_Digital; Existencia = No porque queda fuera del periodo del reporte
     nuevos.loc[otro, "CONC_IMPORTES"] = ""
     return pd.concat([d, nuevos], ignore_index=True, sort=False)

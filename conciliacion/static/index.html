@@ -156,10 +156,10 @@ function apply(){mkChips();ori.value=selO;const q=query.toLowerCase();view=[];
   if(useO&&t!='Gasto'&&!selT.has(t))continue;
   if(useO&&t=='Gasto'&&oOf[i]!==selO)continue;
   if(ok&&!ok.has(kOf[i]))continue;if(only&&!first[i])continue;view.push(i)}
- let c=0,a=0,s=0,tt=0,fs=new Set(),us=new Set(),sb={Ingreso:{b:0,m:0,ok:0},Egreso:{b:0,m:0,ok:0}};view.forEach(i=>{const r=rows[i];c+=r[ci]||0;a+=r[ai]||0;s+=r[si]||0;const t=toi==null?0:r[toi]||0;tt+=t;fs.add(kOf[i]);
-  const u=sui==null?null:r[sui],x=u?sb[r[tpi]]:null;if(x&&r[esi]!='Cancelado'&&enPer(r)&&!us.has(u)){us.add(u);const v=r[sii]||0;x.b+=v;if(tOf[i]!='Solo SAT'){x.m+=v;if(tOf[i]=='Mpro otro periodo')return;if(r[cii]=='Sí')x.ok+=v}}});
+ let c=0,a=0,s=0,tt=0,fs=new Set(),us=new Set(),sb={Ingreso:{b:0,m:0,o:0,ok:0},Egreso:{b:0,m:0,o:0,ok:0}};view.forEach(i=>{const r=rows[i];c+=r[ci]||0;a+=r[ai]||0;s+=r[si]||0;const t=toi==null?0:r[toi]||0;tt+=t;fs.add(kOf[i]);
+  const u=sui==null?null:r[sui],x=u?sb[r[tpi]]:null;if(x&&r[esi]!='Cancelado'&&enPer(r)&&!us.has(u)){us.add(u);const v=r[sii]||0;x.b+=v;if(tOf[i]=='Mpro otro periodo')x.o+=v;else if(tOf[i]!='Solo SAT'){x.m+=v;if(r[cii]=='Sí')x.ok+=v}}});
  let okc=0;fs.forEach(f=>{const x=fol.get(f);if(Math.abs(x.c-x.a-x.s)<=0.05)okc++});
- $('kpis').innerHTML=[['Documentos',fs.size.toLocaleString('es-MX')],['Líneas',view.length.toLocaleString('es-MX')],['Σ Cargo',money(c)],['Σ Abono',money(a)],['Σ Subtotal neto',money(s)],['Σ Total',money(tt)],['Documentos cuadrados',okc+' / '+fs.size]].concat(sui==null?[]:['Ingreso','Egreso'].map(n=>{const x=sb[n],p=v=>x.b?(100*v/x.b).toFixed(1)+'%':'—';return['Recibido '+n+' · Σ BD SAT',money(x.b),'En Mpro '+p(x.m)+' · Importes ✓ '+p(x.ok)]})).map(k=>'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span>'+(k[2]?'<small>'+k[2]+'</small>':'')+'</div>').join('');
+ $('kpis').innerHTML=[['Documentos',fs.size.toLocaleString('es-MX')],['Líneas',view.length.toLocaleString('es-MX')],['Σ Cargo',money(c)],['Σ Abono',money(a)],['Σ Subtotal neto',money(s)],['Σ Total',money(tt)],['Documentos cuadrados',okc+' / '+fs.size]].concat(sui==null?[]:['Ingreso','Egreso'].map(n=>{const x=sb[n],p=v=>x.b?(100*v/x.b).toFixed(1)+'%':'—';return['Recibido '+n+' · Σ BD SAT',money(x.b),'En Mpro del periodo '+p(x.m)+' · Importes ✓ '+p(x.ok)+' · Otro periodo '+p(x.o)]})).map(k=>'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span>'+(k[2]?'<small>'+k[2]+'</small>':'')+'</div>').join('');
  page=0;$('count').textContent=view.length.toLocaleString('es-MX')+' filas';draw()}
 const vp=document.getElementById('vp'),body=document.getElementById('body'),PS=300;let page=0;
 function draw(){const pages=Math.max(1,Math.ceil(view.length/PS));page=Math.min(page,pages-1);
