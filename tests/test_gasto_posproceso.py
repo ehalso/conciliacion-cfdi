@@ -75,10 +75,13 @@ class Post(unittest.TestCase):
 
     def test_criterio_conciliacion(self):
         d = self.base()
-        d["ORIGEN"] = ["CONSUMO_INTERNO", "GASTO_REGISTRO_NOMINA", None]
-        d["GRUPO_TIPO_GASTO"] = [None, None, "0011"]
+        d["ORIGEN"] = ["CONSUMO_INTERNO", "GASTO_REGISTRO_NOMINA", "GASTO_RECLASIFICACION"]
+        d["GRUPO_TIPO_GASTO"] = [None, None, None]
         r = post(d)
-        self.assertEqual(list(r.CRITERIO_CONCILIACION), ["Consumo interno", "Nómina", "Provisión contable"])
+        self.assertEqual(list(r.CRITERIO_CONCILIACION), ["Consumo interno", "Nómina", "Reclasificación de gasto"])
+        d["ORIGEN"] = [None, None, None]
+        d["GRUPO_TIPO_GASTO"] = [None, None, "0011"]
+        self.assertEqual(post(d).CRITERIO_CONCILIACION[2], "Provisión contable")
 
     def test_sin_criterio_conciliacion_queda_vacio(self):
         r = post(self.base())

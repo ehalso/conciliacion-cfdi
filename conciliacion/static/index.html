@@ -266,7 +266,7 @@ const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',
 function lista(tit,xs){if(!xs.length)return '';return '<div class="h">'+tit+'</div><table>'+xs.map(x=>'<tr><td class="k">'+esc(x.clave||x)+'</td><td>'+esc(x.descripcion||'')+'</td></tr>').join('')+'</table>'}
 function cargarCriterios(){const el=$('vcri');el.textContent='Cargando…';
  fetch('api/criterios',{cache:'no-store'}).then(r=>r.json()).then(d=>{
-  el.innerHTML='<div class="nota">Solo informativo. Estos documentos de Gasto, por su naturaleza, no tienen CFDI; el reporte los oculta por defecto y se ven con «Mostrar excluidos». La columna CRITERIO_CONCILIACION indica cuál aplicó. Si un folio cumple varios, prevalece Consumo interno, luego Nómina, Provisión contable y Costo estándar.</div>'+
+  el.innerHTML='<div class="nota">Solo informativo. Estos documentos de Gasto, por su naturaleza, no tienen CFDI; el reporte los oculta por defecto y se ven con «Mostrar excluidos». La columna CRITERIO_CONCILIACION indica cuál aplicó. Si un folio cumple varios, prevalece Consumo interno, luego Reclasificación de gasto, Nómina, Provisión contable y Costo estándar.</div>'+
   d.criterios.map(c=>'<section><h2>'+esc(c.nombre)+'</h2><p>'+esc(c.regla)+'</p>'+lista('Origen del gasto',c.origenes)+lista('Grupo de Tipo de gasto',c.grupos)+lista('Tipo de gasto',c.tipos)+'</section>').join('');
   el.dataset.ok='1'}).catch(()=>{el.textContent='No se pudieron cargar los criterios.'})}
 estadoIngest();

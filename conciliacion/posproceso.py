@@ -46,6 +46,8 @@ def describir_criterios(tipos: dict[str, str] | None = None) -> list[dict]:
     return [
         {"nombre": "Consumo interno", "regla": "Salida de almacén o activo fijo registrada como gasto (ORIGEN = consumo interno). No es una compra, no genera CFDI.",
          "origenes": ["consumo_interno"], "grupos": [], "tipos": []},
+        {"nombre": "Reclasificación de gasto", "regla": "Traspaso de un gasto entre centros de costo mediante un par espejo (+/-) de importes (ORIGEN = gasto reclasificación). No es una compra, no genera CFDI.",
+         "origenes": ["gasto_reclasificacion"], "grupos": [], "tipos": []},
         {"nombre": "Nómina", "regla": "Folios de nómina (ORIGEN = gasto_registro_nomina) o cuyo grupo de Tipo de gasto es Remuneración al personal.",
          "origenes": ["gasto_registro_nomina"], "grupos": g({GRUPO_NOMINA}), "tipos": []},
         {"nombre": "Provisión contable", "regla": "Depreciaciones y amortizaciones (por grupo) y tres tipos de gasto individuales de provisión: cuentas incobrables, provisión de gastos de distribución y provisión de derechos SDS.",
@@ -168,6 +170,7 @@ def post(d: pd.DataFrame) -> pd.DataFrame:
     criterio[d.GRUPO_TIPO_GASTO.isin(GRUPOS_PROVISION_CONTABLE) | d.TIPO_GASTO.isin(TIPOS_PROVISION_CONTABLE)] = "Provisión contable"
     criterio[d.GRUPO_TIPO_GASTO == GRUPO_NOMINA] = "Nómina"
     criterio[d.ORIGEN == "gasto_registro_nomina"] = "Nómina"
+    criterio[d.ORIGEN == "gasto_reclasificacion"] = "Reclasificación de gasto"
     criterio[d.ORIGEN == "consumo_interno"] = "Consumo interno"
     d["CRITERIO_CONCILIACION"] = criterio
     return d.drop(columns=["_net", "_abs", "_gk", "GRUPO_TIPO_GASTO", "TIPO_GASTO"])

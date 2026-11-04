@@ -21,6 +21,7 @@ Columna `CRITERIO_CONCILIACION`: marca (no excluye) los folios de Gasto que, por
 tener un CFDI asociado, para no compararlos contra el SAT como si fueran una compra pendiente de factura.
 Se calcula con dos fuentes, ambas códigos de catálogo (no texto libre, salvo donde se indica):
 
+- `ORIGEN = gasto_reclasificacion` → **Reclasificación de gasto** (traspaso entre centros de costo con par espejo +/-; ene 2026: 13 folios, 142 filas, 0 con CFDI).
 - `ORIGEN = consumo_interno` → **Consumo interno** (salida de almacén/activo fijo, `Gr_Tabla='CONSUMO_INTERNO'`).
 - `ORIGEN = gasto_registro_nomina`, o el grupo de `Tipo_Gasto` del folio (`Gasto_Registro_Documento.Tg_Cve_Tipo_Gasto`
   → `Tipo_Gasto.Gtg_Cve_Grupo_Tipo_Gasto`) es `0001` (Remuneración al personal) → **Nómina**. El grupo cubre más
@@ -83,4 +84,4 @@ Se evalúa por UUID, no por línea, y el resultado (Sí/No) y `DIF_IMPORTE_UUID`
 
 ## Pestaña «Criterios de exclusión» (informativa)
 
-La interfaz tiene una segunda pestaña que lista, solo para consulta, los criterios que marcan folios de Gasto sin CFDI (Costo estándar, Provisión contable, Nómina, Consumo interno), con sus orígenes, grupos y tipos de gasto. Se arma desde las constantes de `posproceso.py` (`describir_criterios`) y el endpoint `/api/criterios`; los nombres de los tipos salen del catálogo `Tipo_Gasto`.
+La interfaz tiene una segunda pestaña que lista, solo para consulta, los criterios que marcan folios de Gasto sin CFDI (Costo estándar, Provisión contable, Nómina, Reclasificación de gasto, Consumo interno), con sus orígenes, grupos y tipos de gasto. Se arma desde las constantes de `posproceso.py` (`describir_criterios`) y el endpoint `/api/criterios`; los nombres de los tipos salen del catálogo `Tipo_Gasto`.
