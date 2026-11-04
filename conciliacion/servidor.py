@@ -20,7 +20,9 @@ from sqlalchemy.engine import Engine
 
 from . import actualizar
 from .config import Mpro, Servidor
+from .db import consultar
 from .dialecto import BACKEND
+from .posproceso import describir_criterios
 from .reporte import construir
 from .vista import VISTAS, a_datos
 
@@ -66,6 +68,19 @@ class Cache:
             gz = gzip.compress(json.dumps(datos, ensure_ascii=False, separators=(",", ":")).encode(), 5)
             c["gz"][clave] = gz
             return gz, vigente
+
+
+def criterios(engine) -> dict:
+    """Criterios de exclusión (informativo): reglas de `posproceso` con el nombre de cada Tipo de gasto del catálogo."""
+    try:
+        with engine.connect() as con:
+            d = consultar(con, "SELECT Tg_Cve_Tipo_Gasto AS CLAVE, Tg_Descripcion AS DESCRIPCION FROM Tipo_Gasto")
+        d.columns = [c.upper() for c in d.columns]
+        tipos = {str(c).strip(): str(x).strip() for c, x in zip(d.CLAVE, d.DESCRIPCION)}
+    except Exception as e:
+        print("ERROR criterios", repr(e), flush=True)
+        tipos = {}
+    return {"criterios": describir_criterios(tipos)}
 
 
 PERIODO_DEFECTO = ("2026-01-01", "2026-01-31")  # el mismo que trae la interfaz al abrir
@@ -188,6 +203,9 @@ def crear_servidor(cfg: Servidor, mpro: Mpro, engine: Engine, engine_sat: Engine
             if u.path == "/api/estado":
                 memo["t"] = 0.0
                 return self._enviar(200, json.dumps(estado(), ensure_ascii=False).encode(), "application/json; charset=utf-8",
+                                    [("Cache-Control", "no-store")])
+            if u.path == "/api/criterios":
+                return self._enviar(200, json.dumps(criterios(engine), ensure_ascii=False).encode(), "application/json; charset=utf-8",
                                     [("Cache-Control", "no-store")])
             if u.path != "/api/reporte":
                 return self._enviar(404, b"No encontrado", "text/plain; charset=utf-8")

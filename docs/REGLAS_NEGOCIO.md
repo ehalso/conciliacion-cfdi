@@ -80,3 +80,7 @@ Se evalúa por UUID, no por línea, y el resultado (Sí/No) y `DIF_IMPORTE_UUID`
 - Tolerancia: 0.05 + 0.01 por cada folio adicional del UUID (redondeo acumulado).
 - `SAT_IMPORTE_COMPLEMENTO`: atributo `Total` del complemento `ecc12:EstadoDeCuentaCombustible` (consumo real de la factura consolidada de Control Integral de Combustibles). En Mpro el UUID agrupa los folios de consumo más el folio de comisión. Según el CFDI, el complemento viene **incluido** en el Total (enero 2026: Total 5,359.71 = consumo 5,268.05 + comisión; Σ Mpro 5,359.74) o **fuera** de él (septiembre 2026: Total 198.79 de comisión, complemento 19,880.79; Σ Mpro 20,079.60). Sumarlo siempre marcaba "No" en 25 UUID de enero (folio 01-0034638); usar solo el complemento falla en ambos meses. Con la regla actual enero pasa de 178 a 153 UUID en "No" y septiembre queda en 115; los demás con complemento (5 en enero, 7 en septiembre) son diferencias reales (p. ej. falta el folio de comisión).
 - Sept 2026: 1,586 de 1,698 UUID cuadran (93.4 %); combustible 25/28 (los 3 restantes no tienen el folio de comisión en el mes).
+
+## Pestaña «Criterios de exclusión» (informativa)
+
+La interfaz tiene una segunda pestaña que lista, solo para consulta, los criterios que marcan folios de Gasto sin CFDI (Costo estándar, Provisión contable, Nómina, Consumo interno), con sus orígenes, grupos y tipos de gasto. Se arma desde las constantes de `posproceso.py` (`describir_criterios`) y el endpoint `/api/criterios`; los nombres de los tipos salen del catálogo `Tipo_Gasto`.

@@ -68,6 +68,8 @@ tr.r:hover td{background:var(--hl)}
 .pg button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:4px 12px;cursor:pointer}
 .pg button:disabled{opacity:.4;cursor:default}
 .st{color:var(--mute);font:12px "Roboto Mono",monospace}.st.busy{color:var(--accent)}.st.err{color:var(--neg)}select{font:inherit;padding:5px 8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}input[type=date]{font:inherit;padding:5px 8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}.btn:disabled{opacity:.5;cursor:wait}.prog{padding:8px 16px}.pb{height:6px;background:var(--line);border-radius:3px;overflow:hidden}.pb i{display:block;height:100%;width:0;background:var(--accent);transition:width .6s}.ps{margin-top:6px;font:12px "Roboto Mono",monospace;color:var(--mute);display:flex;flex-wrap:wrap;gap:4px 16px}.ps .ok{color:var(--ink)}.ps .ya{color:var(--accent);font-weight:600}
+#vrep{display:contents}.oc,#vrep.oc,#kpis.oc,.cri.oc{display:none!important}.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line)}.tabs button{font:inherit;font-weight:600;border:1px solid transparent;border-bottom:0;background:none;color:var(--mute);padding:7px 16px;cursor:pointer;border-radius:6px 6px 0 0;margin-bottom:-1px}.tabs button[aria-selected=true]{color:var(--ink);background:var(--panel);border-color:var(--line)}
+.cri{display:flex;flex-direction:column;gap:14px;max-width:110ch}.cri .nota{color:var(--mute)}.cri section{border:1px solid var(--line);border-radius:6px;padding:12px 14px}.cri h2{margin:0 0 4px;font-size:13px}.cri p{margin:0 0 8px}.cri table{table-layout:auto;width:auto;min-width:50%}.cri th,.cri td{text-align:left;padding:3px 14px 3px 0;border:0;position:static;background:none}.cri td.k{font:12px "Roboto Mono",monospace}.cri .h{font-weight:600;color:var(--mute);margin:6px 0 2px}
 </style>
 <div class="top"><div class="l"><span class="burger"><i></i></span>Trivasa</div><div class="u">ESTEBAN HERNAN ALCOCER SOUZA</div></div>
 <div class="wrap"><div class="card">
@@ -76,6 +78,8 @@ tr.r:hover td{background:var(--hl)}
  <div class="sub" id="sub" style="margin-top:10px"></div></div>
  <div class="kpis" id="kpis"></div>
 </header>
+<div class="tabs" role="tablist"><button role="tab" id="tab-rep" aria-selected="true">Reporte</button><button role="tab" id="tab-cri" aria-selected="false">Criterios de exclusión</button></div>
+<div id="vrep">
 <div class="bar" id="ctl"><label class="t">Fecha inicio <input type="date" id="fi" value="2026-01-01"></label><label class="t">Fecha final <input type="date" id="ff" value="2026-01-31"></label><label class="t" id="agrl"><input type="checkbox" id="agr" checked> Agrupar por cuenta contable</label><label class="t"><input type="checkbox" id="exc"> Mostrar excluidos (sin CFDI por criterio)</label><button class="btn" id="go">Consultar</button><button class="chip" id="rf" title="Trae los cambios de Mpro (.207) a Postgres y vuelve a consultar" hidden>&#8635; Actualizar datos</button><span class="st" id="fr"></span><span class="st" id="st"></span></div>
 <div class="prog" id="prog" hidden><div class="pb"><i id="pbi"></i></div><div class="ps" id="pps"></div></div>
 <div class="bar" role="group" aria-label="Filtrar por tipo"><span id="chips" style="display:contents"></span></div>
@@ -86,6 +90,8 @@ tr.r:hover td{background:var(--hl)}
 </div>
 <div class="grid"><div class="vp" id="vp" tabindex="0"><table id="tb"><colgroup id="cg"></colgroup><thead id="hd"></thead><tbody id="body"></tbody></table></div><div class="pg" id="pg"></div></div>
 <footer id="foot"></footer>
+</div>
+<div class="cri oc" id="vcri"></div>
 </div></div>
 <div class="foot">Sistema Trivasa © 2025</div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -252,6 +258,17 @@ $('rf').onclick=()=>{
  $('rf').disabled=true;
  fetch('api/actualizar',{method:'POST',headers:{'X-Conciliacion':'1'}}).then(r=>r.status===409?r.json().then(j=>{$('fr').textContent=j.motivo;$('rf').disabled=false;setTimeout(estadoIngest,8000)}):r.json().then(pintarEstado))
   .catch(()=>{$('fr').textContent='No se pudo contactar al servidor.';$('rf').disabled=false})};
+
+function mostrar(v){const c=v==='cri';$('vrep').classList.toggle('oc',c);$('vcri').classList.toggle('oc',!c);$('kpis').classList.toggle('oc',c);
+ $('tab-rep').setAttribute('aria-selected',!c);$('tab-cri').setAttribute('aria-selected',c);if(c&&!$('vcri').dataset.ok)cargarCriterios()}
+$('tab-rep').onclick=()=>mostrar('rep');$('tab-cri').onclick=()=>mostrar('cri');
+const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function lista(tit,xs){if(!xs.length)return '';return '<div class="h">'+tit+'</div><table>'+xs.map(x=>'<tr><td class="k">'+esc(x.clave||x)+'</td><td>'+esc(x.descripcion||'')+'</td></tr>').join('')+'</table>'}
+function cargarCriterios(){const el=$('vcri');el.textContent='Cargando…';
+ fetch('api/criterios',{cache:'no-store'}).then(r=>r.json()).then(d=>{
+  el.innerHTML='<div class="nota">Solo informativo. Estos documentos de Gasto, por su naturaleza, no tienen CFDI; el reporte los oculta por defecto y se ven con «Mostrar excluidos». La columna CRITERIO_CONCILIACION indica cuál aplicó. Si un folio cumple varios, prevalece Consumo interno, luego Nómina, Provisión contable y Costo estándar.</div>'+
+  d.criterios.map(c=>'<section><h2>'+esc(c.nombre)+'</h2><p>'+esc(c.regla)+'</p>'+lista('Origen del gasto',c.origenes)+lista('Grupo de Tipo de gasto',c.grupos)+lista('Tipo de gasto',c.tipos)+'</section>').join('');
+  el.dataset.ok='1'}).catch(()=>{el.textContent='No se pudieron cargar los criterios.'})}
 estadoIngest();
 if(PRE){$('ctl').hidden=true;init(PRE)}else{const q=new URLSearchParams(location.search);if(q.get('ini'))$('fi').value=q.get('ini');if(q.get('fin'))$('ff').value=q.get('fin');cargar()}
 </script>

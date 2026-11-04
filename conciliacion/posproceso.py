@@ -34,6 +34,27 @@ TIPOS_COSTO_ESTANDAR = {
     "0240",  # fletes a producción: misma naturaleza (transporte interno sin CFDI), 100% limpio
 }
 
+GRUPOS_DESCRIPCION = {"0001": "Remuneración al personal", "0011": "Depreciación de activo fijo",
+                      "0013": "Amortización de activos intangibles", "0014": "Otras amortizaciones"}
+
+
+def describir_criterios(tipos: dict[str, str] | None = None) -> list[dict]:
+    """Criterios de `CRITERIO_CONCILIACION` para la pestaña informativa; `tipos` = {clave Tipo_Gasto: descripción}."""
+    tipos = tipos or {}
+    g = lambda cs: [{"clave": c, "descripcion": GRUPOS_DESCRIPCION.get(c, "")} for c in sorted(cs)]
+    t = lambda cs: [{"clave": c, "descripcion": tipos.get(c, "")} for c in sorted(cs)]
+    return [
+        {"nombre": "Consumo interno", "regla": "Salida de almacén o activo fijo registrada como gasto (ORIGEN = consumo interno). No es una compra, no genera CFDI.",
+         "origenes": ["consumo_interno"], "grupos": [], "tipos": []},
+        {"nombre": "Nómina", "regla": "Folios de nómina (ORIGEN = gasto_registro_nomina) o cuyo grupo de Tipo de gasto es Remuneración al personal.",
+         "origenes": ["gasto_registro_nomina"], "grupos": g({GRUPO_NOMINA}), "tipos": []},
+        {"nombre": "Provisión contable", "regla": "Depreciaciones y amortizaciones (por grupo) y tres tipos de gasto individuales de provisión: cuentas incobrables, provisión de gastos de distribución y provisión de derechos SDS.",
+         "origenes": [], "grupos": g(GRUPOS_PROVISION_CONTABLE), "tipos": t(TIPOS_PROVISION_CONTABLE)},
+        {"nombre": "Costo estándar", "regla": "Salida de almacén o producción valuada a costo estándar y no a la factura real, más fletes a producción. Se listan por Tipo de gasto individual porque el grupo mezcla tipos que sí tienen CFDI.",
+         "origenes": [], "grupos": [], "tipos": t(TIPOS_COSTO_ESTANDAR)},
+    ]
+
+
 _OPCIONALES = ("R_N", "R_MONTO", "R_SERIE", "R_FOLIO_XML", "FP_CVE", "TIPO_COMPROBANTE", "XML_MONTO", "XML_SERIE",
                "XML_FOLIO", "NUMERO_FACTURA", "FECHA_CHEQUE", "ORIGEN", "GRUPO_TIPO_GASTO", "TIPO_GASTO")
 _TEXTO = ("TIPO_COMPROBANTE", "XML_SERIE", "XML_FOLIO", "NUMERO_FACTURA", "R_SERIE", "R_FOLIO_XML", "FP_CVE", "ORIGEN",
