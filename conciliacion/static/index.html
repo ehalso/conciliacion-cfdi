@@ -13,7 +13,7 @@ h1{margin:0;font-size:13px;font-weight:700}
 .kpi{padding:8px 16px;border-right:1px solid var(--line);min-width:118px}
 .kpi:last-child{border-right:0}
 .kpi b{display:block;font:500 16px "Roboto Mono",monospace;font-variant-numeric:tabular-nums}
-.kpi span{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute)}
+.kpi small{display:block;font-size:11px;color:var(--mute);margin-top:2px}.kpi span{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mute)}
 .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 .btn{font:inherit;font-weight:500;background:var(--accent);color:#fff;border:0;border-radius:6px;padding:6px 14px;cursor:pointer}.btn:hover{filter:brightness(.93)}.btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px}.chip{font:inherit;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);padding:5px 11px;cursor:pointer;display:flex;gap:7px;align-items:center}
 .chip.cs{padding:0;gap:0;overflow:hidden}.chip.cs>button{font:inherit;color:inherit;background:none;border:0;padding:5px 8px 5px 11px;cursor:pointer;display:flex;gap:7px;align-items:center}.chip.cs select{font:12px inherit;color:inherit;background:transparent;border:0;border-left:1px solid currentColor;padding:5px 6px;margin:0;cursor:pointer;max-width:200px}.chip.cs select option{color:var(--ink);background:var(--panel)}.chip.cs>button:focus-visible,.chip.cs select:focus-visible{outline:2px solid var(--ink);outline-offset:-2px}
@@ -128,7 +128,7 @@ document.getElementById('tb').style.width=total+'px';
  hd.innerHTML=g+'</tr>'+h+'</tr>'})();
 const fmt=new Intl.NumberFormat('es-MX',{minimumFractionDigits:2,maximumFractionDigits:2});
 const money=v=>fmt.format(v);
-const ti=ix.Tipo,fi=ix.FOLIO,ci=ix.CARGO,ai=ix.ABONO,si=ix.SUBTOTAL_NETO,toi=ix.TOTAL,sui=ix.SAT_UUID,sii=ix.SAT_IMPORTE,sci=ix.SAT_IMPORTE_COMPLEMENTO;
+const ti=ix.Tipo,fi=ix.FOLIO,ci=ix.CARGO,ai=ix.ABONO,si=ix.SUBTOTAL_NETO,toi=ix.TOTAL,sui=ix.SAT_UUID,sii=ix.SAT_IMPORTE,tpi=ix.SAT_TIPO_CFDI,esi=ix.SAT_ESTATUS,cii=ix.CONC_IMPORTES;
 // llave de documento = Tipo + folio (un folio puede repetirse entre tipos)
 const kOf=rows.map(r=>r[ti]+'|'+r[fi]);
 const first=new Uint8Array(rows.length);let last=null;kOf.forEach((k,i)=>{if(k!==last){first[i]=1;last=k}});
@@ -156,10 +156,10 @@ function apply(){mkChips();ori.value=selO;const q=query.toLowerCase();view=[];
   if(useO&&t!='Gasto'&&!selT.has(t))continue;
   if(useO&&t=='Gasto'&&oOf[i]!==selO)continue;
   if(ok&&!ok.has(kOf[i]))continue;if(only&&!first[i])continue;view.push(i)}
- let c=0,a=0,s=0,tt=0,tm=0,sat=0,fs=new Set(),us=new Set();view.forEach(i=>{const r=rows[i];c+=r[ci]||0;a+=r[ai]||0;s+=r[si]||0;const t=toi==null?0:r[toi]||0;tt+=t;fs.add(kOf[i]);
-  if(tOf[i]=='Solo SAT')return;tm+=t;const u=sui==null?null:r[sui];if(u&&!us.has(u)){us.add(u);sat+=(r[sii]||0)+(sci==null?0:r[sci]||0)}});
+ let c=0,a=0,s=0,tt=0,fs=new Set(),us=new Set(),sb={Ingreso:{b:0,m:0,ok:0},Egreso:{b:0,m:0,ok:0}};view.forEach(i=>{const r=rows[i];c+=r[ci]||0;a+=r[ai]||0;s+=r[si]||0;const t=toi==null?0:r[toi]||0;tt+=t;fs.add(kOf[i]);
+  const u=sui==null?null:r[sui],x=u?sb[r[tpi]]:null;if(x&&r[esi]!='Cancelado'&&!us.has(u)){us.add(u);const v=r[sii]||0;x.b+=v;if(tOf[i]!='Solo SAT'){x.m+=v;if(r[cii]=='Sí')x.ok+=v}}});
  let okc=0;fs.forEach(f=>{const x=fol.get(f);if(Math.abs(x.c-x.a-x.s)<=0.05)okc++});
- $('kpis').innerHTML=[['Documentos',fs.size.toLocaleString('es-MX')],['Líneas',view.length.toLocaleString('es-MX')],['Σ Cargo',money(c)],['Σ Abono',money(a)],['Σ Subtotal neto',money(s)],['Σ Total',money(tt)],['Documentos cuadrados',okc+' / '+fs.size]].concat(sui==null?[]:[['Σ En BD SAT (UUID únicos)',money(sat)],['% Conciliación',tm?(100*sat/tm).toFixed(1)+'%':'—']]).map(k=>'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span></div>').join('');
+ $('kpis').innerHTML=[['Documentos',fs.size.toLocaleString('es-MX')],['Líneas',view.length.toLocaleString('es-MX')],['Σ Cargo',money(c)],['Σ Abono',money(a)],['Σ Subtotal neto',money(s)],['Σ Total',money(tt)],['Documentos cuadrados',okc+' / '+fs.size]].concat(sui==null?[]:['Ingreso','Egreso'].map(n=>{const x=sb[n],p=v=>x.b?(100*v/x.b).toFixed(1)+'%':'—';return['Recibido '+n+' · Σ BD SAT',money(x.b),'En Mpro '+p(x.m)+' · Importes ✓ '+p(x.ok)]})).map(k=>'<div class="kpi"><b>'+k[1]+'</b><span>'+k[0]+'</span>'+(k[2]?'<small>'+k[2]+'</small>':'')+'</div>').join('');
  page=0;$('count').textContent=view.length.toLocaleString('es-MX')+' filas';draw()}
 const vp=document.getElementById('vp'),body=document.getElementById('body'),PS=300;let page=0;
 function draw(){const pages=Math.max(1,Math.ceil(view.length/PS));page=Math.min(page,pages-1);
