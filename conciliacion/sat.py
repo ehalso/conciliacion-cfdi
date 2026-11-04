@@ -31,6 +31,8 @@ WHERE (c.tipo = 'RECIBIDO' OR (c.tipo = 'EMITIDO' AND c.rfc_emisor = c.rfc_recep
 SQL_SOLO_SAT = SQL_CFDI.replace("(c.tipo = 'RECIBIDO' OR (c.tipo = 'EMITIDO' AND c.rfc_emisor = c.rfc_receptor)) AND upper(c.uuid) = ANY(:uuids)",
                                 "c.tipo = 'RECIBIDO' AND c.fecha >= :fi AND c.fecha < :ff AND k.uuid IS NULL")
 SQL_EN_MPRO = "SELECT DISTINCT UPPER(Cd_Timbre_UUID) AS uuid FROM Comprobante_Digital WHERE Cd_Timbre_UUID IN :uuids"
+# En raw los UUID están en mayúsculas y minúsculas mezcladas y Postgres distingue (SQL Server no).
+SQL_EN_MPRO_PG = "SELECT DISTINCT UPPER(cd_timbre_uuid) AS uuid FROM comprobante_digital WHERE UPPER(cd_timbre_uuid) = ANY(:uuids)"
 
 
 def _uuid_valido(s: pd.Series) -> pd.Series:
@@ -90,7 +92,10 @@ def agregar_sat(d: pd.DataFrame, engine: Engine) -> pd.DataFrame:
 
 
 def _conciliar_importes(out: pd.DataFrame, evaluable: pd.Series) -> tuple[pd.Series, pd.Series]:
-    """Diferencia y Sí/No por UUID: |Σ TOTAL de los folios| vs el importe del SAT (cuerpo + complemento de combustible).
+    """Diferencia y Sí/No por UUID: |Σ TOTAL de los folios| vs el importe del SAT.
+
+    Importe esperado = Total del CFDI; si el complemento de combustible es mayor que el Total, el CFDI solo cobra la
+    comisión y el combustible va aparte, así que se suma. Si es menor, ya viene incluido en el Total y no se suma.
 
     Las filas "CxP libre" se excluyen de la suma porque repiten el dinero de los folios de gasto con el mismo UUID;
     "CxP orden compra" sí suma: es un documento propio (con o sin Compra que cubra el resto del CFDI).
@@ -102,7 +107,8 @@ def _conciliar_importes(out: pd.DataFrame, evaluable: pd.Series) -> tuple[pd.Ser
     suma = g._t.sum().abs()
     n = g._f.sum()
     esperado = out.drop_duplicates("SAT_UUID").set_index("SAT_UUID")
-    esperado = esperado.SAT_IMPORTE + esperado.SAT_IMPORTE_COMPLEMENTO.fillna(0)
+    comp = esperado.SAT_IMPORTE_COMPLEMENTO.fillna(0)
+    esperado = esperado.SAT_IMPORTE + comp.where(comp > esperado.SAT_IMPORTE, 0)
     dif = (suma - esperado.reindex(suma.index)).round(2)
     tol = TOLERANCIA + TOLERANCIA_FOLIO * (n - 1).clip(lower=0)
     dif_fila = out.SAT_UUID.map(dif).where(evaluable)
@@ -127,8 +133,9 @@ def agregar_solo_sat(d: pd.DataFrame, engine_sat: Engine, engine_mpro: Engine, f
             c = pd.read_sql(text(SQL_SOLO_SAT), con, params={"fi": fi, "ff": ff})
         uuids = sorted(c.uuid.unique())
         with engine_mpro.connect() as con:
-            en_mpro = pd.concat([pd.read_sql(text(SQL_EN_MPRO).bindparams(bindparam("uuids", expanding=True)), con,
-                                             params={"uuids": uuids[i:i + 1000]}).uuid
+            pg = engine_mpro.dialect.name == "postgresql"
+            q = text(SQL_EN_MPRO_PG) if pg else text(SQL_EN_MPRO).bindparams(bindparam("uuids", expanding=True))
+            en_mpro = pd.concat([pd.read_sql(q, con, params={"uuids": uuids[i:i + 1000]}).uuid
                                  for i in range(0, len(uuids), 1000)] or [pd.Series(dtype=str)])
     except Exception as e:
         log.error("SAT sin Mpro omitido: %r", e)

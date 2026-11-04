@@ -38,25 +38,33 @@ def atribuir_documento(base: pd.DataFrame, reparto: pd.DataFrame, docs: pd.DataF
     suma = reparto.groupby(["FOLIO", "CECO", "Grd_ID"], as_index=False).Grc_Importe.sum().assign(ABS=lambda x: x.Grc_Importe.abs())
     rep = {k: g for k, g in suma.groupby(["FOLIO", "CECO"])}
     neto = (base.CARGO.fillna(0) - base.ABONO.fillna(0)).abs()
+    docs_de = {f: list(g) for f, g in docs.groupby("FOLIO").DOC_ID}
+    firma_de = {f: {d: firmas.get((f, d)) for d in ds} for f, ds in docs_de.items()}
+    # por (FOLIO, CECO): Grd_ID y |importe| como arreglos, para no filtrar un DataFrame por línea
+    rep = {k: (g.Grd_ID.to_numpy(), g.ABS.to_numpy()) for k, g in suma.groupby(["FOLIO", "CECO"])}
+    idx = base.index[aplica]
     asignado = []
-    for i, r in base[aplica].iterrows():
-        firma = {d: firmas.get((r.FOLIO, d)) for d in docs[docs.FOLIO == r.FOLIO].DOC_ID}
-        g = rep.get((r.FOLIO, r.CECO))
+    for i, f, c, n in zip(idx, base.FOLIO[aplica], base.CECO[aplica], neto[aplica]):
+        g = rep.get((f, c))
         if g is None:
-            asignado.append((i, VARIOS))
+            asignado.append(VARIOS)
             continue
-        coincide = g[(g.ABS - neto[i]).abs() <= TOL_IMPORTE].Grd_ID
-        asignado.append((i, _unico(coincide, firma) if len(coincide) else
-                         (_unico(g.Grd_ID, firma) if g.Grd_ID.nunique() == 1 else VARIOS)))
-    for i, d in asignado:
-        base.at[i, "DOC_ID"] = d
+        ids, abs_ = g
+        firma = firma_de.get(f, {})
+        coincide = ids[np.abs(abs_ - n) <= TOL_IMPORTE]
+        asignado.append(_unico(coincide, firma) if len(coincide) else
+                        (_unico(ids, firma) if len(set(ids)) == 1 else VARIOS))
+    base.loc[idx, "DOC_ID"] = asignado
 
     # documentos sin ninguna línea: una fila en cero para que su bloque exista
     con_linea = set(zip(base.FOLIO[aplica], base.DOC_ID[aplica]))
+    folios_aplica = set(base.FOLIO[aplica])
+    primera = base[aplica].drop_duplicates("FOLIO").set_index("FOLIO")
     nuevas = []
     for f, d in zip(docs.FOLIO, docs.DOC_ID):
-        if f in multi and (f, d) not in con_linea and (base.FOLIO[aplica] == f).any():
-            molde = base[aplica & (base.FOLIO == f)].iloc[0].copy()
+        if f in multi and (f, d) not in con_linea and f in folios_aplica:
+            molde = primera.loc[f].copy()
+            molde["FOLIO"] = f
             g = reparto[(reparto.FOLIO == f) & (reparto.Grd_ID == d)]
             molde["CUENTA_REGISTRO"] = molde["NOMBRE_CUENTA_REGISTRO"] = None
             molde["CECO"] = g.CECO.iloc[0] if len(g) else molde.CECO

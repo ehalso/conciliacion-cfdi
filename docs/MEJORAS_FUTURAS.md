@@ -74,3 +74,7 @@ Ese commit hace que "CxP orden compra" sume en la conciliación por UUID (antes 
 - Quedan CxP libres con contraparte de gasto fuera de Gasomatic (p. ej. rentas extraordinarias proveedor 0000006407, arrendamiento 0000006354/5, 0000002992); resolver con criterio propio en la vista filtrada.
 - 25 CxP libres de sep-2026 sin contraparte (GPS, seguro, Fonacot, etc.) y las exclusiones históricas (concepto 0023, proveedor 0000000021): decidir su tratamiento en la vista filtrada.
 - Verificar cuántas CxP libres no tienen renglón en la interfaz pero sí referencia J8 de combustible (102 renglones de interfaz sin `Cxp_Folio`).
+
+## Pendiente (decide Ismael): complemento de combustible, enero vs septiembre
+
+En enero el cuerpo del CFDI de Control Integral repite las cargas y el Total ya incluye el consumo; en septiembre el cuerpo solo factura la comisión y el consumo va únicamente en el complemento (`ecc12`). La regla actual (`sat.py::_conciliar_importes`) suma el complemento solo si es mayor que `SAT_IMPORTE`. Alternativa: contar los `cfdi:Concepto` del cuerpo (requiere agregar la columna a `SQL_CFDI`). Detalle y datos en `trivasa-context/docs/proyectos/conciliacion-cfdi/PROGRESS.md`.

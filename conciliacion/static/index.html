@@ -67,16 +67,17 @@ tr.r:hover td{background:var(--hl)}
 .pg{display:flex;gap:10px;align-items:center;padding:8px 12px;border-top:1px solid var(--line);color:var(--mute)}
 .pg button{font:inherit;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:4px 12px;cursor:pointer}
 .pg button:disabled{opacity:.4;cursor:default}
-.st{color:var(--mute);font:12px "Roboto Mono",monospace}.st.busy{color:var(--accent)}.st.err{color:var(--neg)}select{font:inherit;padding:5px 8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}input[type=date]{font:inherit;padding:5px 8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}.btn:disabled{opacity:.5;cursor:wait}
+.st{color:var(--mute);font:12px "Roboto Mono",monospace}.st.busy{color:var(--accent)}.st.err{color:var(--neg)}select{font:inherit;padding:5px 8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}input[type=date]{font:inherit;padding:5px 8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}.btn:disabled{opacity:.5;cursor:wait}.prog{padding:8px 16px}.pb{height:6px;background:var(--line);border-radius:3px;overflow:hidden}.pb i{display:block;height:100%;width:0;background:var(--accent);transition:width .6s}.ps{margin-top:6px;font:12px "Roboto Mono",monospace;color:var(--mute);display:flex;flex-wrap:wrap;gap:4px 16px}.ps .ok{color:var(--ink)}.ps .ya{color:var(--accent);font-weight:600}
 </style>
 <div class="top"><div class="l"><span class="burger"><i></i></span>Trivasa</div><div class="u">ESTEBAN HERNAN ALCOCER SOUZA</div></div>
 <div class="wrap"><div class="card">
 <header>
- <div><h1>Reporte de Auditoria</h1><div style="margin-top:10px;display:flex;gap:40px;flex-wrap:wrap"><div><b>Empresa:</b> TRIVASA S.A. DE C.V.<br><b>Origen:</b> TODOS</div><div><b>Fuente:</b> .207 · TRIVASADB (producción)</div></div>
+ <div><h1>Reporte de Auditoria</h1><div style="margin-top:10px;display:flex;gap:40px;flex-wrap:wrap"><div><b>Empresa:</b> TRIVASA S.A. DE C.V.<br><b>Origen:</b> TODOS</div><div><b>Fuente:</b> <span id="fte">.207 · TRIVASADB (producción)</span></div></div>
  <div class="sub" id="sub" style="margin-top:10px"></div></div>
  <div class="kpis" id="kpis"></div>
 </header>
-<div class="bar" id="ctl"><label class="t">Fecha inicio <input type="date" id="fi" value="2026-01-01"></label><label class="t">Fecha final <input type="date" id="ff" value="2026-01-31"></label><label class="t" id="agrl"><input type="checkbox" id="agr" checked> Agrupar por cuenta contable</label><label class="t"><input type="checkbox" id="exc"> Mostrar excluidos (sin CFDI por criterio)</label><button class="btn" id="go">Consultar</button><button class="chip" id="rf" title="Ignora el caché y vuelve a consultar .207">Actualizar desde .207</button><span class="st" id="st"></span></div>
+<div class="bar" id="ctl"><label class="t">Fecha inicio <input type="date" id="fi" value="2026-01-01"></label><label class="t">Fecha final <input type="date" id="ff" value="2026-01-31"></label><label class="t" id="agrl"><input type="checkbox" id="agr" checked> Agrupar por cuenta contable</label><label class="t"><input type="checkbox" id="exc"> Mostrar excluidos (sin CFDI por criterio)</label><button class="btn" id="go">Consultar</button><button class="chip" id="rf" title="Trae los cambios de Mpro (.207) a Postgres y vuelve a consultar" hidden>&#8635; Actualizar datos</button><span class="st" id="fr"></span><span class="st" id="st"></span></div>
+<div class="prog" id="prog" hidden><div class="pb"><i id="pbi"></i></div><div class="ps" id="pps"></div></div>
 <div class="bar" role="group" aria-label="Filtrar por tipo"><span id="chips" style="display:contents"></span></div>
 <div class="bar">
  <input type="search" id="q" placeholder="Buscar folio, proveedor, RFC, UUID, cuenta…" aria-label="Buscar">
@@ -208,23 +209,49 @@ function exportar(){
  }}
 document.getElementById('xl').onclick=exportar;
 }
-async function cargar(refresh){
+async function cargar(){
  const ini=$('fi').value,fin=$('ff').value,st=$('st'),btn=$('go');
  if(!ini||!fin){st.textContent='Indica fecha inicio y fecha final.';return}
- btn.disabled=true;st.className='st busy';st.textContent='Consultando .207…';
+ btn.disabled=true;st.className='st busy';st.textContent='Consultando…';
  const t0=performance.now();
  try{
-  const r=await fetch('api/reporte?ini='+ini+'&fin='+fin+'&agrupar='+($('agr').checked?1:0)+'&excluidos='+($('exc').checked?1:0)+(refresh?'&refresh=1':''),{cache:'no-store'});
+  const r=await fetch('api/reporte?ini='+ini+'&fin='+fin+'&agrupar='+($('agr').checked?1:0)+'&excluidos='+($('exc').checked?1:0),{cache:'no-store'});
   if(!r.ok)throw new Error((await r.text())||r.status);
   const t1=performance.now(),D=await r.json(),t2=performance.now();
   init(D);const t3=performance.now(),m=D.meta||{};
   st.className='st';
-  st.textContent=(m.cache?'Desde caché del servidor':'Consulta en vivo a '+m.fuente)+' · datos de '+m.generado+(m.cache?'':' ('+m.seg_consulta+' s de consulta')+(m.cache?'':')')+' · descarga '+((t1-t0)/1000).toFixed(2)+' s · render '+((t3-t2)/1000).toFixed(2)+' s';
+  if(m.fuente)$('fte').textContent=m.fuente;
+  st.textContent=(m.cache?'Desde caché del servidor':'Consulta a '+m.fuente)+' · generado '+m.generado+(m.cache?'':' ('+m.seg_consulta+' s de consulta)')+' · descarga '+((t1-t0)/1000).toFixed(2)+' s · render '+((t3-t2)/1000).toFixed(2)+' s';
   window.__tiempos={fetch_ms:Math.round(t1-t0),parse_ms:Math.round(t2-t1),render_ms:Math.round(t3-t2),total_ms:Math.round(t3-t0),cache:!!m.cache,filas:D.rows.length};
  }catch(e){st.className='st err';st.textContent='Error: '+e.message}
  btn.disabled=false}
-$('agr').onchange=()=>cargar(false);
-$('exc').onchange=()=>cargar(false);
-$('go').onclick=()=>cargar(false);$('rf').onclick=()=>cargar(true);
-if(PRE){$('ctl').hidden=true;init(PRE)}else{const q=new URLSearchParams(location.search);if(q.get('ini'))$('fi').value=q.get('ini');if(q.get('fin'))$('ff').value=q.get('fin');cargar(false)}
+$('agr').onchange=()=>cargar();
+$('exc').onchange=()=>cargar();
+$('go').onclick=()=>cargar();
+const fmtF=iso=>iso?new Date(iso).toLocaleString('es-MX',{timeZone:'America/Mexico_City',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
+let tmr=null,vistoCorriendo=false;
+function pintarEstado(e){
+ if(!e.habilitado){$('rf').hidden=true;return}
+ const run=e.estado==='corriendo',rf=$('rf'),fr=$('fr');
+ rf.hidden=false;rf.disabled=run;rf.innerHTML=run?'Actualizando…':'&#8635; Actualizar datos';
+ let t='Datos actualizados al '+fmtF(e.datos);
+ if(e.estado==='error')t+=' · '+(e.error||'Error al actualizar.');
+ fr.textContent=t;fr.className='st'+(e.estado==='error'?' err':'');
+ const pg=$('prog');pg.hidden=!run;
+ if(run){const ps=e.pasos||[],prev=e.duraciones||{},ahora=e.ahora||Date.now()/1000;let hecho=0;
+  $('pps').innerHTML=ps.map(p=>{const seg=p.estado==='corriendo'&&p.inicio?Math.round(ahora-p.inicio):0;
+   if(p.estado==='ok')hecho+=1;else if(p.estado==='corriendo')hecho+=Math.min(.95,seg/(prev[p.nombre]||seg*2+30));
+   return '<span class="'+(p.estado==='ok'?'ok':p.estado==='corriendo'?'ya':'')+'">'+(p.estado==='ok'?'✓ ':p.estado==='corriendo'?'▶ ':'○ ')+p.nombre+(p.estado==='ok'&&p.segundos!=null?' ('+p.segundos+' s)':'')+(p.estado==='corriendo'?'… '+seg+' s'+(prev[p.nombre]?' (antes tardó '+prev[p.nombre]+' s)':''):'')+'</span>'}).join('');
+  $('pbi').style.width=(ps.length?hecho/ps.length*100:0)+'%'}
+ if(run){vistoCorriendo=true;if(!tmr)tmr=setInterval(estadoIngest,2000)}
+ else{if(tmr){clearInterval(tmr);tmr=null}if(vistoCorriendo&&e.estado==='ok'){vistoCorriendo=false;cargar()}vistoCorriendo=false}
+}
+function estadoIngest(){fetch('api/estado',{cache:'no-store'}).then(r=>r.json()).then(pintarEstado).catch(()=>{})}
+$('rf').onclick=()=>{
+ if(!confirm('Esto trae los cambios de Mpro (.207) a Postgres y puede tardar unos minutos. ¿Actualizar ahora?'))return;
+ $('rf').disabled=true;
+ fetch('api/actualizar',{method:'POST',headers:{'X-Conciliacion':'1'}}).then(r=>r.status===409?r.json().then(j=>{$('fr').textContent=j.motivo;$('rf').disabled=false;setTimeout(estadoIngest,8000)}):r.json().then(pintarEstado))
+  .catch(()=>{$('fr').textContent='No se pudo contactar al servidor.';$('rf').disabled=false})};
+estadoIngest();
+if(PRE){$('ctl').hidden=true;init(PRE)}else{const q=new URLSearchParams(location.search);if(q.get('ini'))$('fi').value=q.get('ini');if(q.get('fin'))$('ff').value=q.get('fin');cargar()}
 </script>

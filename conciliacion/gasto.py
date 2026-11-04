@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy.engine import Connection
 
-from . import sql
+from .dialecto import sql
 from .atribucion import VARIOS, atribuir_documento
 from .db import consultar
 
@@ -206,33 +206,34 @@ def _por_documento(d, docs, xml_doc, subtotales_doc, por_clave):
     if not m.any():
         return d
     d = d.copy()
-    prov = docs.drop(columns="CONCEPTO_GASTO").set_index(["FOLIO", "DOC_ID"])
     cols_prov = ["CLAVE_PROVEEDOR", "RFC_PROVEEDOR", "NOMBRE_PROVEEDOR"]
-    folio_xml = xml_doc[xml_doc.DOC_ID.isna()].drop(columns="DOC_ID").set_index("FOLIO")
-    doc_xml = xml_doc[xml_doc.DOC_ID.notna()].set_index(["FOLIO", "DOC_ID"])
     cols_xml = [c for c in xml_doc.columns if c not in ("FOLIO", "DOC_ID")]
-    for i in d.index[m]:
-        k = (d.at[i, "FOLIO"], d.at[i, "DOC_ID"])
-        if k[1] == VARIOS:
-            for c in cols_prov + [c for c in cols_xml if c != "XML_MONTO"]:
-                d.at[i, c] = NO_APLICA
-            d.at[i, "XML_MONTO"] = np.nan
-            continue
-        if k in prov.index:
-            for c in cols_prov:
-                d.at[i, c] = prov.at[k, c]
-        if k in doc_xml.index:
-            fila = doc_xml.loc[k]
-        elif k[0] in folio_xml.index:
-            fila = folio_xml.loc[k[0]]
-        else:
-            fila = None
-        if fila is not None:
-            for c in cols_xml:
-                d.at[i, c] = fila[c]
-        else:
-            for c in cols_xml:
-                d.at[i, c] = None
+    idx = d.index[m]
+    llaves = d.loc[idx, ["FOLIO", "DOC_ID"]]
+    varios = (llaves.DOC_ID == VARIOS).to_numpy()
+    # proveedor del documento (si el documento no está en `docs` queda el del folio)
+    prov = docs.drop(columns="CONCEPTO_GASTO").assign(_hay=True).drop_duplicates(["FOLIO", "DOC_ID"])
+    pv = llaves.merge(prov, on=["FOLIO", "DOC_ID"], how="left")
+    usa = pv._hay.notna().to_numpy() & ~varios
+    # XML: el del documento; si no hay, el del folio (DOC_ID nulo); si tampoco, vacío
+    x_doc = xml_doc[xml_doc.DOC_ID.notna()].assign(_hay=True)
+    x_fol = xml_doc[xml_doc.DOC_ID.isna()].drop(columns="DOC_ID").assign(_hay=True)
+    x1 = llaves.merge(x_doc, on=["FOLIO", "DOC_ID"], how="left")
+    x2 = llaves[["FOLIO"]].merge(x_fol, on="FOLIO", how="left")
+    h1 = x1._hay.notna().to_numpy()
+    h2 = x2._hay.notna().to_numpy()
+    nov = ~varios
+    for c in cols_prov:
+        d[c] = d[c].astype(object)
+        d.loc[idx[usa], c] = pv[c].to_numpy()[usa]
+        d.loc[idx[varios], c] = NO_APLICA
+    for c in cols_xml:
+        d[c] = d[c].astype(object) if c != "XML_MONTO" else d[c]
+        v = np.where(h1, x1[c].to_numpy(dtype=object), np.where(h2, x2[c].to_numpy(dtype=object), None))
+        if c == "XML_MONTO":
+            v = pd.to_numeric(pd.Series(v), errors="coerce").to_numpy(dtype=float)
+        d.loc[idx[nov], c] = v[nov]
+        d.loc[idx[varios], c] = np.nan if c == "XML_MONTO" else NO_APLICA
 
     sub = subtotales_doc.rename(columns={"Grd_ID": "DOC_ID"})
     sub = sub.rename(columns={c: "DX_" + c for c in COLS_DOC})

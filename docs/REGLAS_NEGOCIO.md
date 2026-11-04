@@ -74,10 +74,9 @@ Reglas (las del reporte 05 original, `rptrv79_05_cxp_libre*`):
 
 Se evalúa por UUID, no por línea, y el resultado (Sí/No) y `DIF_IMPORTE_UUID` se repiten en todas las líneas del UUID.
 
-- Se compara |Σ `TOTAL` de los folios con ese UUID| contra el importe del SAT = `SAT_IMPORTE` (total del cuerpo) + `SAT_IMPORTE_COMPLEMENTO`.
+- Se compara |Σ `TOTAL` de los folios con ese UUID| contra el importe esperado del SAT = `SAT_IMPORTE` (Total del CFDI); si `SAT_IMPORTE_COMPLEMENTO` es **mayor** que el Total, se suma (el CFDI solo cobra la comisión y el combustible va aparte).
 - Se excluyen las filas Tipo "CxP libre": llevan el mismo UUID y repiten el dinero de los folios de gasto (se duplicaría). "CxP orden compra" sí suma: no es copia, es un documento propio (sept 2026: una Compra de $589.99 + su CxP orden compra de $34,350.00 = CFDI de $34,940.00).
 - Valor absoluto de la suma: las NC proveedor llevan signo negativo y el SAT positivo.
 - Tolerancia: 0.05 + 0.01 por cada folio adicional del UUID (redondeo acumulado).
-- `SAT_IMPORTE_COMPLEMENTO`: atributo `Total` del complemento `ecc12:EstadoDeCuentaCombustible` (consumo real de la factura consolidada de Control Integral de Combustibles). En Mpro el UUID agrupa los folios de consumo más el folio de comisión (cuerpo del CFDI), por eso se compara contra cuerpo + complemento.
-- El KPI "% Conciliación" suma por UUID cuerpo + complemento.
+- `SAT_IMPORTE_COMPLEMENTO`: atributo `Total` del complemento `ecc12:EstadoDeCuentaCombustible` (consumo real de la factura consolidada de Control Integral de Combustibles). En Mpro el UUID agrupa los folios de consumo más el folio de comisión. Según el CFDI, el complemento viene **incluido** en el Total (enero 2026: Total 5,359.71 = consumo 5,268.05 + comisión; Σ Mpro 5,359.74) o **fuera** de él (septiembre 2026: Total 198.79 de comisión, complemento 19,880.79; Σ Mpro 20,079.60). Sumarlo siempre marcaba "No" en 25 UUID de enero (folio 01-0034638); usar solo el complemento falla en ambos meses. Con la regla actual enero pasa de 178 a 153 UUID en "No" y septiembre queda en 115; los demás con complemento (5 en enero, 7 en septiembre) son diferencias reales (p. ej. falta el folio de comisión).
 - Sept 2026: 1,586 de 1,698 UUID cuadran (93.4 %); combustible 25/28 (los 3 restantes no tienen el folio de comisión en el mes).
