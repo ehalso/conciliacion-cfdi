@@ -14,6 +14,7 @@ LOTE = 5000
 TIPOS_CFDI = {"I": "Ingreso", "E": "Egreso", "P": "Pago", "T": "Traslado", "N": "Nómina"}
 SI, NO = "Sí", "No"
 TIPO_SOLO_SAT = "Solo SAT"
+TIPO_OTRO_PERIODO = "Mpro otro periodo"
 
 # `tipo` solo tiene RECIBIDO y EMITIDO; lo autoemitido (emisor = receptor, p. ej. nómina) llega como EMITIDO.
 # El total del SAT viene en la moneda del CFDI y el TOTAL de Mpro en pesos (como EZAudita), así que los USD/EUR se pasan a MXN con tipo_cambio.
@@ -125,9 +126,10 @@ def _si_no(cond: pd.Series, donde: pd.Series | None = None) -> pd.Series:
 
 
 def agregar_solo_sat(d: pd.DataFrame, engine_sat: Engine, engine_mpro: Engine, fi: str, ff: str) -> pd.DataFrame:
-    """Agrega al reporte los CFDI recibidos vigentes en el SAT que no están registrados en Mpro (Tipo "Solo SAT").
+    """Agrega al reporte los CFDI recibidos vigentes del periodo en el SAT que el reporte aún no trae.
 
-    "Registrado en Mpro" = su UUID existe en Comprobante_Digital (cualquier módulo y fecha de registro).
+    Tipo "Solo SAT": su UUID no existe en Comprobante_Digital (cualquier módulo y fecha de registro).
+    Tipo "Mpro otro periodo": sí existe en Mpro, pero su documento cae fuera del periodo; solo se muestran los datos del SAT.
     Si el SAT no responde, devuelve el reporte sin cambios.
     """
     try:
@@ -142,12 +144,18 @@ def agregar_solo_sat(d: pd.DataFrame, engine_sat: Engine, engine_mpro: Engine, f
     except Exception as e:
         log.error("SAT sin Mpro omitido: %r", e)
         return d
-    nuevos = _formatear(c[~c.uuid.isin(set(en_mpro))].drop_duplicates("uuid")).drop(columns="UUID_CRUCE")
+    en_reporte = set(_uuid_valido(d.UUID).dropna()) if "UUID" in d else set()
+    registrados = set(en_mpro)
+    nuevos = _formatear(c[~c.uuid.isin(en_reporte)].drop_duplicates("uuid")).drop(columns="UUID_CRUCE")
     if nuevos.empty:
         return d
     nuevos = nuevos.sort_values(["SAT_FECHA", "SAT_UUID"]).reset_index(drop=True)
+    otro = nuevos.SAT_UUID.isin(registrados)
     nuevos["Tipo"] = TIPO_SOLO_SAT
+    nuevos.loc[otro, "Tipo"] = TIPO_OTRO_PERIODO
     nuevos["FOLIO"] = "SAT-" + nuevos.SAT_UUID.str[:13]
     nuevos["CONC_EXISTE_MPRO"], nuevos["CONC_EXISTE_SAT"] = NO, SI
     nuevos["CONC_EXISTENCIA"], nuevos["CONC_IMPORTES"] = NO, NO
+    nuevos.loc[otro, ["CONC_EXISTE_MPRO", "CONC_EXISTENCIA"]] = SI
+    nuevos.loc[otro, "CONC_IMPORTES"] = ""
     return pd.concat([d, nuevos], ignore_index=True, sort=False)
