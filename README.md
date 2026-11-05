@@ -45,7 +45,7 @@ Con credenciales de Postgres (`SAT_PG_USER`/`SAT_PG_PASSWORD` o `POSTGRES_DW_RO_
 
 **Solo SAT:** además se agregan, con Tipo "Solo SAT", los CFDI recibidos vigentes (no cancelados) del periodo, por fecha del CFDI, cuyo UUID no existe en `Comprobante_Digital` de Mpro (cualquier módulo y fecha de registro). Solo llevan el bloque SAT y la conciliación (Existe en Mpro = No, en SAT = Sí, existencia = No, importes = No); el folio es `SAT-<inicio del UUID>`.
 
-**Otro periodo:** los CFDI del SAT del periodo cuyo UUID sí está en Mpro pero en un documento que no entró al reporte (fecha del documento en otro periodo) se agregan con Tipo `<origen> (otro periodo)` (Gasto, Compra, Indirecto, NC proveedor, CxP…), el folio del documento de Mpro y solo los datos del SAT. Así la suma de BD SAT del reporte cuadra con EZAudita. No se agregan complementos de Pago.
+**Otro periodo:** los CFDI del SAT del periodo cuyo UUID sí está en Mpro pero en un documento que no entró al reporte (fecha del documento en otro periodo) se agregan con Tipo `Otro periodo (<origen>)` (Gasto, Compra, Indirecto, NC proveedor, CxP…), el folio del documento de Mpro y solo los datos del SAT. Así la suma de BD SAT del reporte cuadra con EZAudita. No se agregan complementos de Pago.
 
 La sesión a Postgres es de solo lectura. Si no hay credenciales o el SAT falla, el reporte sale sin esas columnas (`meta.sat = false`).
 

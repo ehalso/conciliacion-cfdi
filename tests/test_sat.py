@@ -87,7 +87,7 @@ class SoloSat(unittest.TestCase):
             d = pd.DataFrame({"Tipo": ["Gasto"], "FOLIO": ["01-1"], "UUID": [U1]})
             o = sat.agregar_solo_sat(d, engine, engine, "2026-01-01", "2026-02-01")
         n = o.set_index("SAT_UUID")
-        self.assertEqual((n.loc[U2, "Tipo"], n.loc[U2, "FOLIO"]), ("Gasto (otro periodo)", "01-0000007"))
+        self.assertEqual((n.loc[U2, "Tipo"], n.loc[U2, "FOLIO"]), ("Otro periodo (Gasto)", "01-0000007"))
         self.assertEqual((n.loc[U2, "CONC_EXISTE_MPRO"], n.loc[U2, "CONC_IMPORTES"]), ("Sí", ""))
         self.assertEqual(n.loc[U2, "CONC_EXISTENCIA"], "No")
         self.assertEqual(n.loc["BBBBBBBB-0000-0000-0000-000000000003", "Tipo"], "Solo SAT")

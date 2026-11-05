@@ -39,7 +39,7 @@ SQL_EN_MPRO_PG = ("SELECT UPPER(cd_timbre_uuid) AS uuid, RTRIM(cd_tabla) AS tabl
                   "FROM comprobante_digital WHERE UPPER(cd_timbre_uuid) = ANY(:uuids)")
 ORIGEN_MPRO = {"GASTO_REGISTRO": "Gasto", "COMPRA": "Compra", "COMPRA_INDIRECTO": "Indirecto",
                "NOTA_CREDITO_PROVEEDOR": "NC proveedor", "CUENTA_X_PAGAR": "CxP"}
-SUFIJO_OTRO_PERIODO = " (otro periodo)"
+PREFIJO_OTRO_PERIODO = "Otro periodo"
 
 
 def _uuid_valido(s: pd.Series) -> pd.Series:
@@ -134,7 +134,7 @@ def agregar_solo_sat(d: pd.DataFrame, engine_sat: Engine, engine_mpro: Engine, f
 
     Tipo "Solo SAT": su UUID no existe en Comprobante_Digital (cualquier módulo y fecha de registro).
     Sin CFDI de tipo Pago.
-    Tipo "<origen> (otro periodo)": sí existe en Mpro, pero su documento cae fuera del periodo; lleva el folio y el origen del
+    Tipo "Otro periodo (<origen>)": sí existe en Mpro, pero su documento cae fuera del periodo; lleva el folio y el origen del
     documento de Mpro (Gasto, Compra…) y solo los datos del SAT.
     Si el SAT no responde, devuelve el reporte sin cambios.
     """
@@ -163,7 +163,7 @@ def agregar_solo_sat(d: pd.DataFrame, engine_sat: Engine, engine_mpro: Engine, f
     nuevos["Tipo"] = TIPO_SOLO_SAT
     nuevos["FOLIO"] = "SAT-" + nuevos.SAT_UUID.str[:13]
     m = en_mpro.reindex(nuevos.SAT_UUID[otro])
-    nuevos.loc[otro, "Tipo"] = (m.tabla.map(ORIGEN_MPRO).fillna(m.tabla.str.replace("_", " ").str.capitalize()) + SUFIJO_OTRO_PERIODO).to_numpy()
+    nuevos.loc[otro, "Tipo"] = (PREFIJO_OTRO_PERIODO + " (" + m.tabla.map(ORIGEN_MPRO).fillna(m.tabla.str.replace("_", " ").str.capitalize()) + ")").to_numpy()
     nuevos.loc[otro, "FOLIO"] = m.folio.to_numpy()
     nuevos["CONC_EXISTE_MPRO"], nuevos["CONC_EXISTE_SAT"] = NO, SI
     nuevos["CONC_EXISTENCIA"], nuevos["CONC_IMPORTES"] = NO, NO
